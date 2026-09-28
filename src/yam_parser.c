@@ -2813,6 +2813,21 @@ static bool fk_boundary(const char *input, size_t i, size_t qend, int props) {
            input[w - 1] != '\n' && input[w - 1] != '\r' && input[w - 1] != ',' &&
            input[w - 1] != '[' && input[w - 1] != '{')
         w--;
+    if (input[j - 1] == '>') {
+        /* a verbatim tag may contain , [ { ("!<tag:yaml.org,2002:str>") */
+        size_t v = j;
+        while (v > 0 && input[v - 1] != ' ' && input[v - 1] != '\t' &&
+               input[v - 1] != '\n' && input[v - 1] != '\r')
+            v--;
+        const char *lt = memchr(input + v, '<', j - v);
+        if (lt) {
+            size_t t = (size_t)(lt - input);     /* first '<' of the word */
+            while (t > v && input[t - 1] != '!' && input[t - 1] != '[' &&
+                   input[t - 1] != '{' && input[t - 1] != ',')
+                t--;
+            if (t > v && input[t - 1] == '!') w = t - 1;
+        }
+    }
     if (input[w] == '&' && j - w < 2) return false;     /* no anchor name */
     if (input[w] != '&' && input[w] != '!') return false;
     return props < 2 && fk_boundary(input, w, qend, props + 1);

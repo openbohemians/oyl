@@ -454,6 +454,7 @@ static void test_flow_key_quotes_in_plain(void) {
     check("[&n ? x]", "[ ERR");                    /* props can't precede '?' */
     check("[!'' '[']: x", "{ [ <!''> [ ] x }");   /* a tag may contain quotes */
     check("[!:'' ']']: x", "{ [ <!:''> ] ] x }");  /* bracket in the string */
+    check("[!<tag:a,b> '[']: y", "{ [ <tag:a,b> [ ] y }");  /* , in a verbatim tag */
 }
 
 /* Peak resident memory of this process, in MB. */
