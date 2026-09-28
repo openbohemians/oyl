@@ -2784,7 +2784,8 @@ static bool fk_boundary(const char *input, size_t i, size_t qend, int props) {
     case '[': case '{': case ',': case ']': case '}':
         return true;
     case '"': case '\'':
-        return j == qend;
+        if (j == qend) return true;
+        break;      /* maybe the end of a tag ("!'' 'x'"), checked below */
     case ':':
         /* a value indicator: followed by a blank, or adjacent to a
          * JSON-like key ({"a":'b'}) */
