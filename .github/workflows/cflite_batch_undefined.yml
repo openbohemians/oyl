@@ -1,0 +1,29 @@
+# ClusterFuzzLite batch fuzzing under UndefinedBehaviorSanitizer: every 6 hours, an
+# hour on all of the runner's cores. The corpus carries over between runs
+# (kept as GitHub artifacts), so fuzzing accumulates; crashes are uploaded
+# as artifacts. Each sanitizer has its own workflow because both upload
+# crashes under the same artifact name, and a name must be unique within a
+# run. Pruning and coverage run in cflite_cron.yml.
+name: ClusterFuzzLite batch fuzzing (undefined)
+on:
+  schedule:
+    - cron: '47 */6 * * *'
+  workflow_dispatch:
+permissions: read-all
+jobs:
+  BatchFuzzing:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Build fuzzers (undefined)
+      uses: google/clusterfuzzlite/actions/build_fuzzers@v1
+      with:
+        language: c
+        sanitizer: undefined
+    - name: Run fuzzers (undefined)
+      uses: google/clusterfuzzlite/actions/run_fuzzers@v1
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        fuzz-seconds: 3600
+        mode: 'batch'
+        sanitizer: undefined
+        parallel-fuzzing: true
