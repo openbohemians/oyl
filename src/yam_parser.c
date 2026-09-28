@@ -165,7 +165,8 @@ struct yam_parser {
     bool    fk_valid;
     size_t  fk_lo, fk_hi;   /* byte range of the last scanned collection */
     size_t *fk_keys;        /* sorted open offsets of collections that are keys */
-    int     fk_nkeys, fk_keys_cap;
+    int     fk_nkeys, fk_keys_cap;  /* fk_nkeys -1: an ambiguous quote, so
+                                     * every collection "is a key" */
     size_t *fk_stack;       /* scan scratch: open-bracket offsets */
     int     fk_stack_cap;
 };
@@ -2740,97 +2741,42 @@ static yam_status resolve_aliases(yam_parser *p) {
  * overall (rescanning per collection is quadratic in nesting depth), and for
  * a typical document the whole top-level collection is scanned exactly once.
  *
- * Quote and comment detection follows YAML token rules rather than treating
- * every ' " # byte as special: a quote only opens a quoted scalar at the
- * start of a token, and '#' only starts a comment after whitespace. So
- * plain scalars such as don't or a#b do not derail the scan. */
+ * The scan has to skip quoted scalars, but a quote character can also be
+ * plain text ("don't"), part of a tag or anchor name ("!''"), or start a
+ * quoted scalar after properties ("&a 'x'"). Telling these apart needs the
+ * scanner's full tokenization, so the scan only decides the cases that are
+ * certain (fk_quote_kind) and otherwise answers "key" for everything it
+ * covers. That errs on the safe side: a "key" answer sends the parser to
+ * the eager path, which decides keys after parsing the collection and so
+ * is always right, only slower. A wrong "not a key" would not be. '#'
+ * starts a comment only after whitespace. */
 
-/* Can a token start at input[i]? Look back past blanks at what precedes:
- * a token starts after a flow indicator, a line start, a closed quoted
- * scalar or collection, a ':' / '?' / '-' indicator, or an anchor or tag;
- * after other text we are inside a plain scalar (which may contain quote
- * characters: "[a "b"]" is the one scalar 'a "b"'). `qend` is the offset
- * just past the last quoted scalar the scan skipped: a quote character
- * only closes a scalar there (in "[a''b]" the second ' is plain text). */
-static bool fk_boundary(const char *input, size_t i, size_t qend, int props);
-
-static bool fk_token_boundary(const char *input, size_t i, size_t qend) {
-    return fk_boundary(input, i, qend, 0);
-}
-
-/* `props` counts the anchors/tags already stepped back over: a node has at
- * most two, which bounds the recursion. */
-static bool fk_boundary(const char *input, size_t i, size_t qend, int props) {
-    if (i == 0) return true;
-    /* fast path: the byte right before decides in the common cases */
-    switch (input[i - 1]) {
-    case '[': case '{': case ',': case ']': case '}':
-    case '\n': case '\r':
-        return true;
-    case '"': case '\'':
-        return i == qend;
-    case ' ': case '\t': case ':':
-        break;
-    default:
-        return false;   /* inside a plain scalar (or after "?x", "-x") */
+/* What a quote character at input[i] is, given that the scan's quote
+ * tracking is exact up to i (`qend` is just past the last quoted scalar it
+ * skipped): 1 if it certainly opens a quoted scalar, 0 if it is certainly
+ * plain text, -1 if telling needs full tokenization. */
+ALWAYS_INLINE int fk_quote_kind(const char *input, size_t i, size_t qend) {
+    char c = input[i - 1];          /* i > 0: the scan starts at a bracket */
+    if (c != ' ' && c != '\t') {
+        /* directly after an entry start, or after a value ':' that
+         * follows a closed scalar or collection ({"a":"b"}, [a]:'b') */
+        if (c == '[' || c == '{' || c == ',') return 1;
+        if (c == ':' && i >= 2 &&
+            (((input[i - 2] == '"' || input[i - 2] == '\'') && i - 1 == qend) ||
+             input[i - 2] == ']' || input[i - 2] == '}'))
+            return 1;
+        /* inside a word: plain text, or a tag or anchor name, since a
+         * quoted scalar only starts a token */
+        return 0;
     }
     size_t j = i;
-    bool blank = false;
-    while (j > 0 && (input[j - 1] == ' ' || input[j - 1] == '\t')) { j--; blank = true; }
-    if (j == 0) return true;
-    char c = input[j - 1];
-    switch (c) {
-    case '\n': case '\r':
-    case '[': case '{': case ',': case ']': case '}':
-        return true;
-    case '"': case '\'':
-        if (j == qend) return true;
-        break;      /* maybe the end of a tag ("!'' 'x'"), checked below */
-    case ':':
-        /* a value indicator: followed by a blank, or adjacent to a
-         * JSON-like key ({"a":'b'}) */
-        if (blank) return true;
-        return j >= 2 && (((input[j - 2] == '"' || input[j - 2] == '\'') && j - 1 == qend) ||
-                          input[j - 2] == ']' || input[j - 2] == '}');
-    case '?': case '-': {
-        /* an indicator only at the start of an entry ("[? "a": b]",
-         * "[x, ? "a"]"); in "b? ", "x- " or "L ? " it is plain text */
-        if (!blank) return false;
-        size_t k = j - 1;           /* the '?' or '-' */
-        while (k > 0 && (input[k - 1] == ' ' || input[k - 1] == '\t')) k--;
-        if (k == 0) return true;
-        c = input[k - 1];
-        return c == '\n' || c == '\r' || c == '[' || c == '{' || c == ',';
-    }
-    default:
-        break;
-    }
-    if (!blank) return false;
-    /* after an anchor or tag ("&a 'x'", "!t 'x'"), which must itself start
-     * a token: in "[L & 'x']" the '&' is plain text */
-    size_t w = j;
-    while (w > 0 && input[w - 1] != ' ' && input[w - 1] != '\t' &&
-           input[w - 1] != '\n' && input[w - 1] != '\r' && input[w - 1] != ',' &&
-           input[w - 1] != '[' && input[w - 1] != '{')
-        w--;
-    if (input[j - 1] == '>') {
-        /* a verbatim tag may contain , [ { ("!<tag:yaml.org,2002:str>") */
-        size_t v = j;
-        while (v > 0 && input[v - 1] != ' ' && input[v - 1] != '\t' &&
-               input[v - 1] != '\n' && input[v - 1] != '\r')
-            v--;
-        const char *lt = memchr(input + v, '<', j - v);
-        if (lt) {
-            size_t t = (size_t)(lt - input);     /* first '<' of the word */
-            while (t > v && input[t - 1] != '!' && input[t - 1] != '[' &&
-                   input[t - 1] != '{' && input[t - 1] != ',')
-                t--;
-            if (t > v && input[t - 1] == '!') w = t - 1;
-        }
-    }
-    if (input[w] == '&' && j - w < 2) return false;     /* no anchor name */
-    if (input[w] != '&' && input[w] != '!') return false;
-    return props < 2 && fk_boundary(input, w, qend, props + 1);
+    while (j > 0 && (input[j - 1] == ' ' || input[j - 1] == '\t')) j--;
+    if (j == 0) return 1;
+    c = input[j - 1];
+    /* an entry start, or ": " (in flow context ':' before a blank is always
+     * the value indicator) */
+    if (c == '[' || c == '{' || c == ',' || c == ':') return 1;
+    return -1;      /* after properties, text, '?', ... */
 }
 
 /* Is the byte after a closing bracket at `i` (skipping blanks, breaks and
@@ -2935,9 +2881,19 @@ static bool fk_scan(yam_parser *p, size_t offset) {
         if (i == len) goto unterminated;
         switch (input[i]) {
         case '\'': case '"':
-            if (fk_token_boundary(input, i, qend)) {
+            switch (fk_quote_kind(input, i, qend)) {
+            case 1:
                 qend = fk_skip_quoted(&cur, i);
                 if (qend == len) goto unterminated;
+                break;
+            case -1:
+                p->fk_nkeys = -1;
+                p->fk_lo = offset;
+                p->fk_hi = len;
+                p->fk_valid = true;
+                return true;
+            default:
+                break;
             }
             break;
         case '#':
@@ -3012,6 +2968,7 @@ static bool flow_is_block_key(yam_parser *p, size_t offset) {
          * correct, just slower */
         if (!fk_scan(p, offset)) return true;
     }
+    if (p->fk_nkeys < 0) return true;
     size_t lo = 0, hi = (size_t)p->fk_nkeys;
     while (lo < hi) {
         size_t mid = lo + (hi - lo) / 2;

@@ -37,4 +37,12 @@ struct yam_schema {
  * this for the public API; the parser calls it directly. */
 yam_status yam_scan_token(yam_scanner *s, yam_token *tok);
 
+/* For small helpers on the per-token path that GCC may otherwise decline
+ * to inline once they grow a little. */
+#if defined(__GNUC__) || defined(__clang__)
+#  define ALWAYS_INLINE static inline __attribute__((always_inline))
+#else
+#  define ALWAYS_INLINE static inline
+#endif
+
 #endif /* YAM_INTERNAL_H */
