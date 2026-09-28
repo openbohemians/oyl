@@ -447,6 +447,11 @@ static void test_flow_key_quotes_in_plain(void) {
     check("[? \"a\"]: c", "{ [ { a ~ } ] c }");     /* real ? indicator */
     check("[L ? \"]: x", "{ [ L ? \" ] x }");       /* ? mid-scalar (ClusterFuzzLite) */
     check("[x, ? \"a\"]: c", "{ [ x { a ~ } ] c }"); /* ? starting an entry */
+    /* anchors and tags count only when they start a token (ClusterFuzzLite) */
+    check("[L & ']: x", "{ [ L & ' ] x }");
+    check("[L !t 'x]: y", "{ [ L !t 'x ] y }");
+    check("[&a !t 'x']: y", "{ [ &a <!t> x ] y }");
+    check("[&n ? x]", "[ ERR");                    /* props can't precede '?' */
 }
 
 /* Peak resident memory of this process, in MB. */

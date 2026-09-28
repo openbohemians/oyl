@@ -2752,7 +2752,15 @@ static yam_status resolve_aliases(yam_parser *p) {
  * characters: "[a "b"]" is the one scalar 'a "b"'). `qend` is the offset
  * just past the last quoted scalar the scan skipped: a quote character
  * only closes a scalar there (in "[a''b]" the second ' is plain text). */
+static bool fk_boundary(const char *input, size_t i, size_t qend, int props);
+
 static bool fk_token_boundary(const char *input, size_t i, size_t qend) {
+    return fk_boundary(input, i, qend, 0);
+}
+
+/* `props` counts the anchors/tags already stepped back over: a node has at
+ * most two, which bounds the recursion. */
+static bool fk_boundary(const char *input, size_t i, size_t qend, int props) {
     if (i == 0) return true;
     /* fast path: the byte right before decides in the common cases */
     switch (input[i - 1]) {
@@ -2797,13 +2805,16 @@ static bool fk_token_boundary(const char *input, size_t i, size_t qend) {
         break;
     }
     if (!blank) return false;
-    /* after an anchor or tag ("&a 'x'", "!t 'x'") */
+    /* after an anchor or tag ("&a 'x'", "!t 'x'"), which must itself start
+     * a token: in "[L & 'x']" the '&' is plain text */
     size_t w = j;
     while (w > 0 && input[w - 1] != ' ' && input[w - 1] != '\t' &&
            input[w - 1] != '\n' && input[w - 1] != '\r' && input[w - 1] != ',' &&
            input[w - 1] != '[' && input[w - 1] != '{')
         w--;
-    return input[w] == '&' || input[w] == '!';
+    if (input[w] == '&' && j - w < 2) return false;     /* no anchor name */
+    if (input[w] != '&' && input[w] != '!') return false;
+    return props < 2 && fk_boundary(input, w, qend, props + 1);
 }
 
 /* Is the byte after a closing bracket at `i` (skipping blanks, breaks and
@@ -3329,8 +3340,11 @@ static yam_status parser_step_flow(yam_parser *p) {
             return YAM_OK;
         }
 
-        /* explicit pair: ? key : value */
+        /* explicit pair: ? key : value. Properties can't precede the
+         * '?' (it starts a pair, not a node), as the eager parser has it */
         if (tt == YAM_TOK_BLOCK_MAP_KEY) {
+            if (p->has_anchor || p->has_tag)
+                PARSE_ERROR(p, "expected ',' or ']' in flow sequence");
             p->state = ST_FLOW_SEQ_EXPLICIT_KEY;
             return YAM_OK;
         }
