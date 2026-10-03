@@ -9,7 +9,7 @@ and an arena allocator. Against the
 [YAML Test Suite](https://github.com/yaml/yaml-test-suite), it produces the
 exact expected event stream for all 308 valid-YAML cases and rejects all 94
 invalid-YAML cases, in both parser modes (see
-[Conformance and Testing](#conformance-and-testing)). It parses 1.6–13×
+[Conformance and Testing](#conformance-and-testing)). It parses 1.7–13×
 faster than libyaml and libfyaml (see [Performance](#performance)).
 
 One deliberate leniency: a line inside a flow collection or multi-line
@@ -381,26 +381,26 @@ simple key resolution, and property (anchor/tag) attachment.
 
 Parse throughput in MB/s (higher is better), measured with
 `make bench-compare` on an Intel Core Ultra 7 155H, one core, GCC 16.2
-`-O2`, median of 11 runs in each of 3 passes (passes agree within 5%).
+`-O2`, median of 11 runs in each of 3 passes (passes agree within 6%), October 2026.
 Every library parses the same bytes:
 
 | Input | yam | libyaml 0.2.5 | libfyaml 0.9.6 | rapidyaml 0.16 (events) | rapidyaml 0.16 (tree) |
 |---|---:|---:|---:|---:|---:|
 | **Generated, 10 MB** | | | | | |
-| block mappings and sequences | 176 | 75 | 63 | 249 | 109 |
-| mixed block, flow and quoted | 216 | 88 | 76 | 285 | 119 |
-| JSON | 193 | 72 | 61 | 338 | 122 |
-| config files (comments, block scalars, anchors) | 206 | 125 | 106 | 368 | 196 |
+| block mappings and sequences | 175 | 73 | 61 | 236 | 104 |
+| mixed block, flow and quoted | 214 | 84 | 73 | 268 | 112 |
+| JSON | 187 | 69 | 59 | 322 | 116 |
+| config files (comments, block scalars, anchors) | 200 | 120 | 102 | 349 | 184 |
 | **Real files, repeated to ~10 MB** | | | | | |
-| travis.yml | 501 | 149 | 183 | 434 | 202 |
-| appveyor.yml | 439 | 133 | 151 | 419 | 208 |
-| compile_commands.json | 2231 | 226 | 305 | 1247 | 867 |
+| travis.yml | 479 | 141 | 174 | 411 | 190 |
+| appveyor.yml | 434 | 126 | 145 | 395 | 192 |
+| compile_commands.json | 2132 | 214 | 291 | 1183 | 792 |
 | **Scalar-heavy text** | | | | | |
-| literal block scalars (`\|`) | 3091 | 290 | 294 | 1024 | 936 |
-| folded block scalars (`>`) | 2087 | 292 | 295 | 921 | 853 |
-| multi-line double-quoted | 3006 | 224 | 345 | 362 | 348 |
-| multi-line single-quoted | 2748 | 225 | 346 | 376 | 369 |
-| multi-line plain | 886 | 209 | 441 | 312 | 307 |
+| literal block scalars (`\|`) | 2967 | 274 | 278 | 962 | 896 |
+| folded block scalars (`>`) | 2006 | 276 | 278 | 872 | 812 |
+| multi-line double-quoted | 2817 | 210 | 323 | 340 | 328 |
+| multi-line single-quoted | 2669 | 212 | 324 | 355 | 349 |
+| multi-line plain | 840 | 196 | 417 | 295 | 289 |
 
 yam, libyaml and libfyaml are measured producing events. rapidyaml is
 shown two ways: its event parser (`EventHandlerInts`, with buffers reused
@@ -408,7 +408,7 @@ between parses, its fastest mode) and its usual API, parsing in place into
 a new tree. The real files and scalar-heavy inputs come from rapidyaml's
 own benchmark set.
 
-yam is 1.6–3.4× faster than libyaml and libfyaml on structure-heavy input
+yam is 1.7–3.4× faster than libyaml and libfyaml on structure-heavy input
 and up to 13× faster on scalar-heavy input. Against rapidyaml's event
 parser it is faster on the real configuration files and 2–8× faster on long
 scalars; rapidyaml leads on the generated structure-heavy inputs

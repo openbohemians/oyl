@@ -6,7 +6,7 @@
   <title>YAM | YAML Parser and Emitter</title>
   <meta name="description" content="YAM is a fast, minimal YAML 1.2 parser and emitter in C11 with SIMD scanning, event parser, and robust emitter.">
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Rubik+Spray+Paint&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Anton&family=Rubik+Spray+Paint&display=swap');
 
     @font-face {
       font-family: "ComicNeueLocal";
@@ -36,6 +36,17 @@
       --line: #1e3f59;
       --shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
       --radius: 14px;
+      /* brass for the fuzz counter: the gold accent with its shadow and highlight */
+      --brass: #d6a128;
+      --brass-hi: #f3cf6b;
+      --brass-lo: #7d5810;
+      --wheel-ink: #1d1405;
+      /* benchmark marks: yam in spinach, the other parsers recede in slate */
+      --bar-yam: #4d9f57;
+      --bar-other: #5f7a8f;
+      --text-primary: #f4f6f8;
+      --text-secondary: #b7c8d8;
+      --text-muted: #8ea4b8;
     }
 
     * {
@@ -213,6 +224,11 @@
       letter-spacing: 0.06em;
     }
 
+    .stat-link {
+      color: inherit;
+      text-decoration-color: rgba(183, 200, 216, 0.5);
+    }
+
     .section {
       margin-top: 1.1rem;
       background: #082134;
@@ -338,6 +354,324 @@
       font-weight: 900;
     }
 
+    /* ── Fuzz counter: brass number wheels in a ship's-instrument bezel ── */
+
+    .tally {
+      margin: 1.5rem auto 0.4rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .tally-housing {
+      display: inline-flex;
+      align-items: flex-end;
+      gap: 0.12em;
+      padding: 0.26em 0.32em;
+      font-family: "Impact", "Anton", "Haettenschweiler", "Arial Narrow Bold", sans-serif;
+      font-size: clamp(2rem, 7vw, 4.4rem);
+      line-height: 1;
+      background: #04131f;
+      border: 3px solid var(--brass);
+      border-radius: 16px;
+      box-shadow: inset 0 0 0 4px #04131f, inset 0 0 0 6px rgba(214, 161, 40, 0.3), var(--shadow);
+    }
+
+    .wheel {
+      position: relative;
+      display: inline-block;
+      width: 0.66em;
+      height: 1.18em;
+      overflow: hidden;
+      border-radius: 0.1em;
+      color: var(--wheel-ink);
+      background: linear-gradient(180deg, var(--brass-lo) 0%, var(--brass) 20%,
+                  var(--brass-hi) 50%, var(--brass) 80%, var(--brass-lo) 100%);
+    }
+
+    /* the curve of the drum: digits darken as they turn away */
+    .wheel::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: linear-gradient(180deg, rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0) 32%,
+                  rgba(0, 0, 0, 0) 68%, rgba(0, 0, 0, 0.4));
+    }
+
+    .wheel-strip {
+      display: flex;
+      flex-direction: column;
+      transform: translateY(calc(var(--d, 0) * -1.18em));
+      transition: transform 2s cubic-bezier(0.2, 0.75, 0.15, 1) var(--delay, 0s);
+    }
+
+    .wheel-strip span {
+      height: 1.18em;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .tally-sep {
+      color: var(--brass);
+      font-size: 0.5em;
+      width: 0.3em;
+      text-align: center;
+      padding-bottom: 0.1em;
+    }
+
+    .tally-label {
+      margin: 0.55rem 0 0.25rem;
+      font-family: "Impact", "Anton", "Haettenschweiler", "Arial Narrow Bold", sans-serif;
+      font-size: clamp(1.15rem, 2.8vw, 1.7rem);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #ffe7a0;
+    }
+
+    .tally-note {
+      max-width: 60ch;
+      margin: 0 auto;
+      font-size: 0.86rem;
+      color: var(--text-secondary);
+    }
+
+    /* ── Benchmarks: small multiples, yam emphasized ── */
+
+    .bench-lede {
+      max-width: 75ch;
+    }
+
+    .bench-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.1rem;
+      margin: 0.5rem 0 0.2rem;
+      font-size: 0.84rem;
+      color: var(--text-secondary);
+    }
+
+    .bench-legend i {
+      display: inline-block;
+      width: 14px;
+      height: 10px;
+      margin-right: 0.4rem;
+      border-radius: 0 3px 3px 0;
+      vertical-align: middle;
+    }
+
+    .bench-group {
+      margin-top: 1.1rem;
+    }
+
+    .bench-group h3 {
+      font-size: 1rem;
+      color: #ffe7a0;
+      letter-spacing: 0.06em;
+    }
+
+    .bench-group-note {
+      font-size: 0.86rem;
+      color: var(--text-secondary);
+      margin: 0.15rem 0 0.55rem;
+    }
+
+    .bench-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 0.7rem;
+    }
+
+    .bench-panel {
+      display: flex;
+      flex-direction: column;
+      margin: 0;
+      padding: 0.6rem 0.7rem 0.45rem;
+      border: 1px solid #2b5470;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .bench-panel figcaption {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 0.5rem;
+      margin-bottom: 0.3rem;
+      line-height: 1.25;
+    }
+
+    .bench-cap {
+      min-width: 0;
+    }
+
+    /* bars sit at the panel's foot, so a row of panels lines up */
+    .bench-rows {
+      margin-top: auto;
+    }
+
+    /* yam's figure leads each panel; the bars below get the full track */
+    .bench-yam {
+      flex: none;
+      text-align: right;
+      white-space: nowrap;
+      color: var(--text-primary);
+      font-weight: 700;
+      font-size: 0.95rem;
+    }
+
+    .bench-yam small {
+      display: block;
+      font-weight: 400;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+
+    .bench-panel figcaption strong {
+      display: block;
+      color: var(--text-primary);
+      font-size: 0.95rem;
+    }
+
+    .bench-cap span {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
+    .bench-row {
+      position: relative;
+      display: grid;
+      grid-template-columns: 5.4rem 1fr;
+      align-items: center;
+      height: 26px;
+      border-radius: 4px;
+    }
+
+    .bench-row:focus-visible {
+      outline: 2px solid #9ed2f4;
+      outline-offset: 1px;
+    }
+
+    .bench-lib {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+
+    .bench-track {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .bench-bar {
+      flex: none;
+      height: 14px;
+      min-width: 2px;
+      border-radius: 0 4px 4px 0;
+      background: var(--bar-other);
+    }
+
+    .bench-row.is-yam .bench-lib {
+      color: var(--text-primary);
+      font-weight: 700;
+    }
+
+    .bench-row.is-yam .bench-bar {
+      background: var(--bar-yam);
+    }
+
+    /* every value on hover or keyboard focus */
+    .bench-row::after {
+      content: attr(data-tip);
+      position: absolute;
+      right: 0;
+      bottom: calc(100% - 2px);
+      z-index: 2;
+      padding: 0.12rem 0.45rem;
+      border: 1px solid #3f6884;
+      border-radius: 6px;
+      background: #04131f;
+      color: var(--text-primary);
+      font-size: 0.78rem;
+      white-space: nowrap;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 120ms ease;
+    }
+
+    .bench-row:hover::after,
+    .bench-row:focus-visible::after {
+      opacity: 1;
+    }
+
+    .bench-table {
+      margin-top: 1.1rem;
+    }
+
+    .bench-table summary {
+      cursor: pointer;
+      color: #9ed2f4;
+      font-weight: 700;
+    }
+
+    .bench-table-scroll {
+      overflow-x: auto;
+      margin-top: 0.6rem;
+    }
+
+    .bench-table table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.84rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .bench-table th,
+    .bench-table td {
+      padding: 0.3rem 0.55rem;
+      text-align: right;
+      border-bottom: 1px solid var(--line);
+      white-space: nowrap;
+    }
+
+    .bench-table th:first-child,
+    .bench-table td:first-child {
+      text-align: left;
+    }
+
+    .bench-table th {
+      color: var(--text-secondary);
+      font-weight: 700;
+    }
+
+    .bench-table .yam {
+      color: #b0efb8;
+      font-weight: 700;
+    }
+
+    .bench-method {
+      margin-top: 0.8rem;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .bench-method a,
+    .tally-note a {
+      color: #9ed2f4;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .wheel-strip {
+        transition: none;
+      }
+
+      .section {
+        transition: none;
+      }
+    }
+
     footer {
       margin-top: 1.4rem;
       text-align: center;
@@ -404,11 +738,22 @@
         A fast, minimal, zero-copy YAML parser and emitter with SIMD scanning,
         event-driven parsing, merge and alias support, and dependable error reporting.
       </p>
+      <div class="tally">
+        <div class="tally-housing" id="tally" role="img" data-total="4187798713"
+             aria-label="4,187,798,713 fuzz inputs parsed"></div>
+        <p class="tally-label">Fuzzies parsed</p>
+        <p class="tally-note">
+          Random inputs ClusterFuzzLite has thrown at yam since September 24, 2026,
+          under AddressSanitizer and UndefinedBehaviorSanitizer, each checked for
+          crashes, memory errors and round-trip mistakes. Counted from the
+          <a href="https://github.com/trans/yam/actions">fuzzing logs</a> after every run.
+        </p>
+      </div>
       <div class="stats">
-        <div class="stat"><strong>308/308</strong><span>Valid Suite Cases</span></div>
-        <div class="stat"><strong>961</strong><span>Total Tests</span></div>
-        <div class="stat"><strong>352 MB/s<sup>*</sup></strong><span>Scanner</span></div>
-        <div class="stat"><strong>195 MB/s<sup>*</sup></strong><span>Parser Avg</span></div>
+        <div class="stat"><strong>308/308</strong><span>Valid suite cases</span></div>
+        <div class="stat"><strong>94/94</strong><span>Invalid rejected</span></div>
+        <div class="stat"><strong>970</strong><span>Tests</span></div>
+        <div class="stat"><strong>1.7&ndash;13&times;</strong><span><a href="#benchmarks" class="stat-link">Faster than libyaml</a></span></div>
       </div>
     </header>
 
@@ -476,20 +821,35 @@ while (yam_parse_next(parser, &evt) == YAM_OK) {
       </div>
     </section>
 
-    <section class="section reveal">
-      <h2>Performance and Reliability</h2>
-      <div class="grid-2">
-        <article class="tile">
-          <h3>Throughput (10 MB benchmark)*</h3>
-          <p><strong>Scanner:</strong> <span class="accent-green">352 MB/s</span> avg, 356 MB/s best</p>
-          <p><strong>Parser:</strong> <span class="accent-green">195 MB/s</span> avg across block, mixed, and JSON; 1.6&ndash;13&times; faster than libyaml and libfyaml</p>
-          <p><strong>SIMD:</strong> SSE4.2 <span class="fine-print">* Intel Core Ultra 7 155H</span></p>
-        </article>
-        <article class="tile">
-          <h3>Test Status</h3>
-          <p>Exact event streams for all 308 valid YAML Test Suite cases.<br/>Rejects all 94 invalid cases.</p>
-          <p>Project test count: <strong>961 total tests, 0 failures</strong>.</p>
-        </article>
+    <section class="section reveal" id="benchmarks">
+      <h2>Benchmarks</h2>
+      <p class="bench-lede">
+        Parse throughput in MB/s on one core, higher is better. Every parser
+        reads the same bytes; each panel has its own scale.
+      </p>
+      <div class="bench-legend" aria-hidden="true">
+        <span><i style="background: var(--bar-yam)"></i>yam</span>
+        <span><i style="background: var(--bar-other)"></i>other parsers</span>
+      </div>
+      <div id="bench-groups"></div>
+      <details class="bench-table">
+        <summary>Show the numbers</summary>
+        <div class="bench-table-scroll" id="bench-table"></div>
+      </details>
+      <p class="bench-method">
+        Intel Core Ultra 7 155H, one core, GCC 16.2 <code>-O2</code>, median of 11
+        runs in each of 3 passes, October 2026. yam, libyaml 0.2.5 and libfyaml
+        0.9.6 produce events; rapidyaml 0.16 is shown as its event parser with
+        buffers reused between parses, its fastest mode (and in the table also
+        as its usual tree API). Run <code>make bench-compare</code> on your own
+        machine, or see the
+        <a href="https://github.com/trans/yam#performance">README</a> for details.
+      </p>
+      <div class="callout">
+        <strong class="accent-green">Conformance:</strong>
+        exact event streams for all 308 valid YAML Test Suite cases and all 94
+        invalid ones rejected, in both parser modes; every valid case round-trips
+        through the emitter. 970 tests, 0 failures.
       </div>
     </section>
 
@@ -509,6 +869,285 @@ while (yam_parse_next(parser, &evt) == YAM_OK) {
     }, { threshold: 0.16 });
 
     document.querySelectorAll('.reveal').forEach((el) => observer.observe(el));
+
+    /* ── Fuzz counter ───────────────────────────────────────────────
+     * The total comes from fuzz-stats.json on the fuzz-stats branch, which a
+     * workflow updates after every ClusterFuzzLite run; the data-total
+     * attribute is the fallback if it can't be fetched. */
+    const STATS_URL = 'https://raw.githubusercontent.com/trans/yam/fuzz-stats/fuzz-stats.json';
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const tally = document.getElementById('tally');
+
+    function showTotal(total) {
+      const text = total.toLocaleString('en-US');
+      tally.setAttribute('aria-label', text + ' fuzz inputs parsed');
+      const chars = [...text];
+      const digits = chars.filter((c) => c !== ',').length;
+      if (tally.dataset.shown !== String(digits)) {
+        /* build the wheels: one 0-9 strip per digit, commas between */
+        tally.replaceChildren(...chars.map((c) => {
+          const el = document.createElement('span');
+          if (c === ',') {
+            el.className = 'tally-sep';
+            el.textContent = ',';
+          } else {
+            el.className = 'wheel';
+            const strip = document.createElement('span');
+            strip.className = 'wheel-strip';
+            for (let d = 0; d <= 9; d++) {
+              const face = document.createElement('span');
+              face.textContent = d;
+              strip.append(face);
+            }
+            el.append(strip);
+          }
+          el.setAttribute('aria-hidden', 'true');
+          return el;
+        }));
+        tally.dataset.shown = String(digits);
+      }
+      const strips = [...tally.querySelectorAll('.wheel-strip')];
+      const target = chars.filter((c) => c !== ',');
+      const roll = () => strips.forEach((strip, i) => {
+        /* the rightmost wheel lands last, like an odometer catching up */
+        strip.style.setProperty('--delay', (i * 0.07) + 's');
+        strip.style.setProperty('--d', target[i]);
+      });
+      /* a layout pass first, so the change from 0 is animated */
+      if (!reduceMotion) void tally.offsetWidth;
+      roll();
+    }
+
+    showTotal(Number(tally.dataset.total));
+    fetch(STATS_URL)
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then((stats) => {
+        if (stats.total_executions > Number(tally.dataset.total)) showTotal(stats.total_executions);
+      })
+      .catch(() => { /* keep the built-in total */ });
+
+    /* ── Benchmarks: small multiples, rendered from one data block ─── */
+    const BENCH = {
+  "groups": [
+    {
+      "title": "Generated input, 10 MB each",
+      "note": "Mostly short keys and values, where the cost per token dominates. rapidyaml leads here; yam is 1.7–3.2× faster than libyaml and libfyaml.",
+      "inputs": [
+        {
+          "name": "Block YAML",
+          "detail": "mappings and sequences",
+          "mbps": {
+            "yam": 175,
+            "rapidyaml": 236,
+            "libfyaml": 61,
+            "libyaml": 73,
+            "rapidyamlTree": 104
+          }
+        },
+        {
+          "name": "Mixed YAML",
+          "detail": "block, flow and quoted",
+          "mbps": {
+            "yam": 214,
+            "rapidyaml": 268,
+            "libfyaml": 73,
+            "libyaml": 84,
+            "rapidyamlTree": 112
+          }
+        },
+        {
+          "name": "JSON",
+          "detail": "an array of objects",
+          "mbps": {
+            "yam": 187,
+            "rapidyaml": 322,
+            "libfyaml": 59,
+            "libyaml": 69,
+            "rapidyamlTree": 116
+          }
+        },
+        {
+          "name": "Config files",
+          "detail": "comments, block scalars, anchors",
+          "mbps": {
+            "yam": 200,
+            "rapidyaml": 349,
+            "libfyaml": 102,
+            "libyaml": 120,
+            "rapidyamlTree": 184
+          }
+        }
+      ]
+    },
+    {
+      "title": "Real files, repeated to ~10 MB",
+      "note": "From rapidyaml’s own benchmark set. yam is fastest on all three, 1.1–1.8× ahead of rapidyaml.",
+      "inputs": [
+        {
+          "name": "travis.yml",
+          "detail": "Travis CI configuration",
+          "mbps": {
+            "yam": 479,
+            "rapidyaml": 411,
+            "libfyaml": 174,
+            "libyaml": 141,
+            "rapidyamlTree": 190
+          }
+        },
+        {
+          "name": "appveyor.yml",
+          "detail": "AppVeyor CI configuration",
+          "mbps": {
+            "yam": 434,
+            "rapidyaml": 395,
+            "libfyaml": 145,
+            "libyaml": 126,
+            "rapidyamlTree": 192
+          }
+        },
+        {
+          "name": "compile_commands.json",
+          "detail": "a compilation database",
+          "mbps": {
+            "yam": 2132,
+            "rapidyaml": 1183,
+            "libfyaml": 291,
+            "libyaml": 214,
+            "rapidyamlTree": 792
+          }
+        }
+      ]
+    },
+    {
+      "title": "Long text",
+      "note": "Multi-line scalars in each style, also from rapidyaml’s set. yam copies them a line or a run at a time with SIMD: 2–8× rapidyaml, up to 13× libyaml.",
+      "inputs": [
+        {
+          "name": "Literal block scalars",
+          "detail": "literal style (|)",
+          "mbps": {
+            "yam": 2967,
+            "rapidyaml": 962,
+            "libfyaml": 278,
+            "libyaml": 274,
+            "rapidyamlTree": 896
+          }
+        },
+        {
+          "name": "Folded block scalars",
+          "detail": "folded style (>)",
+          "mbps": {
+            "yam": 2006,
+            "rapidyaml": 872,
+            "libfyaml": 278,
+            "libyaml": 276,
+            "rapidyamlTree": 812
+          }
+        },
+        {
+          "name": "Double-quoted",
+          "detail": "with escapes and line breaks",
+          "mbps": {
+            "yam": 2817,
+            "rapidyaml": 340,
+            "libfyaml": 323,
+            "libyaml": 210,
+            "rapidyamlTree": 328
+          }
+        },
+        {
+          "name": "Single-quoted",
+          "detail": "with line breaks",
+          "mbps": {
+            "yam": 2669,
+            "rapidyaml": 355,
+            "libfyaml": 324,
+            "libyaml": 212,
+            "rapidyamlTree": 349
+          }
+        },
+        {
+          "name": "Plain",
+          "detail": "multi-line, unquoted",
+          "mbps": {
+            "yam": 840,
+            "rapidyaml": 295,
+            "libfyaml": 417,
+            "libyaml": 196,
+            "rapidyamlTree": 289
+          }
+        }
+      ]
+    }
+  ]
+};
+    const CHART_LIBS = [['yam', 'yam'], ['rapidyaml', 'rapidyaml'], ['libfyaml', 'libfyaml'], ['libyaml', 'libyaml']];
+    const TABLE_LIBS = [['yam', 'yam'], ['rapidyaml', 'rapidyaml (events)'], ['rapidyamlTree', 'rapidyaml (tree)'],
+                        ['libfyaml', 'libfyaml'], ['libyaml', 'libyaml']];
+    const mbps = (n) => n.toLocaleString('en-US') + ' MB/s';
+
+    function el(tag, cls, text) {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text !== undefined) e.textContent = text;
+      return e;
+    }
+
+    const groupsEl = document.getElementById('bench-groups');
+    for (const group of BENCH.groups) {
+      const g = el('div', 'bench-group');
+      g.append(el('h3', '', group.title), el('p', 'bench-group-note', group.note));
+      const grid = el('div', 'bench-grid');
+      for (const input of group.inputs) {
+        const panel = el('figure', 'bench-panel');
+        const cap = el('figcaption');
+        const text = el('div', 'bench-cap');
+        text.append(el('strong', '', input.name), el('span', '', input.detail));
+        const fig = el('div', 'bench-yam', input.mbps.yam.toLocaleString('en-US'));
+        fig.append(el('small', '', 'MB/s, yam'));
+        cap.append(text, fig);
+        panel.append(cap);
+        const rows = el('div', 'bench-rows');
+        panel.append(rows);
+        const max = Math.max(...CHART_LIBS.map(([k]) => input.mbps[k]));
+        for (const [key, name] of CHART_LIBS) {
+          const v = input.mbps[key];
+          const row = el('div', 'bench-row' + (key === 'yam' ? ' is-yam' : ''));
+          row.tabIndex = 0;
+          row.dataset.tip = name + ': ' + mbps(v);
+          row.setAttribute('aria-label', name + ', ' + input.name + ': ' + mbps(v));
+          const track = el('span', 'bench-track');
+          const bar = el('span', 'bench-bar');
+          bar.style.width = (v / max * 100) + '%';
+          track.append(bar);
+          row.append(el('span', 'bench-lib', name), track);
+          rows.append(row);
+        }
+        grid.append(panel);
+      }
+      g.append(grid);
+      groupsEl.append(g);
+    }
+
+    const table = el('table');
+    const head = el('tr');
+    head.append(el('th', '', 'Input'));
+    for (const [key, name] of TABLE_LIBS) head.append(el('th', key === 'yam' ? 'yam' : '', name));
+    const thead = el('thead');
+    thead.append(head);
+    const tbody = el('tbody');
+    for (const group of BENCH.groups) {
+      for (const input of group.inputs) {
+        const tr = el('tr');
+        tr.append(el('td', '', input.name));
+        for (const [key] of TABLE_LIBS) {
+          tr.append(el('td', key === 'yam' ? 'yam' : '', input.mbps[key].toLocaleString('en-US')));
+        }
+        tbody.append(tr);
+      }
+    }
+    table.append(thead, tbody);
+    document.getElementById('bench-table').append(table);
   </script>
 </body>
 </html>

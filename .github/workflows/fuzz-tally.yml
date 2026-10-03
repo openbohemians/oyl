@@ -1,0 +1,49 @@
+# After each ClusterFuzzLite batch run, add its fuzz inputs to the running
+# total on the fuzz-stats branch (fuzz-stats.json), which the docs page's
+# counter reads. A separate branch keeps these updates out of main's
+# history. Pushes made with GITHUB_TOKEN don't trigger other workflows.
+name: Fuzz tally
+on:
+  workflow_run:
+    workflows:
+      - "ClusterFuzzLite batch fuzzing (address)"
+      - "ClusterFuzzLite batch fuzzing (undefined)"
+    types: [completed]
+  workflow_dispatch:
+permissions:
+  contents: write   # push fuzz-stats
+  actions: read     # list runs, read their logs
+concurrency:
+  group: fuzz-tally
+  cancel-in-progress: false
+jobs:
+  tally:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check out the fuzz-stats branch
+        run: |
+          mkdir stats && cd stats
+          git init -q
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git fetch -q --depth=1 origin fuzz-stats; then
+            git checkout -q -b fuzz-stats FETCH_HEAD
+          else
+            git checkout -q --orphan fuzz-stats
+          fi
+
+      - name: Count new runs
+        run: .github/scripts/fuzz-tally.sh stats/fuzz-stats.json
+
+      - name: Push the updated total
+        working-directory: stats
+        run: |
+          git add fuzz-stats.json
+          if git diff --cached --quiet; then exit 0; fi
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -q -m "Fuzz tally: $(jq -r .total_executions fuzz-stats.json) executions"
+          git push -q origin fuzz-stats
