@@ -391,30 +391,30 @@ Parse throughput in MB/s (higher is better), measured with
 `-O2`, median of 11 runs in each of 3 passes (passes agree within 6%), October 2026.
 Every library parses the same bytes:
 
-| Input | Oyl | libyaml 0.2.5 | libfyaml 0.9.6 | rapidyaml 0.16 (events) | rapidyaml 0.16 (tree) |
-|---|---:|---:|---:|---:|---:|
-| **Generated, 10 MB** | | | | | |
-| block mappings and sequences | 175 | 73 | 61 | 236 | 104 |
-| mixed block, flow and quoted | 214 | 84 | 73 | 268 | 112 |
-| JSON | 187 | 69 | 59 | 322 | 116 |
-| config files (comments, block scalars, anchors) | 200 | 120 | 102 | 349 | 184 |
-| **Real files, repeated to ~10 MB** | | | | | |
-| travis.yml | 479 | 141 | 174 | 411 | 190 |
-| appveyor.yml | 434 | 126 | 145 | 395 | 192 |
-| compile_commands.json | 2132 | 214 | 291 | 1183 | 792 |
-| **Scalar-heavy text** | | | | | |
-| literal block scalars (`\|`) | 2967 | 274 | 278 | 962 | 896 |
-| folded block scalars (`>`) | 2006 | 276 | 278 | 872 | 812 |
-| multi-line double-quoted | 2817 | 210 | 323 | 340 | 328 |
-| multi-line single-quoted | 2669 | 212 | 324 | 355 | 349 |
-| multi-line plain | 840 | 196 | 417 | 295 | 289 |
+| Input | Oyl | libyaml 0.2.5 | libfyaml 0.9.6 | rapidyaml 0.16 |
+|---|---:|---:|---:|---:|
+| **Generated, 10 MB** | | | | |
+| block mappings and sequences | 175 | 73 | 61 | 236 |
+| mixed block, flow and quoted | 214 | 84 | 73 | 268 |
+| JSON | 187 | 69 | 59 | 322 |
+| config files (comments, block scalars, anchors) | 200 | 120 | 102 | 349 |
+| **Real files, repeated to ~10 MB** | | | | |
+| travis.yml | 479 | 141 | 174 | 411 |
+| appveyor.yml | 434 | 126 | 145 | 395 |
+| compile_commands.json | 2132 | 214 | 291 | 1183 |
+| **Scalar-heavy text** | | | | |
+| literal block scalars (`\|`) | 2967 | 274 | 278 | 962 |
+| folded block scalars (`>`) | 2006 | 276 | 278 | 872 |
+| multi-line double-quoted | 2817 | 210 | 323 | 340 |
+| multi-line single-quoted | 2669 | 212 | 324 | 355 |
+| multi-line plain | 840 | 196 | 417 | 295 |
 
-Oyl, libyaml and libfyaml are measured producing events. rapidyaml is
-shown two ways: its event parser (`EventHandlerInts`, with buffers reused
-between parses, its fastest mode) and its usual API, parsing in place into
-a new tree. The real files and scalar-heavy inputs are the test files from
-rapidyaml's own benchmark suite; all timings were measured here, on the
-machine above, with `make bench-compare`.
+All four are measured as event parsers: Oyl, libyaml and libfyaml as they
+are, and rapidyaml through its event parser (`EventHandlerInts`, with
+buffers reused between parses, its fastest mode) rather than its usual API,
+which builds a tree and so does more work. The real files and scalar-heavy
+inputs are the test files from rapidyaml's own benchmark suite; all timings
+were measured here, on the machine above, with `make bench-compare`.
 
 Oyl is 1.7–3.4× faster than libyaml and libfyaml on structure-heavy input
 and up to 13× faster on scalar-heavy input. Against rapidyaml's event

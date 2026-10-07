@@ -841,10 +841,10 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
         All results were measured here with <code>make bench-compare</code>:
         Intel Core Ultra 7 155H, one core, GCC 16.2 <code>-O2</code>, median of 11
         runs in each of 3 passes, October 2026. The real-file and long-text inputs
-        are rapidyaml’s own benchmark files. Oyl, libyaml 0.2.5 and libfyaml
-        0.9.6 produce events; rapidyaml 0.16 is shown as its event parser with
-        buffers reused between parses, its fastest mode (and in the table also
-        as its usual tree API). Run it on your own machine, or see the
+        are rapidyaml’s own benchmark files. All four are measured as event
+        parsers: Oyl, libyaml 0.2.5, libfyaml 0.9.6, and rapidyaml 0.16 through its
+        event parser with buffers reused between parses, its fastest mode, rather
+        than its usual API, which builds a tree. Run it on your own machine, or see the
         <a href="https://github.com/openbohemians/oyl#performance">README</a> for details.
       </p>
       <div class="callout">
@@ -942,8 +942,7 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
                 "oyl": 479,
                 "rapidyaml": 411,
                 "libfyaml": 174,
-                "libyaml": 141,
-                "rapidyamlTree": 190
+                "libyaml": 141
               }
             },
             {
@@ -953,8 +952,7 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
                 "oyl": 434,
                 "rapidyaml": 395,
                 "libfyaml": 145,
-                "libyaml": 126,
-                "rapidyamlTree": 192
+                "libyaml": 126
               }
             },
             {
@@ -964,8 +962,7 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
                 "oyl": 2132,
                 "rapidyaml": 1183,
                 "libfyaml": 291,
-                "libyaml": 214,
-                "rapidyamlTree": 792
+                "libyaml": 214
               }
             }
           ]
@@ -981,8 +978,7 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
                 "oyl": 175,
                 "rapidyaml": 236,
                 "libfyaml": 61,
-                "libyaml": 73,
-                "rapidyamlTree": 104
+                "libyaml": 73
               }
             },
             {
@@ -992,8 +988,7 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
                 "oyl": 214,
                 "rapidyaml": 268,
                 "libfyaml": 73,
-                "libyaml": 84,
-                "rapidyamlTree": 112
+                "libyaml": 84
               }
             },
             {
@@ -1003,8 +998,7 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
                 "oyl": 187,
                 "rapidyaml": 322,
                 "libfyaml": 59,
-                "libyaml": 69,
-                "rapidyamlTree": 116
+                "libyaml": 69
               }
             },
             {
@@ -1014,8 +1008,7 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
                 "oyl": 200,
                 "rapidyaml": 349,
                 "libfyaml": 102,
-                "libyaml": 120,
-                "rapidyamlTree": 184
+                "libyaml": 120
               }
             }
           ]
@@ -1031,8 +1024,7 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
                 "oyl": 2967,
                 "rapidyaml": 962,
                 "libfyaml": 278,
-                "libyaml": 274,
-                "rapidyamlTree": 896
+                "libyaml": 274
               }
             },
             {
@@ -1042,8 +1034,7 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
                 "oyl": 2006,
                 "rapidyaml": 872,
                 "libfyaml": 278,
-                "libyaml": 276,
-                "rapidyamlTree": 812
+                "libyaml": 276
               }
             },
             {
@@ -1053,8 +1044,7 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
                 "oyl": 2817,
                 "rapidyaml": 340,
                 "libfyaml": 323,
-                "libyaml": 210,
-                "rapidyamlTree": 328
+                "libyaml": 210
               }
             },
             {
@@ -1064,8 +1054,7 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
                 "oyl": 2669,
                 "rapidyaml": 355,
                 "libfyaml": 324,
-                "libyaml": 212,
-                "rapidyamlTree": 349
+                "libyaml": 212
               }
             },
             {
@@ -1075,8 +1064,7 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
                 "oyl": 840,
                 "rapidyaml": 295,
                 "libfyaml": 417,
-                "libyaml": 196,
-                "rapidyamlTree": 289
+                "libyaml": 196
               }
             }
           ]
@@ -1084,8 +1072,7 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
       ]
     };
     const CHART_LIBS = [['oyl', 'oyl'], ['rapidyaml', 'rapidyaml'], ['libfyaml', 'libfyaml'], ['libyaml', 'libyaml']];
-    const TABLE_LIBS = [['oyl', 'oyl'], ['rapidyaml', 'rapidyaml (events)'], ['rapidyamlTree', 'rapidyaml (tree)'],
-                        ['libfyaml', 'libfyaml'], ['libyaml', 'libyaml']];
+    const TABLE_LIBS = CHART_LIBS;
     const mbps = (n) => n.toLocaleString('en-US') + ' MB/s';
 
     function el(tag, cls, text) {
