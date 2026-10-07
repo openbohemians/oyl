@@ -48,20 +48,21 @@ event parser, built from source.
    blanks, line breaks, `oyl_find_any4`, the flow mask) runs the scalar
    fallback on ARM and Apple Silicon. macOS CI (arm64) can verify a NEON
    path. NEON has no movemask; use `vshrn_n_u16` to narrow.
-2. **Plain-scalar classifier.** Today it is SSE4.2 `PCMPESTRI`, which is
-   microcoded. Candidates: the two-table nibble lookup (`PSHUFB` on x86,
-   `vqtbl1q_u8` on ARM, as simdjson does), or one unsigned compare for
-   `<= ' '` plus a few equality compares. Compare all three in
-   `bench/bench_scanner.c` before choosing. The nibble tables for Oyl's set
-   were worked out in a note from another session, with a sample SSSE3
-   loop and caveats (`git show 5784363:.ai/inbox/NOTE-simd-nibble-classification.md`):
+2. **Plain-scalar classifier: use the nibble lookup, as part of NEON.**
+   Measured 2026-10-07 (results below): on x86 it is only a small win over
+   `PCMPESTRI`, so it isn't worth doing alone. Its value is one design for
+   both architectures: `PSHUFB` (SSSE3) on x86, `vqtbl1q_u8` on ARM. The
+   tables for Oyl's set were worked out in a note from another session,
+   with a sample SSSE3 loop and caveats
+   (`git show 5784363:.ai/inbox/NOTE-simd-nibble-classification.md`):
    - high nibble: `01 01 02 04 00 08 00 10`, then zeros
    - low nibble: `03 01 01 03 01 01 01 01 01 01 05 19 03 19 01 11`
-3. **Short-scalar prefix.** Check 8 bytes before starting the SIMD
-   plain-scalar scan, the trick that helped quoted strings. Maybe 5–10% on
-   block YAML. A quick experiment.
+3. ~~Short-scalar prefix~~: dropped. A 256-byte-table scalar loop is that
+   idea at its extreme. It was twice as fast per call in isolation on short
+   runs, yet slower end to end on every file.
 4. **Structural index.** A simdjson-style bitmask of structural bytes that
-   the scanner walks.
+   the scanner walks. This is the lever for short-token input: it replaces a
+   ~25-cycle classify per word with a bit scan.
 5. **Flow fast path.** Inside `[...]`/`{...}`, read common JSON-like content
    directly and emit events without token structs; fall back to the normal
    path for anything unusual. Estimated 1.3–1.5× on JSON. Prototype first.
@@ -71,3 +72,28 @@ event parser, built from source.
 To verify any of these, diff the event streams of old vs new over the fuzz
 corpus (plus shifted copies to move 16- and 64-byte boundaries), and
 compare instruction counts.
+
+## Plain-scalar classifier measurements (2026-10-07)
+
+Method: link `liboyl.a` with `-Wl,--wrap=oyl_scan_plain_scalar`, so every
+candidate runs inside the real scanner in one binary (same code layout),
+interleaved, pinned, 21 reps, three passes. Calls the scanner made were
+also recorded and replayed in isolation. Inputs: rapidyaml's real files
+repeated to ~1 MB, plus the four generated inputs. Results are end-to-end
+parse speed against today's `PCMPESTRI`:
+
+| Candidate | Real configs | Long plain text | Generated |
+|---|---|---|---|
+| nibble (`PSHUFB`) | 0 to +3% | +4 to +7% | −2 to +2% (noise) |
+| range compare + equality compares (SSE2) | −3 to 0% | −2 to −3% | −2 to +1% |
+| 256-byte table, scalar | −4 to −6% | −24% | −1 to −6% |
+| today's scalar fallback (what ARM runs) | −9 to −15% | −38% | −1 to −8% |
+
+- Most calls cover one word: 84–100% of runs are under 16 bytes, and on the
+  generated inputs the mean is 3–4 bytes. So AVX2 won't help here.
+- Every SIMD candidate costs ~25 cycles per call when calls are chained
+  as in the scanner. Inlining saves only ~1 cycle. The cost is the latency
+  chain (load → classify → bitmask → index → next address), not the call
+  and not the classification.
+- `PCMPESTRI`'s ranges also stop at `\` and `|`; the scanner treats them as
+  text. The exact-set candidates are safe drop-ins.
