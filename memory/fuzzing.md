@@ -50,3 +50,10 @@ make it certain or make it ambiguous; don't guess.
   grepping output. `just sanitize` ends with "all clean: 0 sanitizer hits".
 - Code that only compiles on macOS (feature macros, BSD struct fields) can
   only be checked by CI.
+- `just sanitize` leaves ASan-built objects in `build/`, and make doesn't
+  track CFLAGS, so a plain `make test-all` after it fails to link. Run
+  `make clean` first.
+- The fuzzer also checks that the incremental and eager parse paths agree
+  on every event field (added 2026-10-07). Its first findings were mark
+  differences, not crashes. Replay one and diff the event dumps of the two
+  paths (`oyl_parser_set_merge(p, true)` forces the eager path).
