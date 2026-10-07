@@ -70,7 +70,7 @@ static inline size_t oyl_find_any4_short(const char *buf, size_t len,
 
 /* Bitmask of the bytes the flow-key lookahead looks at in the 64 bytes at
  * p (all must be readable): bit k is set if p[k] is one of ' " # [ ] { }
- * \n \r. Inline, since it runs once per 64 input bytes in a hot loop; SSE2
+ * < \n \r. Inline, since it runs once per 64 input bytes in a hot loop; SSE2
  * is part of x86-64, so this needs no runtime dispatch. */
 
 #if defined(__SSE2__)
@@ -83,6 +83,7 @@ static inline uint64_t oyl_flow_mask16(__m128i v) {
     m = _mm_or_si128(m, _mm_cmpeq_epi8(v, _mm_set1_epi8('"')));
     m = _mm_or_si128(m, _mm_cmpeq_epi8(v, _mm_set1_epi8('\'')));
     m = _mm_or_si128(m, _mm_cmpeq_epi8(v, _mm_set1_epi8('#')));
+    m = _mm_or_si128(m, _mm_cmpeq_epi8(v, _mm_set1_epi8('<')));
     m = _mm_or_si128(m, _mm_cmpeq_epi8(v, _mm_set1_epi8('\n')));
     m = _mm_or_si128(m, _mm_cmpeq_epi8(v, _mm_set1_epi8('\r')));
     return (uint16_t)_mm_movemask_epi8(m);
@@ -100,7 +101,7 @@ static inline uint64_t oyl_flow_mask64(const char *p) {
     for (int k = 0; k < 64; k++) {
         char c = p[k];
         if (c == '\'' || c == '"' || c == '#' || c == '[' || c == ']' ||
-            c == '{' || c == '}' || c == '\n' || c == '\r')
+            c == '{' || c == '}' || c == '<' || c == '\n' || c == '\r')
             m |= (uint64_t)1 << k;
     }
     return m;

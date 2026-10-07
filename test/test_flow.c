@@ -455,6 +455,10 @@ static void test_flow_key_quotes_in_plain(void) {
     check("[!'' '[']: x", "{ [ <!''> [ ] x }");   /* a tag may contain quotes */
     check("[!:'' ']']: x", "{ [ <!:''> ] ] x }");  /* bracket in the string */
     check("[!<tag:a,b> '[']: y", "{ [ <tag:a,b> [ ] y }");  /* , in a verbatim tag */
+    /* a verbatim tag may contain brackets: skipped whole (ClusterFuzzLite) */
+    check("[!<![![[> x]: y", "{ [ <![![[> x ] y }");
+    check("[!<a]b> x, [c]]: y", "{ [ <a]b> x [ c ] ] y }");
+    check("[a!<b], [c]]: x", "[ a!<b ] ERR");      /* "!<" inside text is text */
 }
 
 /* Peak resident memory of this process, in MB. */

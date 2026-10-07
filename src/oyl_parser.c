@@ -2796,7 +2796,7 @@ static bool fk_colon_follows(const char *input, size_t len, size_t i) {
     return false;
 }
 
-/* The scan only stops at the bytes ' " # [ ] { } \n \r. A cursor walks
+/* The scan only stops at the bytes ' " # [ ] { } < \n \r. A cursor walks
  * them using a bitmask built 64 bytes at a time (oyl_flow_mask64, SIMD on
  * x86-64): bit k of `bits` marks a stop at base + k. Skipping a quoted
  * scalar or comment walks the same bits, so no byte is examined twice. */
@@ -2813,7 +2813,7 @@ static inline uint64_t fk_mask_at(const char *in, size_t len, size_t base) {
     for (size_t k = 0; base + k < len; k++) {
         char c = in[base + k];
         if (c == '\'' || c == '"' || c == '#' || c == '[' || c == ']' ||
-            c == '{' || c == '}' || c == '\n' || c == '\r')
+            c == '{' || c == '}' || c == '<' || c == '\n' || c == '\r')
             m |= (uint64_t)1 << k;
     }
     return m;
@@ -2887,13 +2887,24 @@ static bool fk_scan(oyl_parser *p, size_t offset) {
                 if (qend == len) goto unterminated;
                 break;
             case -1:
-                p->fk_nkeys = -1;
-                p->fk_lo = offset;
-                p->fk_hi = len;
-                p->fk_valid = true;
-                return true;
+                goto ambiguous;
             default:
                 break;
+            }
+            break;
+        case '<':
+            /* A verbatim tag ("!<tag:a,b>") may contain [ ] { } , # and
+             * quotes, so it is skipped whole, to its '>'. It starts a token
+             * only after a blank or an entry start; elsewhere "!<" is text. */
+            if (i >= 1 && input[i - 1] == '!' &&
+                (i == 1 || input[i - 2] == ' ' || input[i - 2] == '\t' ||
+                 input[i - 2] == '[' || input[i - 2] == '{' || input[i - 2] == ',')) {
+                size_t k = i + 1;
+                while (k < len && input[k] != '>' && input[k] != ' ' &&
+                       input[k] != '\t' && input[k] != '\n' && input[k] != '\r')
+                    k++;
+                if (k == len || input[k] != '>') goto ambiguous;
+                fk_seek(&cur, k + 1);
             }
             break;
         case '#':
@@ -2949,6 +2960,14 @@ static bool fk_scan(oyl_parser *p, size_t offset) {
             break;
         }
     }
+ambiguous:
+    /* telling needs full tokenization: answer "key" for everything here,
+     * which sends the parser to the eager path (see above) */
+    p->fk_nkeys = -1;
+    p->fk_lo = offset;
+    p->fk_hi = len;
+    p->fk_valid = true;
+    return true;
 unterminated:
     /* unclosed collections are never keys */
     p->fk_lo = offset;
