@@ -127,8 +127,8 @@ generated inputs:
 
 ## Structural index: oracle measurements (2026-10-07)
 
-The question: what is finding bytes worth? A scratch tool (not in the repo
-yet) wraps the scanner's three out-of-line helpers (`oyl_scan_plain_scalar`,
+The question: what is finding bytes worth? `bench/oracle/` (`make
+bench-oracle`) wraps the scanner's three out-of-line helpers (`oyl_scan_plain_scalar`,
 `oyl_skip_blanks`, `oyl_scan_to_break`), records every call, verifies a
 replay call for call and event for event, then times whole parses with the
 answers read from the recording. One added call layer costs ~2 cycles per
