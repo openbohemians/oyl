@@ -61,3 +61,23 @@ make it certain or make it ambiguous; don't guess.
   the whole push. When a code commit and a `[skip ci]` notes commit go out
   together, push the code commit first, or start CI by hand afterwards
   (`gh workflow run ci.yml --ref main`).
+
+## Blind spots, and what to add (to do; the user said "not yet", 2026-10-07)
+
+Since late September every fuzz finding has been an esoteric flow-key
+lookahead input (`[L ? "]: x`, `[!<![![[> x]: y`), while the bugs that real
+users would hit came from elsewhere: whole-stream memory with anchors,
+quadratic merge/resolve, a hang at an event limit just under the event
+count, valid YAML rejected (`?\n  ? x\n: y`), malformed YAML accepted
+(release.md issue 6). The fuzzer can't see these: its inputs are a few KB,
+its event limit is fixed at 10,000, and it only checks Oyl against itself
+(round trip, both parse paths), with no outside opinion on validity.
+
+To do, when the user says so:
+1. **Differential check against libfyaml** (claims full YAML 1.2 test-suite
+   compliance; installed here, and `bench/compare/cmp_libfyaml.c` already
+   drives its event parser): over the corpus and suite, compare accept or
+   reject, then the events. This is what settles issue 6, rather than
+   PyYAML, which is YAML 1.1.
+2. **Vary the limits per fuzz input**: take `max_events` and `max_depth`
+   from input bytes, so the edges near the limits get exercised.
