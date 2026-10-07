@@ -794,6 +794,56 @@ static bool is_known_roundtrip_failure(const char *label, oyl_emit_style style) 
 }
 
 static int rt_passed = 0, rt_failed = 0, rt_xfailed = 0, rt_xpassed = 0;
+static int paths_passed = 0, paths_failed = 0;
+
+/* ── Both parse paths give the same events ───────────────── */
+
+static bool str_eq(oyl_str a, oyl_str b) {
+    return a.len == b.len && (a.len == 0 || memcmp(a.data, b.data, a.len) == 0);
+}
+
+static bool mark_eq(oyl_mark a, oyl_mark b) {
+    return a.offset == b.offset && a.line == b.line && a.col == b.col;
+}
+
+/* Every field of every event, marks included, must be the same whichever
+ * path parses: the incremental parser, or the eager one (forced, as in
+ * run_test, by enabling merge keys, which no suite case uses). */
+static bool paths_agree(const test_case *tc, bool verbose) {
+    size_t len = strlen(tc->yaml);
+    oyl_arena *ai = oyl_arena_new(4096), *ae = oyl_arena_new(4096);
+    oyl_parser *inc = ai ? oyl_parser_new(tc->yaml, len, ai) : NULL;
+    oyl_parser *eag = ae ? oyl_parser_new(tc->yaml, len, ae) : NULL;
+    bool ok = inc && eag;
+    if (eag) oyl_parser_set_merge(eag, true);
+    for (int i = 0; ok; i++) {
+        const oyl_event *a, *b;
+        oyl_status sa = oyl_parse_next(inc, &a), sb = oyl_parse_next(eag, &b);
+        if (sa != OYL_OK || sb != OYL_OK) {
+            ok = sa == sb;
+            break;
+        }
+        if (a->type != b->type || a->scalar_style != b->scalar_style ||
+            a->implicit != b->implicit || a->flow != b->flow ||
+            !str_eq(a->value, b->value) || !str_eq(a->anchor, b->anchor) ||
+            !str_eq(a->tag, b->tag) || !mark_eq(a->start, b->start) ||
+            !mark_eq(a->end, b->end)) {
+            if (verbose)
+                printf("    event %d differs: incremental type %d %zu..%zu implicit %d,"
+                       " eager type %d %zu..%zu implicit %d\n", i,
+                       a->type, a->start.offset, a->end.offset, a->implicit,
+                       b->type, b->start.offset, b->end.offset, b->implicit);
+            ok = false;
+            break;
+        }
+        if (a->type == OYL_EVT_STREAM_END || a->type == OYL_EVT_NONE) break;
+    }
+    if (inc) oyl_parser_free(inc);
+    if (eag) oyl_parser_free(eag);
+    if (ai) oyl_arena_free(ai);
+    if (ae) oyl_arena_free(ae);
+    return ok;
+}
 
 /* ── Main ────────────────────────────────────────────────── */
 
@@ -810,7 +860,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    printf("\nyam parser — YAML Test Suite\n");
+    printf("\nOyl parser — YAML Test Suite\n");
     printf("═══════════════════════════════════════════════════════════\n\n");
 
     DIR *dir = opendir(suite_dir);
@@ -894,6 +944,16 @@ int main(int argc, char **argv) {
                 }
             }
 
+            /* ... and give the same events on both parse paths */
+            if (result == RESULT_PASS && !tc->fail) {
+                if (paths_agree(tc, verbose)) {
+                    paths_passed++;
+                } else {
+                    paths_failed++;
+                    printf("  %-8s parse paths " RED "DIFFER" RESET "  %s\n", label, tc->name);
+                }
+            }
+
             switch (result) {
             case RESULT_PASS:
                 passed++;
@@ -930,8 +990,10 @@ int main(int argc, char **argv) {
     printf("\n  Emitter round trip: " GREEN "Pass: %d  " RESET RED "Fail: %d  " RESET
            "Known (XFAIL): %d", rt_passed, rt_failed, rt_xfailed);
     if (rt_xpassed) printf(YELLOW "  XPASS: %d" RESET, rt_xpassed);
+    printf("\n  Parse paths agree, every event field: " GREEN "Pass: %d  " RESET
+           RED "Fail: %d" RESET, paths_passed, paths_failed);
     printf("\n\n");
 
     return (failed > 0 || errors > 0 || xpassed > 0 ||
-            rt_failed > 0 || rt_xpassed > 0) ? 1 : 0;
+            rt_failed > 0 || rt_xpassed > 0 || paths_failed > 0) ? 1 : 0;
 }

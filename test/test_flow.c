@@ -77,8 +77,50 @@ static void render(const char *yaml, bool eager, char *out, size_t cap) {
     oyl_arena_free(a);
 }
 
+static bool str_eq(oyl_str a, oyl_str b) {
+    return a.len == b.len && (a.len == 0 || memcmp(a.data, b.data, a.len) == 0);
+}
+
+static bool mark_eq(oyl_mark a, oyl_mark b) {
+    return a.offset == b.offset && a.line == b.line && a.col == b.col;
+}
+
+/* Both parsers give the same events, every field and mark included.
+ * Returns the index of the first event that differs, or -1. */
+static int first_difference(const char *yaml) {
+    size_t len = strlen(yaml);
+    oyl_arena *ai = oyl_arena_new(4096), *ae = oyl_arena_new(4096);
+    oyl_parser *inc = oyl_parser_new(yaml, len, ai);
+    oyl_parser *eag = oyl_parser_new(yaml, len, ae);
+    oyl_parser_set_merge(eag, true);
+    int diff = -1;
+    for (int i = 0; i < 1000; i++) {
+        const oyl_event *a, *b;
+        oyl_status sa = oyl_parse_next(inc, &a), sb = oyl_parse_next(eag, &b);
+        if (sa != OYL_OK || sb != OYL_OK) {
+            if (sa != sb) diff = i;
+            break;
+        }
+        if (a->type != b->type || a->scalar_style != b->scalar_style ||
+            a->implicit != b->implicit || a->flow != b->flow ||
+            !str_eq(a->value, b->value) || !str_eq(a->anchor, b->anchor) ||
+            !str_eq(a->tag, b->tag) || !mark_eq(a->start, b->start) ||
+            !mark_eq(a->end, b->end)) {
+            diff = i;
+            break;
+        }
+        if (a->type == OYL_EVT_STREAM_END || a->type == OYL_EVT_NONE) break;
+    }
+    oyl_parser_free(inc);
+    oyl_parser_free(eag);
+    oyl_arena_free(ai);
+    oyl_arena_free(ae);
+    return diff;
+}
+
 /* On error, the eager parser delivers no events at all (it parses the whole
- * stream up front), so for error cases it only has to fail too. */
+ * stream up front), so for error cases it only has to fail too. Otherwise
+ * both parsers must agree on every event field, marks included. */
 static void check(const char *yaml, const char *expected) {
     char inc[1024], eag[1024];
     render(yaml, false, inc, sizeof inc);
@@ -86,10 +128,14 @@ static void check(const char *yaml, const char *expected) {
     size_t elen = strlen(expected);
     bool is_err = elen >= 3 && strcmp(expected + elen - 3, "ERR") == 0;
     bool eager_ok = is_err ? strcmp(eag, "ERR") == 0 : strcmp(eag, expected) == 0;
+    int diff = is_err ? -1 : first_difference(yaml);
     tests_run++;
     if (strcmp(inc, expected) != 0 || !eager_ok) {
         printf("  FAIL: %s\n    expected:    %s\n    incremental: %s\n    eager:       %s\n",
                yaml, expected, inc, eag);
+        tests_failed++;
+    } else if (diff >= 0) {
+        printf("  FAIL: %s\n    the parsers differ at event %d (marks or flags)\n", yaml, diff);
         tests_failed++;
     } else {
         tests_passed++;
@@ -115,6 +161,15 @@ static void test_flow_keys(void) {
     check("&x [a]:\n[b]: c\n", "{ &x [ a ] ~ [ b ] c }");
     check("x:\n [b]: c\n", "{ x { [ b ] c } }");
     check("[a]:\n [b]: c\n", "{ [ a ] { [ b ] c } }");
+    /* an explicit value may be a compact mapping with a flow key on the
+     * ':' line; an implicit key's value may not */
+    check("? a\n: {g}: x\n", "{ a { { g ~ } x } }");
+    check("? a\n: [g]: x\n  y: z\n", "{ a { [ g ] x y z } }");
+    check(": [g]: x\n", "{ ~ { [ g ] x } }");
+    check("k: {g}: x\n", "{ k { g ~ } ERR");
+    /* an empty explicit key's ':' must be at the mapping's indent */
+    check(":\n   ?\n  : x\n", "{ ~ { ~ ERR");
+    check("?\n: x\n", "{ ~ x }");
 }
 
 /* Plain scalars containing quote or comment characters must not confuse
@@ -141,6 +196,9 @@ static void test_flow_empty_props(void) {
     check("[&a, b]", "[ &a ~ b ]");       /* used to drop an entry */
     check("[&a ]", "[ &a ~ ]");
     check("[&a x: y]", "[ { &a x y } ]");
+    /* a pair with an empty key starts at the key's props */
+    check("[&a : b]", "[ { &a ~ b } ]");
+    check("[x, !t\n: b]", "[ x { <!t> ~ b } ]");
     check("{a: &b , c: d}", "{ a &b ~ c d }");
     check("k: &a\n!t :\n", "{ k &a ~ <!t> ~ ~ }");   /* next entry: tagged empty key */
     /* props on an empty value, then a sibling entry with props */

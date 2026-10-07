@@ -78,6 +78,15 @@ typedef struct {
 } oyl_event;
 ```
 
+`start` and `end` give each event's extent in the input. Quoted scalars
+include their quotes. A collection start spans the token that opens it:
+`{`, `[`, a block sequence's first `-`, or the `?` or `:` of an explicit
+entry; a block mapping opened by an ordinary key is zero width at that
+key. `}` and `]` span the bracket; a block collection ends zero width
+where the next token starts. A `---` or `...` spans the marker; an
+implicit document start or end is zero width. `implicit` is meaningful
+only for document events.
+
 Event types arrive in a well-formed stream:
 
 ```

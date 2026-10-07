@@ -14,7 +14,9 @@
  *    limit was bypassed);
  *  - input that parses is emitted as YAML that doesn't parse back to the
  *    same meaning (event types, values, anchors, tags, alias names, and
- *    for untagged scalars their core schema type).
+ *    for untagged scalars their core schema type);
+ *  - the incremental parser and the eager one disagree on whether the
+ *    input parses, or on any field of any event, marks included.
  *
  * Build (via `just fuzz`):
  *   clang -fsanitize=fuzzer,address,undefined -g -O1 -Iinclude \
@@ -104,6 +106,53 @@ static bool parse_canon(const char *yaml, size_t len, uint8_t flags, oyl_emitter
     return st == OYL_OK;
 }
 
+static uint64_t fnv(uint64_t h, const void *data, size_t n) {
+    const unsigned char *s = data;
+    for (size_t i = 0; i < n; i++) h = (h ^ s[i]) * 1099511628211u;
+    return h;
+}
+
+static uint64_t fnv_str(uint64_t h, oyl_str s) {
+    h = fnv(h, &s.len, sizeof s.len);
+    return s.len ? fnv(h, s.data, s.len) : h;
+}
+
+/* Parse with the incremental parser, or the eager one (forced by merge
+ * keys), hashing every field of every event. Returns false if parsing
+ * fails; an eager parse fails before its first event, so failures are
+ * compared, not the events before them. */
+static bool parse_fields(const char *yaml, size_t len, bool eager, uint64_t *hash) {
+    oyl_arena *a = oyl_arena_new(4096);
+    if (!a) return false;
+    oyl_parser *p = oyl_parser_new(yaml, len, a);
+    if (!p) { oyl_arena_free(a); return false; }
+    oyl_parser_set_max_events(p, MAX_EVENTS);
+    if (eager) oyl_parser_set_merge(p, true);
+    uint64_t h = 14695981039346656037u;
+    const oyl_event *e;
+    oyl_status st;
+    while ((st = oyl_parse_next(p, &e)) == OYL_OK) {
+        unsigned char flags[4] = {(unsigned char)e->type, (unsigned char)e->scalar_style,
+                                  e->implicit, e->flow};
+        size_t marks[6] = {e->start.offset, e->start.line, e->start.col,
+                           e->end.offset, e->end.line, e->end.col};
+        h = fnv(h, flags, sizeof flags);
+        h = fnv_str(fnv_str(fnv_str(h, e->value), e->anchor), e->tag);
+        h = fnv(h, marks, sizeof marks);
+        if (e->type == OYL_EVT_STREAM_END || e->type == OYL_EVT_NONE) break;
+    }
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+    *hash = h;
+    return st == OYL_OK;
+}
+
+static bool has_merge_key(const char *s, size_t n) {
+    for (size_t i = 0; i + 1 < n; i++)
+        if (s[i] == '<' && s[i + 1] == '<') return true;
+    return false;
+}
+
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (size < 1) return 0;
     uint8_t flags = data[0];
@@ -137,6 +186,16 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         if (before_len != after_len ||
             (before_len && memcmp(before, after, before_len) != 0))
             __builtin_trap(); /* emitted YAML means something else */
+    }
+
+    /* both parse paths: without merge keys in the input, enabling them
+     * changes only which parser runs */
+    if (!(flags & 7) && !has_merge_key(buf, size)) {
+        uint64_t hi = 0, he = 0;
+        bool oi = parse_fields(buf, size, false, &hi);
+        bool oe = parse_fields(buf, size, true, &he);
+        if (oi != oe || (oi && hi != he))
+            __builtin_trap(); /* the parse paths disagree */
     }
 
     free(before);

@@ -87,6 +87,18 @@ Programs built against 0.x need these changes and a rebuild:
   plain scalar case where memory grew with the input size times the
   number of such scalars.
 - The SIMD plain-scalar scan let control characters through.
+- Event marks and the `implicit` flag no longer depend on which of the two
+  internal parsers runs: the incremental one, or the eager one used for
+  merge keys, alias resolution and schemas, and as a fallback. An explicit
+  `---` now always spans the marker; implicit document starts and ends are
+  zero width; a block sequence spans its first `-`, a mapping opened by `?`
+  or `:` spans it, and a block collection ends zero width where the next
+  token starts; `implicit` is set only on document events. The test suite
+  and the fuzzer check that both parsers agree on every event field.
+- After an explicit value (`? a` then `: [g]: x`), a compact mapping whose
+  key is a flow collection was rejected by the incremental parser.
+- After an empty explicit key (`?` alone on its line), the incremental
+  parser accepted a `:` indented differently from its mapping.
 - `oyl_read_file` reads until end of file, rejects directories and reports
   read errors.
 - Arena allocation is hardened against size overflow and misalignment.
