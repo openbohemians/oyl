@@ -10,6 +10,8 @@
   `liboyl1` and `liboyl-dev`; Arch and RPM `oyl`.
 - The repo moved to **github.com/openbohemians/oyl** (`trans/yam`
   redirects). The website is **openbohemians.github.io/oyl/**.
+- The Crystal binding moved too: `trans/yam.cr` became
+  **openbohemians/oyl.cr** (redirects), shard `oyl`, module `Oyl`.
 - History keeps the old name: `libyam0`, `libyam.so.0`, the 0.x CHANGELOG
   entries and older package changelog stanzas. Don't rename them.
 - The hero image still says "I YAM WHAT I YAM"; its alt text explains it.

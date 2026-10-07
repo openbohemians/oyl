@@ -102,8 +102,9 @@ tagging or publishing a release.**
    same column, again and again. A node can't have two tags, and a block
    mapping value must be indented past its key. 40 corpus inputs that
    Oyl parses are structurally malformed to PyYAML (with bad bytes
-   replaced); PyYAML is YAML 1.1, so each needs a 1.2 check. Not yet
-   investigated; the user decides.
+   replaced); PyYAML is YAML 1.1, so each needs a 1.2 check: the planned
+   libfyaml differential check (fuzzing.md, "Blind spots") would do it.
+   Not yet investigated; the user decides.
 
 ## Benchmark claims to update (held by the user, 2026-10-07)
 
@@ -127,14 +128,23 @@ table's protocol) and update all of them from that run.
 3. Follow `RELEASING.md`: commit, push, watch CI, tag `v1.0.0`, push the
    tag, publish the GitHub release. The Package workflow attaches the
    Arch, Debian and RPM builds.
+4. Re-vendor the Crystal binding at the tag (see below) and push it.
+
+## The Crystal binding
+
+Done 2026-10-07: **openbohemians/oyl.cr** (transferred from trans/yam.cr,
+which redirects; local folder `~/Projects/oyl.cr`), shard `oyl`, module
+`Oyl`, ported to the 1.0 API. It **vendors** Oyl's C sources in `ext/oyl`
+(`ext/oyl/COMMIT` names the commit), because shards doesn't fetch git
+submodules: the old submodule setup never installed. After any library
+change, run `make -C ext sync OYL=~/Projects/oyl`, then `make -C ext &&
+crystal spec`, and commit. Currently vendored: `bf27b20` (today's main).
+Open: `Oyl.parse` resolves scalars like Crystal's YAML module (YAML 1.1
+yes/no/on/off booleans), not YAML 1.2's core schema; the user may decide.
 
 ## After the tag
 
-- The Crystal binding (yam.cr, to become oyl.cr) needs updating for the 1.0
-  API: library-owned events and tokens via const pointers, opaque schemas,
-  emitter setters and the `oyl_emit_*` builders.
-- Then the 1.1 work in [performance.md](performance.md) and
-  [ideas.md](ideas.md).
+- The 1.1 work in [performance.md](performance.md) and [ideas.md](ideas.md).
 
 ## Decisions behind 1.0
 
