@@ -53,7 +53,7 @@ TEST_FLOW := $(OBJDIR)/test_flow
 
 .PHONY: all static shared pkgconfig install uninstall dist version \
         clean test test-suite test-schema test-emitter test-merge \
-        test-resolve test-errors test-flow test-all bench bench-parser bench-cmp bench-parser-cmp bench-compare bench-classify bench-oracle
+        test-resolve test-errors test-flow test-all bench bench-parser bench-cmp bench-parser-cmp bench-compare bench-classify bench-oracle bench-parallel
 
 all: $(LIB) $(TEST)
 
@@ -218,6 +218,10 @@ bench-classify:
 # Estimate what free byte finding would be worth; see bench/oracle/run.sh
 bench-oracle:
 	@bench/oracle/run.sh
+
+# Parse in parallel with today's API (chunks merged in order); see bench/parallel/run.sh
+bench-parallel:
+	@bench/parallel/run.sh
 
 bench-parser-cmp: $(OBJDIR)/bench_parser_cmp
 	@./$(OBJDIR)/bench_parser_cmp $(SIZE)
