@@ -160,7 +160,7 @@ Not captured, so read these as partial:
 
 ## Parallel parsing experiment (2026-10-07)
 
-A scratch tool (not in the repo yet) splits the input at certain
+`bench/parallel/` (`make bench-parallel`) splits the input at certain
 boundaries, parses the chunks on T threads with today's API, buffers events,
 and delivers them in order. The merged stream equals a sequential parse at
 every thread count (content and start marks; see release.md issue 1 for the
