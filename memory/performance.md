@@ -18,6 +18,12 @@
   doesn't track CFLAGS: run `make clean` before benchmarking afterwards.
 - Compare formats by ns per event, not MB/s, when the inputs differ in
   content (for example JSON arrays vs maps).
+- Proxy experiments can mislead in both directions. Don't drop an idea on
+  one negative proxy result; say what the proxy can't capture. (User's
+  guidance, 2026-10-07.)
+- With `--wrap`, keep the wrapper's call shape the same as the library's
+  (one direct and one indirect call) and check the "real" row against the
+  plain library: an extra call layer once tripled an apparent gain.
 
 ## Where Oyl stands
 
@@ -57,13 +63,19 @@ event parser, built from source.
    (`git show 5784363:.ai/inbox/NOTE-simd-nibble-classification.md`):
    - high nibble: `01 01 02 04 00 08 00 10`, then zeros
    - low nibble: `03 01 01 03 01 01 01 01 01 01 05 19 03 19 01 11`
-3. ~~Short-scalar prefix~~: dropped. A 256-byte-table scalar loop is that
-   idea at its extreme. In isolation it was up to twice as fast per call on
-   short runs, yet it lost 2–6% end to end on the generated block input the
-   idea was meant to speed up (it was only even on one-line plain text).
-4. **Structural index.** A simdjson-style bitmask of structural bytes that
-   the scanner walks. This is the lever for short-token input: it replaces a
-   25–30-cycle classify per word with a bit scan.
+3. **Short-scalar prefix: deprioritized.** A 256-byte-table scalar loop is
+   close to that idea at its extreme. In isolation it was up to twice as
+   fast per call on short runs, yet it lost 2–6% end to end on the
+   generated block input the idea was meant to speed up (it was even on
+   one-line plain text). The real prefix (8 bytes, then SIMD) wasn't tested;
+   a proxy result like this doesn't rule it out.
+4. **Structural index: the most promising.** Classify 64 bytes at a time
+   into bitmasks (blanks, breaks, `: `, ` #`, quotes, flow indicators) as
+   the scanner advances (a rolling window keeps Oyl streaming), and find the
+   next candidate with a bit scan instead of a ~25-cycle call per word. It
+   can only mark candidates; the scanner still decides (`:`/`#` need a blank,
+   `,[]{}` only count in flow, block scalars end by indentation). Measured
+   upside below.
 5. **Flow fast path.** Inside `[...]`/`{...}`, read common JSON-like content
    directly and emit events without token structs; fall back to the normal
    path for anything unusual. Estimated 1.3–1.5× on JSON. Prototype first.
@@ -112,3 +124,36 @@ generated inputs:
   not established.
 - `PCMPESTRI`'s ranges also stop at `\` and `|`; the scanner treats them as
   text. The exact-set candidates are safe drop-ins.
+
+## Structural index: oracle measurements (2026-10-07)
+
+The question: what is finding bytes worth? A scratch tool (not in the repo
+yet) wraps the scanner's three out-of-line helpers (`oyl_scan_plain_scalar`,
+`oyl_skip_blanks`, `oyl_scan_to_break`), records every call, verifies a
+replay call for call and event for event, then times whole parses with the
+answers read from the recording. One added call layer costs ~2 cycles per
+call (measured), so the inlined figure subtracts one or two layers.
+
+| Input | Oracle as measured | Estimated, inlined | Scanner share |
+|---|---|---|---|
+| generated block, mixed, config | +4 to +9% | +7 to +21% | 58–67% |
+| generated JSON | +3% | +5 to +8% | 62% |
+| real configs (appveyor, travis) | +11 to +21% | +16 to +29% | 70% |
+| plain text, one line and multi-line | +31 to +33% | +39 to +48% | 80–97% |
+| block scalars, multi-line | +46 to +54% | +56 to +68% | — |
+
+Not captured, so read these as partial:
+- **Upside left out:** the scanner logic an index could simplify. Today it
+  stops at every space in a value: travis.yml makes 2.6 plain-scan calls
+  per plain scalar, plain text 3–40, and each word also runs the loop's
+  checks and a blank skip. Also left out: the quoted-string search
+  (`oyl_find_any4`) and the flow-key mask, which are inline and can't be
+  wrapped (hence JSON's low figure).
+- **Cost left out:** building the masks (perhaps 0.3–1 cycle per byte). It
+  matters most on files that already run at 1–2 cycles per byte (block
+  scalars, quoted text).
+- **Out of reach:** the parser and event building, 30–40% of time on the
+  generated inputs. Closing the rest of the gap to rapidyaml there needs
+  the flow fast path or event-pipeline work as well.
+- `oyl_skip_blanks` between tokens is the most frequent call: 330–400 per KB
+  on block.yaml and json.yaml, more than two per token.
