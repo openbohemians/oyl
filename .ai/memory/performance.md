@@ -53,8 +53,8 @@ event parser, built from source.
    `vqtbl1q_u8` on ARM, as simdjson does), or one unsigned compare for
    `<= ' '` plus a few equality compares. Compare all three in
    `bench/bench_scanner.c` before choosing. The nibble tables for Oyl's set
-   were worked out in a note from another session
-   (`NOTE-simd-nibble-classification.md`):
+   were worked out in a note from another session, with a sample SSSE3
+   loop and caveats (`git show 5784363:.ai/inbox/NOTE-simd-nibble-classification.md`):
    - high nibble: `01 01 02 04 00 08 00 10`, then zeros
    - low nibble: `03 01 01 03 01 01 01 01 01 01 05 19 03 19 01 11`
 3. **Short-scalar prefix.** Check 8 bytes before starting the SIMD
