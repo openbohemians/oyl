@@ -117,6 +117,13 @@ Programs built against 0.x need these changes and a rebuild:
 - Block scalars parse up to 5× faster and quoted scalars with escapes or
   line breaks up to 5.4×, copied a line or run at a time with SIMD.
 - Oyl parses 1.7–13× faster than libyaml and libfyaml; see the README.
+- Merge keys and alias resolution no longer slow down with the square of
+  the number of anchors or documents. Anchor binding cleared a table sized
+  for the whole stream at every document, and alias lookups scanned every
+  anchor in the stream. On a 50 MB stream of 7,300 documents with anchors,
+  merge keys take 0.7 s instead of 12.7 s and alias resolution 0.9 s
+  instead of 18 s; on the same content as one document, alias resolution
+  takes 0.8 s instead of 5.7 s.
 
 ### Conformance and testing
 

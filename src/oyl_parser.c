@@ -2108,7 +2108,14 @@ static int node_end(const oyl_event *events, int len, int idx) {
     return idx + 1;
 }
 
-/* Anchor table */
+static uint32_t name_hash(oyl_str s) {
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < s.len; i++) h = (h ^ (uint8_t)s.data[i]) * 16777619u;
+    return h;
+}
+
+/* Anchor table. Merge and resolve run after bind_anchors, so each anchor
+ * name is unique in the stream; the hash index maps a name to its entry. */
 typedef struct {
     oyl_str name;
     int     start;  /* index of anchored node */
@@ -2119,15 +2126,19 @@ typedef struct {
     merge_anchor *entries;
     int           len;
     int           cap;
+    int          *index;     /* entry index + 1 per slot, 0 if empty */
+    size_t        index_cap; /* a power of two, or 0 without an index */
 } merge_anchor_table;
 
 static void atbl_init(merge_anchor_table *t) {
     t->entries = NULL; t->len = 0; t->cap = 0;
+    t->index = NULL; t->index_cap = 0;
 }
 
 static void atbl_free(merge_anchor_table *t) {
     free(t->entries);
-    t->entries = NULL; t->len = 0; t->cap = 0;
+    free(t->index);
+    atbl_init(t);
 }
 
 static void atbl_add(merge_anchor_table *t, oyl_str name, int start, int end) {
@@ -2140,13 +2151,21 @@ static void atbl_add(merge_anchor_table *t, oyl_str name, int start, int end) {
     t->entries[t->len++] = (merge_anchor){name, start, end};
 }
 
-/* TODO: linear scan — replace with a hash table if anchor-heavy inputs
- * become a bottleneck (currently fine for typical anchor counts). */
+static bool atbl_name_is(const merge_anchor *a, oyl_str name) {
+    return a->name.len == name.len && memcmp(a->name.data, name.data, name.len) == 0;
+}
+
+/* The latest entry with this name, or NULL. */
 static merge_anchor *atbl_lookup(merge_anchor_table *t, oyl_str name) {
-    for (int i = t->len - 1; i >= 0; i--) {
-        if (t->entries[i].name.len == name.len &&
-            memcmp(t->entries[i].name.data, name.data, name.len) == 0)
-            return &t->entries[i];
+    if (!t->index) {   /* no memory for an index: scan */
+        for (int i = t->len - 1; i >= 0; i--)
+            if (atbl_name_is(&t->entries[i], name)) return &t->entries[i];
+        return NULL;
+    }
+    for (size_t h = name_hash(name) & (t->index_cap - 1); t->index[h];
+         h = (h + 1) & (t->index_cap - 1)) {
+        merge_anchor *a = &t->entries[t->index[h] - 1];
+        if (atbl_name_is(a, name)) return a;
     }
     return NULL;
 }
@@ -2158,6 +2177,18 @@ static void atbl_build(merge_anchor_table *t, const oyl_event *events, int len) 
             int end = node_end(events, len, i);
             atbl_add(t, events[i].anchor, i, end);
         }
+    }
+    if (t->len == 0) return;
+    size_t cap = 16;
+    while (cap < (size_t)t->len * 2) cap *= 2;
+    t->index = calloc(cap, sizeof *t->index);
+    if (!t->index) return;
+    t->index_cap = cap;
+    for (int i = 0; i < t->len; i++) {
+        size_t h = name_hash(t->entries[i].name) & (cap - 1);
+        while (t->index[h] && !atbl_name_is(&t->entries[t->index[h] - 1], t->entries[i].name))
+            h = (h + 1) & (cap - 1);
+        t->index[h] = i + 1;   /* a later entry with the same name wins */
     }
 }
 
@@ -2517,12 +2548,6 @@ static oyl_status resolve_merges(oyl_parser *p) {
 
 typedef struct { oyl_str name; oyl_str bound; } anchor_slot;
 
-static uint32_t name_hash(oyl_str s) {
-    uint32_t h = 2166136261u;
-    for (size_t i = 0; i < s.len; i++) h = (h ^ (uint8_t)s.data[i]) * 16777619u;
-    return h;
-}
-
 static oyl_status bind_anchors(oyl_parser *p) {
     int nanchors = 0;
     for (int i = 0; i < p->evt_len; i++)
@@ -2532,22 +2557,31 @@ static oyl_status bind_anchors(oyl_parser *p) {
     size_t cap = 16;
     while (cap < (size_t)nanchors * 2) cap *= 2;
     anchor_slot *tab = calloc(cap, sizeof *tab);
+    /* the slots filled in the current document: anchors are per document,
+     * and clearing the whole table at each one would cost the whole
+     * stream's anchor count per document */
+    size_t *used = malloc((size_t)nanchors * sizeof *used);
+    int nused = 0;
     free(p->bound_names);
     p->bound_names = malloc(((size_t)nanchors + 1) * sizeof *p->bound_names);
-    if (!tab || !p->bound_names) { free(tab); return OYL_ERR_MEMORY; }
+    if (!tab || !used || !p->bound_names) {
+        free(tab);
+        free(used);
+        return OYL_ERR_MEMORY;
+    }
 
     unsigned serial = 0;
     for (int i = 0; i < p->evt_len; i++) {
         oyl_event *e = &p->events[i];
         if (e->type == OYL_EVT_DOC_START) {
-            memset(tab, 0, cap * sizeof *tab);   /* anchors are per document */
+            while (nused > 0) tab[used[--nused]] = (anchor_slot){0};
             continue;
         }
         /* an anchored node is defined at its start, so aliases inside it
          * (recursive references) bind to it too */
         if (e->anchor.data && e->anchor.len) {
             char *u = oyl_arena_alloc(p->arena, e->anchor.len + 12, 1);
-            if (!u) { free(tab); return OYL_ERR_MEMORY; }
+            if (!u) { free(tab); free(used); return OYL_ERR_MEMORY; }
             memcpy(u, e->anchor.data, e->anchor.len);
             p->bound_names[++serial] = e->anchor;
             int n = snprintf(u + e->anchor.len, 12, "%c%u", '\0', serial);
@@ -2557,6 +2591,7 @@ static oyl_status bind_anchors(oyl_parser *p) {
                    !(tab[h].name.len == e->anchor.len &&
                      memcmp(tab[h].name.data, e->anchor.data, e->anchor.len) == 0))
                 h = (h + 1) & (cap - 1);
+            if (!tab[h].name.data) used[nused++] = h;
             tab[h].name = e->anchor;
             tab[h].bound = bound;
             e->anchor = bound;
@@ -2574,6 +2609,7 @@ static oyl_status bind_anchors(oyl_parser *p) {
         }
     }
     free(tab);
+    free(used);
     return OYL_OK;
 }
 
@@ -2602,28 +2638,20 @@ static bool alias_has_cycle(int idx, merge_anchor_table *t, int *color,
     color[idx] = ACYCLE_GRAY;
     for (int j = t->entries[idx].start; j < t->entries[idx].end; j++) {
         if (events[j].type != OYL_EVT_ALIAS) continue;
-        for (int k = 0; k < t->len; k++) {
-            if (t->entries[k].name.len == events[j].value.len &&
-                memcmp(t->entries[k].name.data, events[j].value.data,
-                       events[j].value.len) == 0) {
-                if (color[k] == ACYCLE_GRAY) return true;
-                if (color[k] == ACYCLE_WHITE &&
-                    alias_has_cycle(k, t, color, events))
-                    return true;
-            }
-        }
+        merge_anchor *a = atbl_lookup(t, events[j].value);
+        if (!a) continue;
+        int k = (int)(a - t->entries);
+        if (color[k] == ACYCLE_GRAY) return true;
+        if (color[k] == ACYCLE_WHITE && alias_has_cycle(k, t, color, events))
+            return true;
     }
     color[idx] = ACYCLE_BLACK;
     return false;
 }
 
 static bool is_cyclic_name(merge_anchor_table *t, bool *cyclic, oyl_str name) {
-    for (int i = 0; i < t->len; i++) {
-        if (t->entries[i].name.len == name.len &&
-            memcmp(t->entries[i].name.data, name.data, name.len) == 0)
-            return cyclic[i];
-    }
-    return false;
+    merge_anchor *a = atbl_lookup(t, name);
+    return a && cyclic[a - t->entries];
 }
 
 /* The depth limit protects consumers that recurse, so it applies to the

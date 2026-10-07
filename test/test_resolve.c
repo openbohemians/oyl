@@ -367,6 +367,11 @@ static void test_alias_binding(void) {
     /* anchors don't carry into the next document */
     el = parse_with("--- &x 1\n--- *x\n", true, false);
     ASSERT(has_alias(&el), "alias doesn't resolve across documents");
+    /* ... from any earlier document, however many anchors it had */
+    el = parse_with("--- [&a 1, &b 2, &c 3]\n--- &b 5\n--- [*a, *b, *c]\n", true, false);
+    ASSERT(has_alias(&el) && count_scalar(&el, "1") == 1 &&
+           count_scalar(&el, "5") == 1 && count_scalar(&el, "3") == 1,
+           "anchors of all earlier documents are forgotten");
 
     /* original anchor names still point into the input */
     const char *yaml = "a: &name v\nb: *name\n";
