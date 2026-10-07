@@ -57,3 +57,7 @@ make it certain or make it ambiguous; don't guess.
   on every event field (added 2026-10-07). Its first findings were mark
   differences, not crashes. Replay one and diff the event dumps of the two
   paths (`oyl_parser_set_merge(p, true)` forces the eager path).
+- GitHub reads `[skip ci]` from the head commit of a push and skips CI for
+  the whole push. When a code commit and a `[skip ci]` notes commit go out
+  together, push the code commit first, or start CI by hand afterwards
+  (`gh workflow run ci.yml --ref main`).
