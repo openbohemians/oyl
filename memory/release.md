@@ -9,10 +9,10 @@
 - The library code is frozen until the tag except for bug fixes. Any
   library change restarts the clean-fuzz clock (below), so performance work
   waits for 1.1.
-- The clean-fuzz clock last restarted on **2026-10-07**, after the fixes
-  for nested explicit keys and dropped limit errors (`48773f8`). Earlier
-  restarts: 2026-10-07 (`d5fa6ee`, parse-path agreement; `94239d8`,
-  verbatim tags), 2026-09-28 (`8e1d455`, flow-key lookahead
+- The clean-fuzz clock last restarted on **2026-10-07**, after making
+  merge and resolve linear (`a1f0fed`). Earlier restarts: 2026-10-07
+  (`48773f8`, nested explicit keys and dropped limit errors; `d5fa6ee`,
+  parse-path agreement; `94239d8`, verbatim tags), 2026-09-28 (`8e1d455`, flow-key lookahead
   redesign).
 
 ## The rule
@@ -50,9 +50,9 @@ tagging or publishing a release.**
    Falling back (nodes with an anchor or tag, directives, some flow keys;
    see the `ST_EAGER_DRAIN` sites in `src/oyl_parser.c`) re-parses from the
    start of the stream and builds every remaining event before delivering.
-   Merge, resolve and schema modes hold the whole stream the same way, and
-   merge/resolve slow down superlinearly with stream size (anchor binding
-   scans linearly: 50 MB merge took 12.9 s). A subagent built a working
+   Merge, resolve and schema modes hold the whole stream the same way.
+   This is a memory problem for multi-document streams only: a single
+   document is held whole by any eager parse. A subagent built a working
    prototype before the session was killed:
    [perdoc-fallback-prototype.patch](perdoc-fallback-prototype.patch)
    (applies to `d6b8afb`, ~85 lines). It checkpoints the scanner at each
@@ -73,6 +73,17 @@ tagging or publishing a release.**
    `STREAM_END` (as in the README) spun forever. `parse_stream` now
    returns the error, and the fuzzer traps on a parse that ends without
    `STREAM_END`.
+5. **Fixed in `a1f0fed`: merge and resolve were quadratic.**
+   `bind_anchors` cleared its hash table, sized for the whole stream's
+   anchors, at every document start; it now clears only the slots the
+   document filled. `atbl_lookup` (and the cycle checks) scanned every
+   anchor in the stream per alias; the anchor table now has a hash index.
+   50 MB, 7,300 documents: merge 12.7 s → 0.68 s, resolve 18.0 s →
+   0.90 s. The same content as one document: resolve 5.7 s → 0.83 s,
+   merge unchanged (0.66 s). Old and new give identical events, statuses
+   and error messages on 34,594 corpus and suite inputs in 3 modes. With
+   the default 10,000-event limit, streams are too small for this to
+   matter much. The user chose to fix it before the tag (2026-10-07).
 
 ## Checklist at tag time
 
