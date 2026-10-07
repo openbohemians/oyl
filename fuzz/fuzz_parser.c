@@ -11,7 +11,7 @@
  *
  * Besides crashes, the harness traps if:
  *  - the parser emits more events than its event limit allows (a safety
- *    limit was bypassed);
+ *    limit was bypassed), or ends a stream that parses without STREAM_END;
  *  - input that parses is emitted as YAML that doesn't parse back to the
  *    same meaning (event types, values, anchors, tags, alias names, and
  *    for untagged scalars their core schema type);
@@ -95,7 +95,7 @@ static bool parse_canon(const char *yaml, size_t len, uint8_t flags, oyl_emitter
     oyl_status st;
     int events = 0;
     while ((st = oyl_parse_next(p, &evt)) == OYL_OK) {
-        if (evt->type == OYL_EVT_NONE) break;
+        if (evt->type == OYL_EVT_NONE) __builtin_trap(); /* no STREAM_END */
         if (++events > MAX_EVENTS) __builtin_trap(); /* limit bypassed */
         if (em) oyl_emit(em, evt);
         canon(evt, out, out_len, &cap);

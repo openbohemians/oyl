@@ -168,7 +168,7 @@ static void test_flow_keys(void) {
     check(": [g]: x\n", "{ ~ { [ g ] x } }");
     check("k: {g}: x\n", "{ k { g ~ } ERR");
     /* an empty explicit key's ':' must be at the mapping's indent */
-    check(":\n   ?\n  : x\n", "{ ~ { ~ ERR");
+    check(":\n   ?\n  : x\n", "{ ~ { ~ ~ } ERR");
     check("?\n: x\n", "{ ~ x }");
 }
 
@@ -232,6 +232,13 @@ static void test_flow_empty_props(void) {
     /* an explicit entry's ':' is at the mapping's indentation */
     check("? b\n  : x\n", "{ b ERR");
     check("- ? b\n  : x\n", "[ { b x } ]");
+    /* a ':' left of a nested mapping ends it (its last key's value is
+     * empty) and belongs to an enclosing mapping */
+    check("?\n  ? x\n: y\n", "{ { x ~ } y }");
+    check("?\n  ? x\n  : z\n: y\n", "{ { x z } y }");
+    check("?\n  ?\n    ? x\n: y\n", "{ { { x ~ } ~ } y }");    /* two levels */
+    check("a:\n  ? x\n: y\n", "{ a { x ~ } ~ y }");      /* YAML 1.2 empty key */
+    check("?\n  ? x\n : y\n", "{ { x ~ } ERR");
     /* a ':' starting a later line is not an implicit key's */
     check("? &x\n  k: *t\n: v\n", "{ &x { k *t } v }");
     /* props on two lines before a flow collection */
@@ -413,6 +420,36 @@ static void test_event_limit(void) {
         ASSERT(m && strstr(m, "event limit"), "event limit has an error message");
         oyl_parser_free(p);
         oyl_arena_free(a);
+    }
+
+    /* A limit just below the event count is hit on the closing events
+     * (DOC_END, STREAM_END). That is an error too, not a stream that ends
+     * without STREAM_END: a loop waiting for STREAM_END used to spin.
+     * "a: 1\n" has 8 events; "&a x: 1\n" falls back to the eager parser. */
+    const char *inputs[] = {"a: 1\n", "&a x: 1\n"};
+    for (int k = 0; k < 2; k++) {
+        for (int eager = 0; eager <= 1; eager++) {
+            for (int max = 1; max <= 8; max++) {
+                oyl_arena  *a = oyl_arena_new(4096);
+                oyl_parser *p = oyl_parser_new(inputs[k], strlen(inputs[k]), a);
+                if (eager) oyl_parser_set_merge(p, true);
+                oyl_parser_set_max_events(p, max);
+                const oyl_event *evt;
+                oyl_status st;
+                int n = 0;
+                while ((st = oyl_parse_next(p, &evt)) == OYL_OK && n++ < 20 &&
+                       evt->type != OYL_EVT_STREAM_END && evt->type != OYL_EVT_NONE)
+                    ;
+                bool ok = max < 8 ? st == OYL_ERR_LIMIT
+                                  : st == OYL_OK && evt->type == OYL_EVT_STREAM_END;
+                if (!ok)
+                    printf("  input %d, max_events %d (%s): status %d\n", k, max,
+                           eager ? "eager" : "incremental", st);
+                ASSERT(ok, "a limit below the event count is an error");
+                oyl_parser_free(p);
+                oyl_arena_free(a);
+            }
+        }
     }
 }
 

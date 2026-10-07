@@ -99,6 +99,13 @@ Programs built against 0.x need these changes and a rebuild:
   key is a flow collection was rejected by the incremental parser.
 - After an empty explicit key (`?` alone on its line), the incremental
   parser accepted a `:` indented differently from its mapping.
+- An explicit key whose node is itself a block mapping, followed by the
+  outer `:` (`?\n  ? x\n: y`), was rejected. A `:` left of a mapping now
+  ends it, giving its last key an empty value.
+- With an event limit just below a stream's event count, merge keys,
+  alias resolution, a schema, or a fallback to the eager parser could end
+  the stream with `OYL_EVT_NONE` and no error, so a loop waiting for
+  `STREAM_END` never ended. It now fails with `OYL_ERR_LIMIT`.
 - `oyl_read_file` reads until end of file, rejects directories and reports
   read errors.
 - Arena allocation is hardened against size overflow and misalignment.

@@ -991,11 +991,16 @@ static oyl_status parse_block_mapping(oyl_parser *p, int map_indent) {
             }
 
             /* parse value: an explicit value's ':' is at the mapping's
-             * indentation */
+             * indentation. One further left belongs to an enclosing
+             * mapping ("?\n  ? x\n: y"): this key's value is empty. */
             st = peek_token(p);
             if (st != OYL_OK) return st;
-            if (tok_type(p) == OYL_TOK_BLOCK_MAP_VALUE && tok_col(p) != map_indent)
+            if (tok_type(p) == OYL_TOK_BLOCK_MAP_VALUE && tok_col(p) > map_indent)
                 PARSE_ERROR(p, "explicit mapping value must be at the mapping's indentation");
+            if (tok_type(p) == OYL_TOK_BLOCK_MAP_VALUE && tok_col(p) < map_indent) {
+                emit_empty(p);
+                continue;
+            }
             st = parse_block_map_value(p, map_indent);
             if (st != OYL_OK) return st;
             continue;
@@ -2066,7 +2071,8 @@ static oyl_status parse_stream(oyl_parser *p) {
                 enqueue(p, &se);
             }
             p->stream_ended = true;
-            return OYL_OK;
+            /* the event limit may be hit on the closing events above */
+            return p->oom ? OOM_STATUS(p) : OYL_OK;
         }
 
         /* safety: a document that consumed no input can never make
@@ -4159,10 +4165,11 @@ static oyl_status parser_step(oyl_parser *p) {
 
         if (tt == OYL_TOK_BLOCK_MAP_VALUE && tok_col(p) == map_indent) {
             p->state = ST_BLOCK_MAP_VALUE;
-        } else if (tt == OYL_TOK_BLOCK_MAP_VALUE) {
+        } else if (tt == OYL_TOK_BLOCK_MAP_VALUE && tok_col(p) > map_indent) {
             PARSE_ERROR(p, "explicit mapping value must be at the mapping's indentation");
         } else {
-            /* missing value → emit empty value, continue loop */
+            /* missing value (a ':' further left belongs to an enclosing
+             * mapping) → emit empty value, continue loop */
             evt = evt_simple(OYL_EVT_SCALAR);
             evt.start = p->current.start;
             evt.end = p->current.start;
