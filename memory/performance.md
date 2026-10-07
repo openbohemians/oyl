@@ -162,37 +162,59 @@ Not captured, so read these as partial:
 
 `bench/parallel/` (`make bench-parallel`) splits the input at certain
 boundaries, parses the chunks on T threads with today's API, buffers events,
-and delivers them in order. The merged stream equals a sequential parse at
-every thread count (content and start marks; see release.md issue 1 for the
-fields that can't match yet). Splitters:
+and delivers them in order. The user's framing: not a thread per branch but
+**chunk parsing**, a clean split at whatever depth falls near each cut.
+
+Splitters:
 - **by document**: a line starting `---` plus a blank or line end (YAML 1.2
   forbids it inside scalars); refused with directives
-- **by top-level entry** within one document: column-0 `- ` lines for a root
-  sequence, plain key lines for a root mapping, never right after a column-0
-  `&`, `!` or `?` line
+- **at any depth** within one document: a `- ` or plain `key:` line at any
+  indentation, when the collections open there are certain from the text.
+  The ancestors (nearest earlier line indented less, then less again, to
+  column 0) must be `- `/plain-key lines with an empty or one-line plain
+  value; a block scalar, quote or flow collection around the split line
+  would have to start on one of them. Refused: indentless sequences, a value
+  left open on the line before (its null falls on the split line), keys it
+  can't read, tab indentation, lone CRs, explicit `? ` keys. The chunk is
+  parsed after a copy of its ancestors' lines (a library version would
+  start the parser in that context instead). Backward walks reuse the last
+  candidate's chain, so the serial scan is linear.
 
-Each chunk's parser reads one line past its seam, so collections closed
-there get the closing token's marks. Workers also count their own lines and
-check their own chunk for directives and stray document markers, so the
-serial part is a probe of the first megabyte.
+Checks: the merged stream must equal a sequential parse, **every field**
+(the parse paths agree since `d5fa6ee`), and at each seam the collections
+left open must be the next chunk's context. `bench_parallel check -` splits
+small inputs at every split line; `explain` shows the first that breaks.
+Over the fuzz corpus, the suite sources and slices of the benchmark files:
+7,782 single documents, 67,678 split lines, **0 wrong results**; 40 refused
+by a seam check, all on input PyYAML rejects as malformed (Oyl accepts it;
+see release.md issue 6). The stress test found, in order: keys starting
+`-`/`?` the rules couldn't read, lone CRs, tab separators (`k:\t` is an
+open value), and explicit keys whose missing value falls on the next entry
+silently at the root.
 
-Speedup over sequential, 10 MB inputs, i7 155H (6 P-cores):
+`-k` fixes the chunk size; `-w` bounds the read-ahead (workers parse at most
+W chunks past delivery), so the events waiting stay within W chunks however
+long the input: streaming with bounded memory. Small chunks also raise the
+delivery ceiling, since each chunk's events are still in cache when read.
 
-| Input | 1 thread | 6 threads | best (12–20) |
-|---|---|---|---|
-| block.yaml (top-level split) | 0.65× | 2.1× | 2.3× |
-| real files as documents (travis, appveyor) | 0.75–0.78× | 2.6–3.0× | 3.2× |
-| plain text as documents | 0.82× | 3.6× | 4.5× |
-| config.yaml (sequential is on the eager path) | 1.46× | 4.8× | 4.9× |
-| mixed.yaml (one root key holds everything) | 0.63× | no split | — |
+Speedup over sequential, 10 MB inputs, i7 155H, 8 threads (medians of 5):
 
-- The ceiling is delivery: one thread reads every buffered 112-byte event.
-  block.yaml plateaus near the time to read 222 MB of events. Compact
-  buffered events (~32 bytes, expanded on delivery) would raise it about 3×.
-- One thread is slower than sequential (writing and re-reading the
-  buffers), so it pays only for big inputs on 2+ cores.
-- A top-level split helps only roots with many children; deeper splits need
-  an internal entry point that starts a parser in a given block context.
-- Harness lessons: glibc `memmem` with a 2-byte needle runs at ~1.9 GB/s
-  (search for the rare byte with `memchr` instead); keep the polled `done`
-  flag off the cache line the worker writes per event.
+| Input | unbounded, 4 chunks/thread | 64 KB chunks, window 9 |
+|---|---|---|
+| block.yaml (root sequence) | 2.47×, ≤131 MB waiting | 3.02×, ≤12 MB |
+| mixed.yaml (all under one key; unsplittable before) | 2.01×, ≤101 MB | 2.31× (2.42× at 6), ≤9 MB |
+| config.yaml (documents) | 2.62×, ≤56 MB | 3.11×, ≤6 MB |
+| json.yaml | no split points | no split points |
+
+One thread runs at 0.69× unbounded and ~0.77× with small chunks. The
+earlier config.yaml 4.8× was flattered by its sequential run being stuck on
+the eager path, fixed in `66eab45`. Still open: JSON and flow style (needs
+a bracket-depth splitter that is certain about quotes), compact buffered
+events, an in-library entry point instead of the prefix copy, and error
+semantics (2 malformed inputs parsed in chunks without an error, so a
+library version must re-check or re-parse sequentially on doubt).
+
+Harness lessons: glibc `memmem` with a 2-byte needle runs at ~1.9 GB/s
+(search for the rare byte with `memchr`); keep the polled `done` flag off
+the cache line the worker writes per event; fold per-event fix-ups into the
+collection loop (a second pass over 200 MB of events cost 0.15×).

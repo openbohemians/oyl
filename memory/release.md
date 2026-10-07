@@ -95,6 +95,16 @@ tagging or publishing a release.**
    the default 10,000-event limit, streams are too small for this to
    matter much. The user chose to fix it before the tag (2026-10-07).
 
+6. **Open: Oyl accepts some malformed YAML.** Found by the chunk-parsing
+   stress test (performance.md): e.g. `fuzz/corpus/38a6bf04…` has
+   `key: !!seq`, then a line with only another tag, then a key at column
+   0, and Oyl nests that key's mapping as the first key's value at the
+   same column, again and again. A node can't have two tags, and a block
+   mapping value must be indented past its key. 40 corpus inputs that
+   Oyl parses are structurally malformed to PyYAML (with bad bytes
+   replaced); PyYAML is YAML 1.1, so each needs a 1.2 check. Not yet
+   investigated; the user decides.
+
 ## Benchmark claims to update (held by the user, 2026-10-07)
 
 `66eab45` raised the generated config input (an anchor in each of 14,598
