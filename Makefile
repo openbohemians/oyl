@@ -230,8 +230,9 @@ bench-parser-cmp: $(OBJDIR)/bench_parser_cmp
 # Compile the harness together with the library sources, all under
 # libFuzzer + ASAN + UBSAN. Single-shot compile (no .a) so all units share
 # the same instrumentation. Run via `just fuzz`.
+# OYL_CKPT_SPACING: checkpoints every 256 bytes, so short inputs take several
 $(OBJDIR)/fuzz_parser: fuzz/fuzz_parser.c $(SRCS) | $(OBJDIR)
-	clang -std=c11 -Wall -Wextra -Iinclude \
+	clang -std=c11 -Wall -Wextra -Iinclude -DOYL_CKPT_SPACING=256 \
 	  -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined \
 	  -fno-omit-frame-pointer -g -O1 \
 	  $< $(SRCS) -o $@

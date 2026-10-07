@@ -170,6 +170,21 @@ struct oyl_parser {
                                      * every collection "is a key" */
     size_t *fk_stack;       /* scan scratch: open-bracket offsets */
     int     fk_stack_cap;
+
+    /* The eager parser works one document at a time, so memory follows the
+     * largest document, not the stream. A fallback to it rewinds to a
+     * checkpoint taken at the start of a recent document (see
+     * inc_checkpoint); the events delivered since are parsed again and
+     * skipped, a document at a time. */
+    oyl_scanner *ckpt;             /* scanner state there, or NULL */
+    oyl_token    ckpt_tok;
+    bool         ckpt_have_tok;
+    int          ckpt_delivered;   /* events delivered before it */
+    uint64_t     ckpt_sig;         /* delivered_sig then */
+    int          evt_base;         /* events before the eager chunk */
+    int          skip_n;           /* events of it left to skip */
+    uint64_t     skip_sig;         /* their expected signature */
+    uint64_t     skip_got;         /* and what was skipped so far */
 };
 
 /* ── Error reporting ─────────────────────────────────────── */
@@ -207,7 +222,7 @@ static void hit_limit(oyl_parser *p, const char *msg) {
 #define OOM_STATUS(p) ((p)->stop_status ? (p)->stop_status : OYL_ERR_MEMORY)
 
 static inline bool over_limit(oyl_parser *p) {
-    return p->max_events > 0 && p->evt_len >= p->max_events;
+    return p->max_events > 0 && p->evt_base + p->evt_len >= p->max_events;
 }
 
 static inline bool enqueue(oyl_parser *p, const oyl_event *evt) {
@@ -2028,65 +2043,65 @@ static oyl_status parse_document(oyl_parser *p) {
 
 /* ── Parse stream ────────────────────────────────────────── */
 
+/* Parse the stream's next document into the event list: STREAM_START
+ * comes before the first, and STREAM_END after the last. One document at
+ * a time keeps the list as small as the largest document. */
 static oyl_status parse_stream(oyl_parser *p) {
     oyl_status st;
 
-    /* consume STREAM_START */
-    st = peek_token(p);
-    if (st != OYL_OK) return st;
-    oyl_mark stream_start = p->current.start;
-    oyl_mark stream_start_end = p->current.end;
-    consume_token(p);
+    if (!p->stream_started) {
+        st = peek_token(p);
+        if (st != OYL_OK) return st;
+        oyl_mark stream_start = p->current.start;
+        oyl_mark stream_start_end = p->current.end;
+        consume_token(p);
 
-    {
         oyl_event sevt = evt_simple(OYL_EVT_STREAM_START);
         sevt.start = stream_start;
         sevt.end = stream_start_end;
         enqueue(p, &sevt);
+        p->stream_started = true;
     }
-    p->stream_started = true;
 
-    /* parse documents */
-    for (;;) {
-        st = peek_token(p);
-        if (st != OYL_OK) return st;
+    st = peek_token(p);
+    if (st != OYL_OK) return st;
 
-        if (tok_type(p) == OYL_TOK_STREAM_END || tok_type(p) == OYL_TOK_NONE) {
-            if (p->doc_open) {
-                unroll_all(p, p->current.start);
-                oyl_event evt = evt_simple(OYL_EVT_DOC_END);
-                evt.implicit = true;
-                evt.start = p->current.start;
-                evt.end = p->current.start;
-                enqueue(p, &evt);
-                p->doc_open = false;
-            }
-            oyl_mark end_mark = p->current.start;
-            oyl_mark end_mark_end = p->current.end;
-            consume_token(p);
-            {
-                oyl_event se = evt_simple(OYL_EVT_STREAM_END);
-                se.start = end_mark;
-                se.end = end_mark_end;
-                enqueue(p, &se);
-            }
-            p->stream_ended = true;
-            /* the event limit may be hit on the closing events above */
-            return p->oom ? OOM_STATUS(p) : OYL_OK;
+    if (tok_type(p) == OYL_TOK_STREAM_END || tok_type(p) == OYL_TOK_NONE) {
+        if (p->doc_open) {
+            unroll_all(p, p->current.start);
+            oyl_event evt = evt_simple(OYL_EVT_DOC_END);
+            evt.implicit = true;
+            evt.start = p->current.start;
+            evt.end = p->current.start;
+            enqueue(p, &evt);
+            p->doc_open = false;
         }
-
-        /* safety: a document that consumed no input can never make
-         * progress (it would emit empty nodes forever) */
-        size_t prev_off = p->current.start.offset;
-        oyl_token_type prev_type = tok_type(p);
-
-        st = parse_document(p);
-        if (st != OYL_OK) return st;
-
-        if (p->have_token && p->current.start.offset == prev_off &&
-            tok_type(p) == prev_type)
-            PARSE_ERROR(p, "unexpected token");
+        oyl_mark end_mark = p->current.start;
+        oyl_mark end_mark_end = p->current.end;
+        consume_token(p);
+        {
+            oyl_event se = evt_simple(OYL_EVT_STREAM_END);
+            se.start = end_mark;
+            se.end = end_mark_end;
+            enqueue(p, &se);
+        }
+        p->stream_ended = true;
+        /* the event limit may be hit on the closing events above */
+        return p->oom ? OOM_STATUS(p) : OYL_OK;
     }
+
+    /* safety: a document that consumed no input can never make
+     * progress (it would emit empty nodes forever) */
+    size_t prev_off = p->current.start.offset;
+    oyl_token_type prev_type = tok_type(p);
+
+    st = parse_document(p);
+    if (st != OYL_OK) return st;
+
+    if (p->have_token && p->current.start.offset == prev_off &&
+        tok_type(p) == prev_type)
+        PARSE_ERROR(p, "unexpected token");
+    return p->oom ? OOM_STATUS(p) : OYL_OK;
 }
 
 /* ── Merge key resolution ────────────────────────────────── */
@@ -2373,7 +2388,8 @@ static const char *process_merge_value(const oyl_event *events, int evt_len,
  * exponentially ("billion laughs"), so it is bounded by max_events, or, if
  * that is disabled, by a multiple of the unexpanded stream. */
 static int expansion_limit(const oyl_parser *p, int unexpanded) {
-    if (p->max_events > 0) return p->max_events;
+    if (p->max_events > 0)   /* what the stream has left */
+        return p->max_events - p->evt_base > 1 ? p->max_events - p->evt_base : 1;
     long long lim = (long long)unexpanded * 16 + 100000;
     return lim > INT_MAX / 2 ? INT_MAX / 2 : (int)lim;
 }
@@ -3156,6 +3172,37 @@ static inline oyl_status inc_flow_map_value(oyl_parser *p) {
     return OYL_OK;
 }
 
+/* Bytes of input between checkpoints. The fuzz builds set it small, so
+ * that their short inputs take several. */
+#ifndef OYL_CKPT_SPACING
+#define OYL_CKPT_SPACING 65536
+#endif
+
+/* At a document's start, save the scanner's state, so that a fallback to
+ * the eager parser re-parses from here, not from the start of the stream.
+ * Only in a clean state (nothing buffered or open); otherwise an earlier
+ * checkpoint stays, and the fallback re-parses from there. */
+static void inc_checkpoint(oyl_parser *p) {
+    if (p->out_len || p->scan_error || p->doc_open || p->frame_len ||
+        p->has_anchor || p->has_tag || !p->have_token)
+        return;
+    /* Copying the scanner's state costs about as much as parsing a tiny
+     * document, so a checkpoint follows the last one by OYL_CKPT_SPACING
+     * bytes. A fallback then re-parses at most that much more, still a
+     * document at a time. */
+    if (p->ckpt && p->current.start.offset - p->ckpt_tok.start.offset < OYL_CKPT_SPACING)
+        return;
+    if (!p->ckpt) {
+        p->ckpt = oyl_scanner_new(p->input, p->input_len, p->arena);
+        if (!p->ckpt) return;
+    }
+    if (!oyl_scanner_copy(p->ckpt, p->scanner)) return;
+    p->ckpt_tok = p->current;
+    p->ckpt_have_tok = p->have_token;
+    p->ckpt_delivered = p->events_delivered;
+    p->ckpt_sig = p->delivered_sig;
+}
+
 /* Flow-context states. Kept out of parser_step so the block-context
  * dispatch stays compact; parser_step forwards every ST_FLOW_* state here. */
 /* After a document's root node: only '...', '---' or the end of the stream
@@ -3709,6 +3756,7 @@ static oyl_status parser_step(oyl_parser *p) {
         /* check for %TAG / %YAML directives — fall back to eager */
         peek_token(p);
         tt = tok_type(p);
+        inc_checkpoint(p);
         if (tt == OYL_TOK_DIRECTIVE) {
             p->state = ST_EAGER_DRAIN;
             return OYL_OK;
@@ -4472,53 +4520,79 @@ oyl_parser *oyl_parser_new(const char *input, size_t len, oyl_arena *a) {
     return p;
 }
 
-static oyl_status next_event(oyl_parser *p, oyl_event *evt) {
-    if (!p->incremental) {
-        /* ── Eager path (merge/alias enabled, or fell back from incremental) ── */
+/* After a fallback to the eager parser, the events the incremental one
+ * delivered since the checkpoint are parsed again: skip them, checking
+ * that they are the same. They may span several documents. */
+static oyl_status skip_delivered(oyl_parser *p) {
+    int n = p->skip_n < p->evt_len ? p->skip_n : p->evt_len;
+    for (int i = 0; i < n; i++)
+        p->skip_got = p->skip_got * 31 + (uint64_t)p->events[i].type;
+    p->evt_cursor = n;
+    p->skip_n -= n;
+    if ((p->skip_n == 0 && p->skip_got != p->skip_sig) ||
+        (p->skip_n > 0 && p->stream_ended)) {
+        p->stream_ended = true;
+        PARSE_ERROR(p, "input not supported by the incremental parser "
+                       "(please report); parse with merge keys or alias "
+                       "resolution enabled");
+    }
+    return OYL_OK;
+}
+
+static inline void inc_delivered(oyl_parser *p, const oyl_event *evt) {
+    p->events_delivered++;
+    p->delivered_sig = p->delivered_sig * 31 + (uint64_t)evt->type;
+}
+
+/* 31^n, wrapping as the signatures do: the signature of the n events
+ * delivered after one with signature s0 is delivered_sig - s0 * 31^n. */
+static uint64_t pow31(int n) {
+    uint64_t r = 1, b = 31;
+    for (; n > 0; n >>= 1, b *= b)
+        if (n & 1) r *= b;
+    return r;
+}
+
+/* ── Eager path (merge/alias enabled, or fell back from incremental):
+ * one document's events at a time. Kept out of next_event, which runs
+ * for every event. ── */
+NOINLINE oyl_status eager_next_event(oyl_parser *p, oyl_event *evt) {
+    for (;;) {
         if (dequeue(p, evt)) return OYL_OK;
         if (p->stream_ended) {
             *evt = evt_simple(OYL_EVT_NONE);
             return OYL_OK;
         }
-        if (!p->stream_started) {
-            oyl_status st = parse_stream(p);
+        p->evt_base += p->evt_len;
+        p->evt_len = 0;
+        p->evt_cursor = 0;
+        oyl_status st = parse_stream(p);
+        if (st != OYL_OK) return st;
+        if (p->merge_enabled || p->resolve_enabled) {
+            st = bind_anchors(p);
             if (st != OYL_OK) return st;
-            if (p->merge_enabled || p->resolve_enabled) {
-                st = bind_anchors(p);
-                if (st != OYL_OK) return st;
-            }
-            if (p->merge_enabled) {
-                st = resolve_merges(p);
-                if (st != OYL_OK) return st;
-            }
-            if (p->resolve_enabled) {
-                st = resolve_aliases(p);
-                if (st != OYL_OK) return st;
-            }
-            if (p->merge_enabled || p->resolve_enabled)
-                unbind_anchors(p);
-            st = check_eager_depth(p);
-            if (st != OYL_OK) return st;
-            /* skip events already delivered during incremental phase; they
-             * must be the ones the eager parse starts with */
-            if (p->events_delivered > 0 && p->evt_cursor < p->events_delivered) {
-                uint64_t sig = 0;
-                for (int i = 0; i < p->events_delivered && i < p->evt_len; i++)
-                    sig = sig * 31 + (uint64_t)p->events[i].type;
-                if (p->events_delivered > p->evt_len || sig != p->delivered_sig) {
-                    p->stream_ended = true;
-                    PARSE_ERROR(p, "input not supported by the incremental parser "
-                                   "(please report); parse with merge keys or alias "
-                                   "resolution enabled");
-                }
-                p->evt_cursor = p->events_delivered;
-                p->events_delivered = 0;
-            }
-            if (dequeue(p, evt)) return OYL_OK;
         }
-        *evt = evt_simple(OYL_EVT_NONE);
-        return OYL_OK;
+        if (p->merge_enabled) {
+            st = resolve_merges(p);
+            if (st != OYL_OK) return st;
+        }
+        if (p->resolve_enabled) {
+            st = resolve_aliases(p);
+            if (st != OYL_OK) return st;
+        }
+        if (p->merge_enabled || p->resolve_enabled)
+            unbind_anchors(p);
+        st = check_eager_depth(p);
+        if (st != OYL_OK) return st;
+        if (p->skip_n > 0) {
+            st = skip_delivered(p);
+            if (st != OYL_OK) return st;
+        }
     }
+}
+
+static oyl_status next_event(oyl_parser *p, oyl_event *evt) {
+    if (!p->incremental) return eager_next_event(p, evt);
 
     /* ── Incremental path (state machine) ── */
 
@@ -4529,8 +4603,7 @@ static oyl_status next_event(oyl_parser *p, oyl_event *evt) {
             p->out_len = 0;
             p->out_cursor = 0;
         }
-        p->events_delivered++;
-        p->delivered_sig = p->delivered_sig * 31 + (uint64_t)evt->type;
+        inc_delivered(p, evt);
         return OYL_OK;
     }
 
@@ -4562,8 +4635,10 @@ static oyl_status next_event(oyl_parser *p, oyl_event *evt) {
         }
 
         if (p->state == ST_EAGER_DRAIN) {
-            /* fall back to eager: re-parse from scratch */
+            /* fall back to eager: re-parse from a recent document's
+             * checkpoint, or from the start, and skip what was delivered */
             int skip = p->events_delivered;
+            uint64_t sig = p->delivered_sig;
             p->incremental = false;
             p->state = ST_DONE;
             p->stream_started = false;
@@ -4580,13 +4655,24 @@ static oyl_status next_event(oyl_parser *p, oyl_event *evt) {
             p->oom = false;
             p->stop_status = OYL_OK;
             p->events_delivered = 0;
-            /* reset scanner to beginning */
+            p->evt_base = 0;
             oyl_scanner_free(p->scanner);
-            p->scanner = oyl_scanner_new(p->input, p->input_len, p->arena);
-            if (!p->scanner) return OYL_ERR_MEMORY;
-            /* eager parse_stream will be called on the recursive call;
-             * skip events already delivered during incremental phase */
-            p->events_delivered = skip;
+            if (p->ckpt) {
+                p->scanner = p->ckpt;
+                p->ckpt = NULL;
+                p->current = p->ckpt_tok;
+                p->have_token = p->ckpt_have_tok;
+                p->stream_started = true;   /* STREAM_START was delivered */
+                p->evt_base = p->ckpt_delivered;
+                skip -= p->ckpt_delivered;
+                sig -= p->ckpt_sig * pow31(skip);
+            } else {
+                p->scanner = oyl_scanner_new(p->input, p->input_len, p->arena);
+                if (!p->scanner) return OYL_ERR_MEMORY;
+            }
+            p->skip_n = skip;
+            p->skip_sig = sig;
+            p->skip_got = 0;
             return next_event(p, evt);
         }
 
@@ -4602,8 +4688,7 @@ static oyl_status next_event(oyl_parser *p, oyl_event *evt) {
         p->out_len = 0;
         p->out_cursor = 0;
     }
-    p->events_delivered++;
-    p->delivered_sig = p->delivered_sig * 31 + (uint64_t)evt->type;
+    inc_delivered(p, evt);
     return OYL_OK;
 }
 
@@ -4655,6 +4740,7 @@ oyl_mark oyl_parser_error_mark(oyl_parser *p) {
 void oyl_parser_free(oyl_parser *p) {
     if (!p) return;
     oyl_scanner_free(p->scanner);
+    oyl_scanner_free(p->ckpt);
     free(p->contexts);
     free(p->events);
     free(p->frames);

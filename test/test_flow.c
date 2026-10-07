@@ -16,7 +16,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 #include <sys/resource.h>
+#include <sys/wait.h>
 
 static int tests_run    = 0;
 static int tests_passed = 0;
@@ -118,9 +120,10 @@ static int first_difference(const char *yaml) {
     return diff;
 }
 
-/* On error, the eager parser delivers no events at all (it parses the whole
- * stream up front), so for error cases it only has to fail too. Otherwise
- * both parsers must agree on every event field, marks included. */
+/* The eager parser delivers none of a failing document's events (it parses
+ * a whole document first), and these error cases fail in their first
+ * document, so there it only has to fail too. Otherwise both parsers must
+ * agree on every event field, marks included. */
 static void check(const char *yaml, const char *expected) {
     char inc[1024], eag[1024];
     render(yaml, false, inc, sizeof inc);
@@ -453,6 +456,54 @@ static void test_event_limit(void) {
     }
 }
 
+/* The eager parser works a document at a time; its event limit still
+ * counts the whole stream. "--- a\n--- b\n--- c\n" has 11 events. */
+static void test_event_limit_documents(void) {
+    printf("test_event_limit_documents:\n");
+    const char *yaml = "--- a\n--- b\n--- c\n";
+    for (int eager = 0; eager <= 1; eager++) {
+        for (int max = 9; max <= 11; max++) {
+            oyl_arena  *a = oyl_arena_new(4096);
+            oyl_parser *p = oyl_parser_new(yaml, strlen(yaml), a);
+            if (eager) oyl_parser_set_merge(p, true);
+            oyl_parser_set_max_events(p, max);
+            const oyl_event *evt;
+            oyl_status st;
+            int n = 0;
+            while ((st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_NONE) {
+                n++;
+                if (evt->type == OYL_EVT_STREAM_END) break;
+            }
+            ASSERT(max < 11 ? st == OYL_ERR_LIMIT && n <= max : st == OYL_OK && n == 11,
+                   "the event limit counts every document");
+            oyl_parser_free(p);
+            oyl_arena_free(a);
+        }
+    }
+}
+
+/* Documents before an error are delivered by the eager parser too, also
+ * after a fallback to it (the anchor): it parses a document at a time. */
+static void test_documents_before_error(void) {
+    printf("test_documents_before_error:\n");
+    const char *yaml = "--- &a x\n--- b\n--- [c\n";
+    for (int eager = 0; eager <= 1; eager++) {
+        oyl_arena  *a = oyl_arena_new(4096);
+        oyl_parser *p = oyl_parser_new(yaml, strlen(yaml), a);
+        if (eager) oyl_parser_set_merge(p, true);
+        const oyl_event *evt;
+        oyl_status st;
+        int scalars = 0;
+        while ((st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_NONE &&
+               evt->type != OYL_EVT_STREAM_END)
+            if (evt->type == OYL_EVT_SCALAR) scalars++;
+        ASSERT(st == OYL_ERR_PARSE && scalars == 2,
+               "the documents before an error are delivered");
+        oyl_parser_free(p);
+        oyl_arena_free(a);
+    }
+}
+
 /* Stray flow indicators outside a flow collection are errors, not an
  * endless stream of empty nodes. */
 static void test_stray_flow_indicators(void) {
@@ -600,6 +651,66 @@ static void test_plain_scalar_memory(void) {
     free(buf);
 }
 
+/* AddressSanitizer holds freed memory back (its quarantine), so peak
+ * memory there follows what was allocated in all, not what is live. */
+#if defined(__SANITIZE_ADDRESS__)
+#  define UNDER_ASAN 1
+#elif defined(__has_feature)
+#  if __has_feature(address_sanitizer)
+#    define UNDER_ASAN 1
+#  endif
+#endif
+#ifndef UNDER_ASAN
+#  define UNDER_ASAN 0
+#endif
+
+/* An anchor near the start of a multi-document stream sends the rest of
+ * it to the eager parser, as do merge keys and alias resolution. That
+ * parser used to hold every remaining event of the stream at once, so
+ * memory grew with the stream instead of the largest document. Each mode
+ * runs in a child process, whose peak memory starts afresh. */
+static void test_multi_document_memory(void) {
+    printf("test_multi_document_memory:\n");
+    int docs = 40000;
+    size_t cap = (size_t)docs * 96, len = 0;
+    char *buf = malloc(cap);
+    for (int i = 0; i < docs; i++)
+        len += (size_t)snprintf(buf + len, cap - len,
+                                "---\nname: &n%d svc-%d\nlabels: {app: a, tier: b}\nref: *n%d\n",
+                                i, i, i);
+
+    for (int mode = 0; mode < 3; mode++) {   /* default, merge, resolve */
+        fflush(stdout);
+        pid_t pid = fork();
+        if (pid == 0) {
+            long rss0 = peak_rss_mb();
+            oyl_arena  *a = oyl_arena_new(4096);
+            oyl_parser *p = oyl_parser_new(buf, len, a);
+            oyl_parser_set_max_events(p, 0);
+            if (mode == 1) oyl_parser_set_merge(p, true);
+            if (mode == 2) oyl_parser_set_resolve(p, true);
+            const oyl_event *evt;
+            oyl_status st;
+            long n = 0;
+            while ((st = oyl_parse_next(p, &evt)) == OYL_OK &&
+                   evt->type != OYL_EVT_STREAM_END && evt->type != OYL_EVT_NONE)
+                n++;
+            long grew = peak_rss_mb() - rss0;
+            /* 15 events a document, plus STREAM_START */
+            _exit(st != OYL_OK || n != (long)docs * 15 + 1 ? 255 : grew > 250 ? 250 : (int)grew);
+        }
+        int status = 0;
+        ASSERT(pid > 0 && waitpid(pid, &status, 0) == pid && WIFEXITED(status),
+               "the child process runs");
+        int grew = WEXITSTATUS(status);
+        ASSERT(grew != 255, "every document parses");
+        if (grew >= 32 && !UNDER_ASAN)
+            printf("  mode %d: grew %d MB\n", mode, grew);
+        ASSERT(grew < 32 || UNDER_ASAN, "memory follows the largest document, not the stream");
+    }
+    free(buf);
+}
+
 /* ── Main ───────────────────────────────────────────────────── */
 
 int main(void) {
@@ -612,10 +723,13 @@ int main(void) {
     test_deep_nesting_linear();
     test_depth_limit();
     test_event_limit();
+    test_event_limit_documents();
+    test_documents_before_error();
     test_stray_flow_indicators();
     test_continuation_indent();
     test_props_across_lines();
     test_plain_scalar_memory();
+    test_multi_document_memory();
     test_flow_key_quotes_in_plain();
 
     printf("\n--- Flow tests: %d / %d passed ---\n", tests_passed, tests_run);

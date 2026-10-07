@@ -317,7 +317,8 @@ OYL_API oyl_parser *oyl_parser_new(const char *input, size_t len, oyl_arena *a);
  *
  *  Events are produced incrementally as input is consumed, except when
  *  merge keys, alias resolution, a schema, directives, or node properties
- *  require looking at the whole stream first.
+ *  require looking at a whole document first. Such documents are parsed
+ *  one at a time, so memory follows the largest document, not the stream.
  *  @return OYL_OK on success, or an error status; oyl_parser_error() and
  *          oyl_parser_error_mark() describe the error. */
 OYL_API oyl_status  oyl_parse_next(oyl_parser *p, const oyl_event **evt);

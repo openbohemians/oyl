@@ -36,6 +36,9 @@ struct oyl_schema {
 /* Scan the next token into caller-provided storage. oyl_scan_next() wraps
  * this for the public API; the parser calls it directly. */
 oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok);
+/* Copy one scanner's state into another over the same input (the parser's
+ * checkpoint at a document start). */
+bool oyl_scanner_copy(oyl_scanner *dst, const oyl_scanner *src);
 
 /* For small helpers on the per-token path that GCC may otherwise decline
  * to inline once they grow a little. */
@@ -43,6 +46,13 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok);
 #  define ALWAYS_INLINE static inline __attribute__((always_inline))
 #else
 #  define ALWAYS_INLINE static inline
+#endif
+
+/* For cold paths that would otherwise be inlined into a hot caller. */
+#if defined(__GNUC__) || defined(__clang__)
+#  define NOINLINE static __attribute__((noinline))
+#else
+#  define NOINLINE static
 #endif
 
 #endif /* OYL_INTERNAL_H */

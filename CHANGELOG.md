@@ -76,6 +76,10 @@ Programs built against 0.x need these changes and a rebuild:
   are written as exact literals, collections used as keys take the
   explicit `? key` form, plain scalars stay plain so they keep their type,
   and tags are written in a form that reads back unchanged.
+- With merge keys, alias resolution or a schema, and after the incremental
+  parser falls back (on an anchor, a tag or a directive), the stream is
+  parsed and delivered a document at a time. The documents before an
+  error are now delivered before it.
 
 ### Fixed
 
@@ -124,6 +128,12 @@ Programs built against 0.x need these changes and a rebuild:
   merge keys take 0.7 s instead of 12.7 s and alias resolution 0.9 s
   instead of 18 s; on the same content as one document, alias resolution
   takes 0.8 s instead of 5.7 s.
+- Memory follows the largest document instead of the whole stream. One
+  anchor near the start of a stream, or merge keys, alias resolution or a
+  schema, used to hold every event of the rest of the stream at once. A
+  10 MB stream of 1,476 documents now peaks at 15 MB instead of 124 MB
+  (228 MB with merge keys); a 50 MB one at 70 MB instead of 0.6–1.2 GB,
+  and twice as fast.
 
 ### Conformance and testing
 

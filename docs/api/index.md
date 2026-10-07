@@ -161,7 +161,9 @@ strings point into the input or the arena and outlive the event. After
 
 Events are produced incrementally as the input is consumed, except when
 merge keys, alias resolution, a schema, directives, or node properties
-require seeing the whole stream first.
+require seeing a whole document first. Such documents are parsed one at a
+time, so memory follows the largest document, not the stream; the
+documents before an error are delivered before it.
 
 ### Functions
 

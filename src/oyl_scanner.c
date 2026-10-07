@@ -1597,6 +1597,38 @@ oyl_mark oyl_scanner_error_mark(oyl_scanner *s) {
     return s->error_mark;
 }
 
+/* Copy src's state into dst, a scanner over the same input: a checkpoint
+ * the parser can rewind to. dst keeps its own stack buffers, growing them
+ * as needed; if one can't grow, dst's state is unchanged and this returns
+ * false. */
+bool oyl_scanner_copy(oyl_scanner *dst, const oyl_scanner *src) {
+    if (dst->indents.cap < src->indents.len) {
+        int *d = realloc(dst->indents.data, (size_t)src->indents.cap * sizeof *d);
+        if (!d) return false;
+        dst->indents.data = d;
+        dst->indents.cap = src->indents.cap;
+    }
+    if (dst->flows_cap < src->flows_len) {
+        void *f = realloc(dst->flows, (size_t)src->flows_cap * sizeof *src->flows);
+        if (!f) return false;
+        dst->flows = f;
+        dst->flows_cap = src->flows_cap;
+    }
+    indent_stack indents = dst->indents;
+    void *flows = dst->flows;
+    int flows_cap = dst->flows_cap;
+    *dst = *src;
+    dst->indents.data = indents.data;
+    dst->indents.cap = indents.cap;
+    if (src->indents.len)
+        memcpy(dst->indents.data, src->indents.data, (size_t)src->indents.len * sizeof *src->indents.data);
+    dst->flows = flows;
+    dst->flows_cap = flows_cap;
+    if (src->flows_len)
+        memcpy(dst->flows, src->flows, (size_t)src->flows_len * sizeof *src->flows);
+    return true;
+}
+
 void oyl_scanner_free(oyl_scanner *s) {
     if (!s) return;
     free(s->indents.data);
