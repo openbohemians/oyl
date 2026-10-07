@@ -8,10 +8,12 @@
   **v1.0.0 is not tagged or released**.
 - The library code is frozen until the tag except for bug fixes. Any
   library change restarts the clean-fuzz clock (below), so performance work
-  waits for 1.1.
-- The clean-fuzz clock last restarted on **2026-10-07**, after making
-  merge and resolve linear (`a1f0fed`). Earlier restarts: 2026-10-07
-  (`48773f8`, nested explicit keys and dropped limit errors; `d5fa6ee`,
+  waits for 1.1. Exceptions the user made on 2026-10-07: the quadratic
+  merge/resolve fix (issue 5), and the memory problem (issue 3: "there is
+  no longer a freeze -- not with a memory problem").
+- The clean-fuzz clock last restarted on **2026-10-07**, after the eager
+  parser went to a document at a time (`66eab45`). Earlier restarts:
+  2026-10-07 (`a1f0fed`, merge and resolve made linear; `48773f8`, nested explicit keys and dropped limit errors; `d5fa6ee`,
   parse-path agreement; `94239d8`, verbatim tags), 2026-09-28 (`8e1d455`, flow-key lookahead
   redesign).
 
@@ -46,26 +48,34 @@ tagging or publishing a release.**
    key an empty value (`parse_block_mapping`, `ST_BLOCK_MAP_POST_KEY`); a
    `:` to the right is still an error. `a:\n  ? x\n: y` now parses with a
    YAML 1.2 empty key; PyYAML (1.1) rejects it.
-3. **Open: the eager fallback covers the whole rest of the stream.**
-   Falling back (nodes with an anchor or tag, directives, some flow keys;
-   see the `ST_EAGER_DRAIN` sites in `src/oyl_parser.c`) re-parses from the
-   start of the stream and builds every remaining event before delivering.
-   Merge, resolve and schema modes hold the whole stream the same way.
-   This is a memory problem for multi-document streams only: a single
-   document is held whole by any eager parse. A subagent built a working
-   prototype before the session was killed:
-   [perdoc-fallback-prototype.patch](perdoc-fallback-prototype.patch)
-   (applies to `d6b8afb`, ~85 lines). It checkpoints the scanner at each
-   document start, rewinds a fallback only to the current document, and
-   makes the eager path parse one document at a time. All tests passed,
-   and it matched today's events, errors included, on 28,990 inputs in 4
-   modes. 10 MB stream with anchors: 96 ms / 121 MB → 36 ms / 16 MB
-   default; merge 364 ms / 231 MB → 53 ms / 16 MB; resolve 661 ms → 56 ms;
-   50 MB merge 12.9 s / 1.1 GB → 263 ms / 70 MB. No change without
-   anchors, but many tiny documents may be slower (median 74 → 134 ms);
-   those timings ran under heavy load, so re-measure. Of the 34,306 corpus
-   inputs, 5,270 fall back and 965 would rewind to a later document. The
-   user decides when.
+3. **Fixed in `66eab45`: the eager parser held the whole rest of the
+   stream.** A fallback (an anchor, tag, directive or some flow keys;
+   the `ST_EAGER_DRAIN` sites) re-parsed from the start of the stream and
+   built every remaining event before delivering; merge, resolve and
+   schema modes held the whole stream. Now `parse_stream` parses one
+   document per call and `eager_next_event` delivers it before the next.
+   A fallback rewinds to a checkpoint (`inc_checkpoint`, a copy of the
+   scanner state via `oyl_scanner_copy`) taken at a document start at
+   least `OYL_CKPT_SPACING` (64 KB) after the last, and `skip_delivered`
+   re-parses and skips what was delivered since, across documents,
+   checking the event types' signature. Based on the subagent's prototype
+   ([perdoc-fallback-prototype.patch](perdoc-fallback-prototype.patch)),
+   with the checkpoint taken only in a clean state, spacing (a copy per
+   tiny document cost 20%), the per-event signature work removed (derived
+   at fallback with `pow31`), and the eager path moved out of
+   `next_event`. Results: 10 MB/1,476 documents 124 → 15 MB (merge 228 →
+   15 MB); 50 MB/7,300 documents 599 MB → 69 MB and 324 → 159 ms; single
+   documents unchanged. Instructions per parse: no fallback −0.1%, a
+   million tiny documents +1.8%. Behavior change: in eager modes the
+   documents before an error are delivered before it (was: none). On
+   34,594 corpus and suite inputs × 4 modes × limits 0 and 20, the only
+   differences from before are that, and in merge mode with a small limit,
+   counting earlier documents after expansion (35 inputs, all within the
+   limit). Results are identical for spacing 0, 256 and 64 KB. The fuzz
+   builds (`make build/fuzz_parser`, `.clusterfuzzlite/build.sh`) use
+   `-DOYL_CKPT_SPACING=256` so their short inputs take several
+   checkpoints. Under ASan the memory test skips its cap: the quarantine
+   keeps freed memory.
 4. **Fixed in `48773f8`, found by that subagent:** with
    `max_events` one or two below a stream's event count, the eager path
    dropped the limit error raised on the closing `DOC_END`/`STREAM_END`
@@ -84,6 +94,18 @@ tagging or publishing a release.**
    and error messages on 34,594 corpus and suite inputs in 3 modes. With
    the default 10,000-event limit, streams are too small for this to
    matter much. The user chose to fix it before the tag (2026-10-07).
+
+## Benchmark claims to update (held by the user, 2026-10-07)
+
+`66eab45` raised the generated config input (an anchor in each of 14,598
+documents) from about 205 to 320 MB/s; the other inputs moved within ±3%.
+The published claims came partly from that row and are now stale:
+"1.7–13× faster than libyaml and libfyaml" (README line 19, CHANGELOG,
+the `docs/index.html` stat) would be about 2–13×; "1.7–3.4× on
+structure-heavy input" (README) about 2.4–3.4×; plus the README table's
+config row and the website's chart data and note. The user asked to hold
+off: when they say so, re-run `make bench-compare` (all libraries, the
+table's protocol) and update all of them from that run.
 
 ## Checklist at tag time
 
