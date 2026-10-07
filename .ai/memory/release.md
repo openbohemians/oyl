@@ -19,6 +19,30 @@ Tag only after several days of clean ClusterFuzzLite batch runs (both
 sanitizers; see [fuzzing.md](fuzzing.md)). **Always ask the user before
 tagging or publishing a release.**
 
+## Open issues found 2026-10-07 (by the parallel-parsing experiment)
+
+Both are pre-existing; neither changes node content. Not fixed yet; the
+user decides whether before or after the tag.
+
+1. **The two parse paths give different event metadata.** On the same input
+   the incremental path (default) and the eager path (merge, resolve,
+   schema, or any fallback) disagree: an explicit `---` DOC_START is zero
+   width vs spans the 3 bytes; an implicit DOC_START is 1 byte wide vs zero
+   width; collection starts are zero width vs span their indicator;
+   MAPPING_START has `implicit=1` vs 0 (the header documents `implicit`
+   only for document events). Which path runs depends on unrelated content
+   earlier in the stream. The test suite and fuzzer compare content, not
+   marks, so it never surfaced. Fix: one convention (the eager one looks
+   right) and a differential check of all fields, incremental vs eager.
+2. **The eager fallback covers the whole rest of the stream.** Falling back
+   (nodes with an anchor or tag, directives, some flow keys; see the
+   `ST_EAGER_DRAIN` sites in `src/oyl_parser.c`) re-parses from the start of
+   the stream and builds every remaining event before delivering. A 10 MB
+   stream with an anchor in its first document: 121 MB peak memory and
+   ~1.6× slower, against 15 MB without anchors. Streaming is lost for large
+   multi-document inputs. Fix idea: fall back per document and resume
+   incremental parsing at the next document.
+
 ## Checklist at tag time
 
 1. Check the recent batch runs and their logs for crashes

@@ -157,3 +157,42 @@ Not captured, so read these as partial:
   the flow fast path or event-pipeline work as well.
 - `oyl_skip_blanks` between tokens is the most frequent call: 330–400 per KB
   on block.yaml and json.yaml, more than two per token.
+
+## Parallel parsing experiment (2026-10-07)
+
+A scratch tool (not in the repo yet) splits the input at certain
+boundaries, parses the chunks on T threads with today's API, buffers events,
+and delivers them in order. The merged stream equals a sequential parse at
+every thread count (content and start marks; see release.md issue 1 for the
+fields that can't match yet). Splitters:
+- **by document**: a line starting `---` plus a blank or line end (YAML 1.2
+  forbids it inside scalars); refused with directives
+- **by top-level entry** within one document: column-0 `- ` lines for a root
+  sequence, plain key lines for a root mapping, never right after a column-0
+  `&`, `!` or `?` line
+
+Each chunk's parser reads one line past its seam, so collections closed
+there get the closing token's marks. Workers also count their own lines and
+check their own chunk for directives and stray document markers, so the
+serial part is a probe of the first megabyte.
+
+Speedup over sequential, 10 MB inputs, i7 155H (6 P-cores):
+
+| Input | 1 thread | 6 threads | best (12–20) |
+|---|---|---|---|
+| block.yaml (top-level split) | 0.65× | 2.1× | 2.3× |
+| real files as documents (travis, appveyor) | 0.75–0.78× | 2.6–3.0× | 3.2× |
+| plain text as documents | 0.82× | 3.6× | 4.5× |
+| config.yaml (sequential is on the eager path) | 1.46× | 4.8× | 4.9× |
+| mixed.yaml (one root key holds everything) | 0.63× | no split | — |
+
+- The ceiling is delivery: one thread reads every buffered 112-byte event.
+  block.yaml plateaus near the time to read 222 MB of events. Compact
+  buffered events (~32 bytes, expanded on delivery) would raise it about 3×.
+- One thread is slower than sequential (writing and re-reading the
+  buffers), so it pays only for big inputs on 2+ cores.
+- A top-level split helps only roots with many children; deeper splits need
+  an internal entry point that starts a parser in a given block context.
+- Harness lessons: glibc `memmem` with a 2-byte needle runs at ~1.9 GB/s
+  (search for the rare byte with `memchr` instead); keep the polled `done`
+  flag off the cache line the worker writes per event.
