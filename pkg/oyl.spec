@@ -4,7 +4,7 @@ Release:        1%{?dist}
 Summary:        Fast, minimal, zero-copy YAML 1.2 parser and emitter library in C11
 
 License:        MIT
-URL:            https://github.com/trans/oyl
+URL:            https://github.com/openbohemians/oyl
 Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  gcc

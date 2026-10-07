@@ -4,7 +4,7 @@ Priority: optional
 Maintainer: Thomas Sawyer <transfire@gmail.com>
 Build-Depends: debhelper-compat (= 13)
 Standards-Version: 4.6.2
-Homepage: https://github.com/trans/oyl
+Homepage: https://github.com/openbohemians/oyl
 Rules-Requires-Root: no
 
 Package: liboyl1

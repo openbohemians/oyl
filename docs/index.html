@@ -731,8 +731,8 @@
       <p class="hero-caption">spinach-powered parsing</p>
       <div class="hero-pills">
         <span class="tag">YAML 1.2 | C11</span>
-        <a class="pill-link" href="https://github.com/trans/oyl">GitHub Repo</a>
-        <a class="pill-link" href="https://github.com/trans/oyl/blob/main/docs/api/index.md">API Docs</a>
+        <a class="pill-link" href="https://github.com/openbohemians/oyl">GitHub Repo</a>
+        <a class="pill-link" href="https://github.com/openbohemians/oyl/blob/main/docs/api/index.md">API Docs</a>
       </div>
       <p class="lede">
         The optimized YAML library: a fast, minimal, zero-copy parser and emitter
@@ -747,7 +747,7 @@
           Random inputs ClusterFuzzLite has thrown at Oyl since September 24, 2026,
           under AddressSanitizer and UndefinedBehaviorSanitizer, each checked for
           crashes, memory errors and round-trip mistakes. Counted from the
-          <a href="https://github.com/trans/oyl/actions">fuzzing logs</a> after every run.
+          <a href="https://github.com/openbohemians/oyl/actions">fuzzing logs</a> after every run.
         </p>
       </div>
       <div class="stats">
@@ -844,7 +844,7 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
         buffers reused between parses, its fastest mode (and in the table also
         as its usual tree API). Run <code>make bench-compare</code> on your own
         machine, or see the
-        <a href="https://github.com/trans/oyl#performance">README</a> for details.
+        <a href="https://github.com/openbohemians/oyl#performance">README</a> for details.
       </p>
       <div class="callout">
         <strong class="accent-green">Conformance:</strong>
@@ -875,7 +875,7 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
      * The total comes from fuzz-stats.json on the fuzz-stats branch, which a
      * workflow updates after every ClusterFuzzLite run; the data-total
      * attribute is the fallback if it can't be fetched. */
-    const STATS_URL = 'https://raw.githubusercontent.com/trans/oyl/fuzz-stats/fuzz-stats.json';
+    const STATS_URL = 'https://raw.githubusercontent.com/openbohemians/oyl/fuzz-stats/fuzz-stats.json';
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const tally = document.getElementById('tally');
 

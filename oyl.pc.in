@@ -5,7 +5,7 @@ includedir=@INCLUDEDIR@
 
 Name: oyl
 Description: YAML 1.2 parser and emitter in C11 (fast, minimal, zero-copy)
-URL: https://github.com/trans/oyl
+URL: https://github.com/openbohemians/oyl
 Version: @VERSION@
 Libs: -L${libdir} -loyl
 Cflags: -I${includedir}
