@@ -4,6 +4,11 @@ The optimized YAML library: a YAML 1.2 parser and emitter written in C11.
 Fast, minimal, zero-copy. (Formerly *yam*; see the
 [changelog](CHANGELOG.md) for what the rename changed.)
 
+**[Website](https://openbohemians.github.io/oyl/)** ·
+[API reference](docs/api/index.md) ·
+[Benchmarks](#performance) ·
+[Changelog](CHANGELOG.md)
+
 Features a SIMD-accelerated scanner (SSE4.2 with scalar fallback),
 an event-based parser, an emitter with block/flow/minimal output styles,
 merge key expansion, alias resolution, file input, structured error messages,
