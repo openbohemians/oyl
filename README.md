@@ -412,8 +412,9 @@ Every library parses the same bytes:
 Oyl, libyaml and libfyaml are measured producing events. rapidyaml is
 shown two ways: its event parser (`EventHandlerInts`, with buffers reused
 between parses, its fastest mode) and its usual API, parsing in place into
-a new tree. The real files and scalar-heavy inputs come from rapidyaml's
-own benchmark set.
+a new tree. The real files and scalar-heavy inputs are the test files from
+rapidyaml's own benchmark suite; all timings were measured here, on the
+machine above, with `make bench-compare`.
 
 Oyl is 1.7–3.4× faster than libyaml and libfyaml on structure-heavy input
 and up to 13× faster on scalar-heavy input. Against rapidyaml's event

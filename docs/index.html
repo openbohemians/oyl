@@ -838,12 +838,13 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
         <div class="bench-table-scroll" id="bench-table"></div>
       </details>
       <p class="bench-method">
+        All results were measured here with <code>make bench-compare</code>:
         Intel Core Ultra 7 155H, one core, GCC 16.2 <code>-O2</code>, median of 11
-        runs in each of 3 passes, October 2026. Oyl, libyaml 0.2.5 and libfyaml
+        runs in each of 3 passes, October 2026. The real-file and long-text inputs
+        are rapidyaml’s own benchmark files. Oyl, libyaml 0.2.5 and libfyaml
         0.9.6 produce events; rapidyaml 0.16 is shown as its event parser with
         buffers reused between parses, its fastest mode (and in the table also
-        as its usual tree API). Run <code>make bench-compare</code> on your own
-        machine, or see the
+        as its usual tree API). Run it on your own machine, or see the
         <a href="https://github.com/openbohemians/oyl#performance">README</a> for details.
       </p>
       <div class="callout">
@@ -932,7 +933,7 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
       "groups": [
         {
           "title": "Real files, repeated to ~10 MB",
-          "note": "From rapidyaml’s own benchmark set. Oyl is fastest on all three, 1.1–1.8× ahead of rapidyaml.",
+          "note": "Test files from rapidyaml’s own benchmark suite, measured here. Oyl is fastest on all three, 1.1–1.8× ahead of rapidyaml.",
           "inputs": [
             {
               "name": "travis.yml",
@@ -1021,7 +1022,7 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
         },
         {
           "title": "Long text",
-          "note": "Multi-line scalars in each style, also from rapidyaml’s set. Oyl copies them a line or a run at a time with SIMD: 2–8× rapidyaml, up to 13× libyaml.",
+          "note": "Multi-line scalars in each style, also from rapidyaml’s test files. Oyl copies them a line or a run at a time with SIMD: 2–8× rapidyaml, up to 13× libyaml.",
           "inputs": [
             {
               "name": "Literal block scalars",
