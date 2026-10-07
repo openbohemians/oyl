@@ -1,0 +1,220 @@
+diff --git a/src/oyl_internal.h b/src/oyl_internal.h
+index 41d05e7..1fd0eca 100644
+--- a/src/oyl_internal.h
++++ b/src/oyl_internal.h
+@@ -36,6 +36,7 @@ struct oyl_schema {
+ /* Scan the next token into caller-provided storage. oyl_scan_next() wraps
+  * this for the public API; the parser calls it directly. */
+ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok);
++bool oyl_scanner_copy(oyl_scanner *dst, const oyl_scanner *src);
+ 
+ /* For small helpers on the per-token path that GCC may otherwise decline
+  * to inline once they grow a little. */
+diff --git a/src/oyl_parser.c b/src/oyl_parser.c
+index cdffae2..626bf37 100644
+--- a/src/oyl_parser.c
++++ b/src/oyl_parser.c
+@@ -151,6 +151,16 @@ struct oyl_parser {
+     parser_state node_return;  /* where to go after a block node completes */
+     int          events_delivered; /* events returned to caller (for eager fallback skip) */
+     uint64_t     delivered_sig;    /* running signature of their types */
++    /* checkpoint at the start of the current document (incremental) */
++    oyl_scanner *ckpt;
++    oyl_token    ckpt_tok;
++    bool         ckpt_have_tok;
++    int          ckpt_delivered;   /* events delivered before the document */
++    uint64_t     doc_sig;          /* signature of events delivered since */
++    /* eager mode parses one document at a time */
++    int          evt_base;         /* events delivered before this chunk */
++    int          skip_n;           /* already delivered (after a fallback) */
++    uint64_t     skip_sig;
+     oyl_status   scan_error;      /* last scanner error (for incremental path) */
+     int          scan_error_out;  /* out_len when scan_error was hit */
+     size_t       value_colon_line; /* line of the last block map value ':' */
+@@ -206,7 +216,7 @@ static void hit_limit(oyl_parser *p, const char *msg) {
+ #define OOM_STATUS(p) ((p)->stop_status ? (p)->stop_status : OYL_ERR_MEMORY)
+ 
+ static inline bool over_limit(oyl_parser *p) {
+-    return p->max_events > 0 && p->evt_len >= p->max_events;
++    return p->max_events > 0 && p->evt_base + p->evt_len >= p->max_events;
+ }
+ 
+ static inline bool enqueue(oyl_parser *p, const oyl_event *evt) {
+@@ -2016,6 +2026,7 @@ static oyl_status parse_document(oyl_parser *p) {
+ 
+ static oyl_status parse_stream(oyl_parser *p) {
+     oyl_status st;
++    if (p->stream_started) goto next_document;
+ 
+     /* consume STREAM_START */
+     st = peek_token(p);
+@@ -2034,6 +2045,7 @@ static oyl_status parse_stream(oyl_parser *p) {
+ 
+     /* parse documents */
+     for (;;) {
++    next_document:
+         st = peek_token(p);
+         if (st != OYL_OK) return st;
+ 
+@@ -2057,6 +2069,7 @@ static oyl_status parse_stream(oyl_parser *p) {
+                 enqueue(p, &se);
+             }
+             p->stream_ended = true;
++            if (p->oom) return OOM_STATUS(p);   /* limit hit at the very end */
+             return OYL_OK;
+         }
+ 
+@@ -2071,6 +2084,8 @@ static oyl_status parse_stream(oyl_parser *p) {
+         if (p->have_token && p->current.start.offset == prev_off &&
+             tok_type(p) == prev_type)
+             PARSE_ERROR(p, "unexpected token");
++        if (p->oom) return OOM_STATUS(p);
++        return OYL_OK;   /* one document (chunk) at a time */
+     }
+ }
+ 
+@@ -2327,7 +2342,7 @@ static const char *process_merge_value(const oyl_event *events, int evt_len,
+  * exponentially ("billion laughs"), so it is bounded by max_events, or, if
+  * that is disabled, by a multiple of the unexpanded stream. */
+ static int expansion_limit(const oyl_parser *p, int unexpanded) {
+-    if (p->max_events > 0) return p->max_events;
++    if (p->max_events > 0) return p->max_events - p->evt_base > 1 ? p->max_events - p->evt_base : 1;
+     long long lim = (long long)unexpanded * 16 + 100000;
+     return lim > INT_MAX / 2 ? INT_MAX / 2 : (int)lim;
+ }
+@@ -3663,6 +3678,15 @@ static oyl_status parser_step(oyl_parser *p) {
+         /* check for %TAG / %YAML directives — fall back to eager */
+         peek_token(p);
+         tt = tok_type(p);
++        if (p->out_len != 0) abort(); /* PROTOTYPE invariant check */
++        if (p->out_len == 0 && !p->scan_error) {
++            if (!p->ckpt) p->ckpt = oyl_scanner_new(p->input, p->input_len, p->arena);
++            if (!p->ckpt || !oyl_scanner_copy(p->ckpt, p->scanner)) { p->oom = true; return OYL_OK; }
++            p->ckpt_tok = p->current;
++            p->ckpt_have_tok = p->have_token;
++            p->ckpt_delivered = p->events_delivered;
++            p->doc_sig = 0;
++        }
+         if (tt == OYL_TOK_DIRECTIVE) {
+             p->state = ST_EAGER_DRAIN;
+             return OYL_OK;
+@@ -4435,12 +4459,16 @@ oyl_parser *oyl_parser_new(const char *input, size_t len, oyl_arena *a) {
+ static oyl_status next_event(oyl_parser *p, oyl_event *evt) {
+     if (!p->incremental) {
+         /* ── Eager path (merge/alias enabled, or fell back from incremental) ── */
++        for (;;) {
+         if (dequeue(p, evt)) return OYL_OK;
+         if (p->stream_ended) {
+             *evt = evt_simple(OYL_EVT_NONE);
+             return OYL_OK;
+         }
+-        if (!p->stream_started) {
++        p->evt_base += p->evt_len;
++        p->evt_len = 0;
++        p->evt_cursor = 0;
++        {
+             oyl_status st = parse_stream(p);
+             if (st != OYL_OK) return st;
+             if (p->merge_enabled || p->resolve_enabled) {
+@@ -4474,10 +4502,22 @@ static oyl_status next_event(oyl_parser *p, oyl_event *evt) {
+                 p->evt_cursor = p->events_delivered;
+                 p->events_delivered = 0;
+             }
+-            if (dequeue(p, evt)) return OYL_OK;
++            if (p->skip_n > 0) {
++                /* events of this document delivered before the fallback */
++                uint64_t sig = 0;
++                for (int i = 0; i < p->skip_n && i < p->evt_len; i++)
++                    sig = sig * 31 + (uint64_t)p->events[i].type;
++                if (p->skip_n > p->evt_len || sig != p->skip_sig) {
++                    p->stream_ended = true;
++                    PARSE_ERROR(p, "input not supported by the incremental parser "
++                                   "(please report); parse with merge keys or alias "
++                                   "resolution enabled");
++                }
++                p->evt_cursor = p->skip_n;
++                p->skip_n = 0;
++            }
++        }
+         }
+-        *evt = evt_simple(OYL_EVT_NONE);
+-        return OYL_OK;
+     }
+ 
+     /* ── Incremental path (state machine) ── */
+@@ -4491,6 +4531,7 @@ static oyl_status next_event(oyl_parser *p, oyl_event *evt) {
+         }
+         p->events_delivered++;
+         p->delivered_sig = p->delivered_sig * 31 + (uint64_t)evt->type;
++        p->doc_sig = p->doc_sig * 31 + (uint64_t)evt->type;
+         return OYL_OK;
+     }
+ 
+@@ -4540,6 +4581,17 @@ static oyl_status next_event(oyl_parser *p, oyl_event *evt) {
+             p->oom = false;
+             p->stop_status = OYL_OK;
+             p->events_delivered = 0;
++            if (p->ckpt) {
++                /* rewind to the start of the current document */
++                if (!oyl_scanner_copy(p->scanner, p->ckpt)) return OYL_ERR_MEMORY;
++                p->current = p->ckpt_tok;
++                p->have_token = p->ckpt_have_tok;
++                p->stream_started = true;      /* STREAM_START was delivered */
++                p->evt_base = p->ckpt_delivered;
++                p->skip_n = skip - p->ckpt_delivered;
++                p->skip_sig = p->doc_sig;
++                return next_event(p, evt);
++            }
+             /* reset scanner to beginning */
+             oyl_scanner_free(p->scanner);
+             p->scanner = oyl_scanner_new(p->input, p->input_len, p->arena);
+@@ -4564,6 +4616,7 @@ static oyl_status next_event(oyl_parser *p, oyl_event *evt) {
+     }
+     p->events_delivered++;
+     p->delivered_sig = p->delivered_sig * 31 + (uint64_t)evt->type;
++    p->doc_sig = p->doc_sig * 31 + (uint64_t)evt->type;
+     return OYL_OK;
+ }
+ 
+@@ -4615,6 +4668,7 @@ oyl_mark oyl_parser_error_mark(oyl_parser *p) {
+ void oyl_parser_free(oyl_parser *p) {
+     if (!p) return;
+     oyl_scanner_free(p->scanner);
++    oyl_scanner_free(p->ckpt);
+     free(p->contexts);
+     free(p->events);
+     free(p->frames);
+diff --git a/src/oyl_scanner.c b/src/oyl_scanner.c
+index c51c4eb..28cdc53 100644
+--- a/src/oyl_scanner.c
++++ b/src/oyl_scanner.c
+@@ -1597,6 +1597,29 @@ oyl_mark oyl_scanner_error_mark(oyl_scanner *s) {
+     return s->error_mark;
+ }
+ 
++/* Copy src's whole state into dst (both over the same input): a checkpoint
++ * the parser can rewind to. Keeps dst's own stack buffers. */
++bool oyl_scanner_copy(oyl_scanner *dst, const oyl_scanner *src) {
++    indent_stack ind = dst->indents;
++    void *flows = dst->flows; int flows_cap = dst->flows_cap;
++    if (ind.cap < src->indents.len) {
++        int *d = realloc(ind.data, (size_t)src->indents.cap * sizeof *d);
++        if (!d) return false;
++        ind.data = d; ind.cap = src->indents.cap;
++    }
++    if (flows_cap < src->flows_len) {
++        void *f = realloc(flows, (size_t)src->flows_cap * sizeof *src->flows);
++        if (!f) return false;
++        flows = f; flows_cap = src->flows_cap;
++    }
++    *dst = *src;
++    dst->indents.data = ind.data; dst->indents.cap = ind.cap;
++    if (src->indents.len) memcpy(ind.data, src->indents.data, (size_t)src->indents.len * sizeof *ind.data);
++    dst->flows = flows; dst->flows_cap = flows_cap;
++    if (src->flows_len) memcpy(flows, src->flows, (size_t)src->flows_len * sizeof *src->flows);
++    return true;
++}
++
+ void oyl_scanner_free(oyl_scanner *s) {
+     if (!s) return;
+     free(s->indents.data);
