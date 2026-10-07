@@ -9,9 +9,10 @@
 - The library code is frozen until the tag except for bug fixes. Any
   library change restarts the clean-fuzz clock (below), so performance work
   waits for 1.1.
-- The clean-fuzz clock last restarted on **2026-10-07**, after the fix for a
-  verbatim-tag bug (`94239d8`). Earlier restarts: 2026-09-28 (`8e1d455`,
-  flow-key lookahead redesign).
+- The clean-fuzz clock last restarted on **2026-10-07**, after the
+  parse-path agreement fix (`d5fa6ee`). Earlier restarts: 2026-10-07
+  (`94239d8`, verbatim tags), 2026-09-28 (`8e1d455`, flow-key lookahead
+  redesign).
 
 ## The rule
 
@@ -19,29 +20,39 @@ Tag only after several days of clean ClusterFuzzLite batch runs (both
 sanitizers; see [fuzzing.md](fuzzing.md)). **Always ask the user before
 tagging or publishing a release.**
 
-## Open issues found 2026-10-07 (by the parallel-parsing experiment)
+## Issues found 2026-10-07 (by the parallel-parsing experiment)
 
-Both are pre-existing; neither changes node content. Not fixed yet; the
-user decides whether before or after the tag.
-
-1. **The two parse paths give different event metadata.** On the same input
-   the incremental path (default) and the eager path (merge, resolve,
-   schema, or any fallback) disagree: an explicit `---` DOC_START is zero
-   width vs spans the 3 bytes; an implicit DOC_START is 1 byte wide vs zero
-   width; collection starts are zero width vs span their indicator;
-   MAPPING_START has `implicit=1` vs 0 (the header documents `implicit`
-   only for document events). Which path runs depends on unrelated content
-   earlier in the stream. The test suite and fuzzer compare content, not
-   marks, so it never surfaced. Fix: one convention (the eager one looks
-   right) and a differential check of all fields, incremental vs eager.
-2. **The eager fallback covers the whole rest of the stream.** Falling back
-   (nodes with an anchor or tag, directives, some flow keys; see the
-   `ST_EAGER_DRAIN` sites in `src/oyl_parser.c`) re-parses from the start of
-   the stream and builds every remaining event before delivering. A 10 MB
-   stream with an anchor in its first document: 121 MB peak memory and
-   ~1.6× slower, against 15 MB without anchors. Streaming is lost for large
-   multi-document inputs. Fix idea: fall back per document and resume
-   incremental parsing at the next document.
+1. **Fixed in `d5fa6ee`: the two parse paths gave different event
+   metadata.** The incremental path took document and block-collection
+   marks from whatever token was current, and set `implicit` on mappings
+   and empty scalars. It now follows the eager path's rules (documented in
+   docs/api/index.md under oyl_event). The suite runner checks that both
+   paths agree on every event field for all 308 valid cases, and the fuzzer
+   checks it (and that both agree on whether input parses) for every input
+   without merge keys.
+2. **Fixed with it, found by the new fuzz check:** after an explicit value
+   (`? a` / `: [g]: x`), the incremental path refused a compact mapping with
+   a flow-collection key (valid YAML); after an empty explicit key (`?`
+   alone), it accepted a `:` at the wrong indentation; it started a flow
+   pair whose empty key has properties (`[&a : b]`) at the `:` instead of
+   the properties; and the *eager* path marked the end of a flow pair whose
+   value is a flow collection (`[a: [b], c]`) at that collection's `]`
+   instead of the next token. test_flow's `check()` now also compares
+   every event field across both paths.
+2b. **Open, both paths:** `?\n  ? x\n: y` (an explicit key whose node is a
+   nested mapping, then the outer `:` at column 0) is rejected with
+   "explicit mapping value must be at the mapping's indentation"; YAML
+   allows it (PyYAML parses it). The inner mapping should end at the
+   dedent instead of erroring. Not covered by the test suite.
+3. **Open: the eager fallback covers the whole rest of the stream.**
+   Falling back (nodes with an anchor or tag, directives, some flow keys;
+   see the `ST_EAGER_DRAIN` sites in `src/oyl_parser.c`) re-parses from the
+   start of the stream and builds every remaining event before delivering.
+   A 10 MB stream with an anchor in its first document: 121 MB peak memory
+   and ~1.6× slower, against 15 MB without anchors. Fix idea: fall back
+   per document and resume incremental parsing at the next document. A
+   subagent was sizing it when the machine crashed; its result was lost.
+   The user decides when.
 
 ## Checklist at tag time
 
