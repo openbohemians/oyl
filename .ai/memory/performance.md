@@ -58,11 +58,12 @@ event parser, built from source.
    - high nibble: `01 01 02 04 00 08 00 10`, then zeros
    - low nibble: `03 01 01 03 01 01 01 01 01 01 05 19 03 19 01 11`
 3. ~~Short-scalar prefix~~: dropped. A 256-byte-table scalar loop is that
-   idea at its extreme. It was twice as fast per call in isolation on short
-   runs, yet slower end to end on every file.
+   idea at its extreme. In isolation it was up to twice as fast per call on
+   short runs, yet it lost 2–6% end to end on the generated block input the
+   idea was meant to speed up (it was only even on one-line plain text).
 4. **Structural index.** A simdjson-style bitmask of structural bytes that
    the scanner walks. This is the lever for short-token input: it replaces a
-   ~25-cycle classify per word with a bit scan.
+   25–30-cycle classify per word with a bit scan.
 5. **Flow fast path.** Inside `[...]`/`{...}`, read common JSON-like content
    directly and emit events without token structs; fall back to the normal
    path for anything unusual. Estimated 1.3–1.5× on JSON. Prototype first.
@@ -75,25 +76,39 @@ compare instruction counts.
 
 ## Plain-scalar classifier measurements (2026-10-07)
 
-Method: link `liboyl.a` with `-Wl,--wrap=oyl_scan_plain_scalar`, so every
-candidate runs inside the real scanner in one binary (same code layout),
-interleaved, pinned, 21 reps, three passes. Calls the scanner made were
-also recorded and replayed in isolation. Inputs: rapidyaml's real files
-repeated to ~1 MB, plus the four generated inputs. Results are end-to-end
-parse speed against today's `PCMPESTRI`:
+Tool: `bench/classify/` (`make bench-classify`; set `CASES` to rapidyaml's
+`bm/cases`). It links `liboyl.a` with `-Wl,--wrap=oyl_scan_plain_scalar`,
+so every candidate runs inside the real scanner in one binary, with the same
+code layout, interleaved, pinned, 21 rounds. It checks each candidate
+against the scalar predicate (random and exhaustive) and against the
+library's event stream before timing. It also replays the scanner's
+recorded calls in isolation. `WRAP=0` gives a null test: every row runs the
+library's own scan. That null test put the noise at ±1.4% (standard
+deviation 0.6%), with no bias by row position.
 
-| Candidate | Real configs | Long plain text | Generated |
-|---|---|---|---|
-| nibble (`PSHUFB`) | 0 to +3% | +4 to +7% | −2 to +2% (noise) |
-| range compare + equality compares (SSE2) | −3 to 0% | −2 to −3% | −2 to +1% |
-| 256-byte table, scalar | −4 to −6% | −24% | −1 to −6% |
-| today's scalar fallback (what ARM runs) | −9 to −15% | −38% | −1 to −8% |
+End-to-end parse speed against today's `PCMPESTRI`, the range over four
+passes. Inputs are rapidyaml's files repeated to ~1 MB, plus the four
+generated inputs:
 
-- Most calls cover one word: 84–100% of runs are under 16 bytes, and on the
-  generated inputs the mean is 3–4 bytes. So AVX2 won't help here.
-- Every SIMD candidate costs ~25 cycles per call when calls are chained
-  as in the scanner. Inlining saves only ~1 cycle. The cost is the latency
-  chain (load → classify → bitmask → index → next address), not the call
-  and not the classification.
+| Candidate | Real configs | Plain, one line | Plain, multi-line | Generated |
+|---|---|---|---|---|
+| nibble (`PSHUFB`) | 0 to +3% | +2 to +4% | +4 to +7% | −2 to +2% (noise) |
+| range + equality compares (SSE2) | −2 to 0% | −3 to −1% | −3 to 0% | −2 to +1% |
+| 256-byte table, scalar | −2 to −6% | 0 to +3% | −24% | 0 to −6% |
+| today's scalar fallback (what ARM runs) | −8 to −15% | −7 to −9% | −38 to −40% | 0 to −8% |
+
+- Most calls cover one word: 84–100% of runs are under 16 bytes. The mean
+  run is 7–11 bytes on real files and 3–6 on the generated inputs, so AVX2
+  won't help here.
+- Chained as in the scanner, a call costs 24–33 cycles for every SIMD
+  candidate (nibble 24–27, `PCMPESTRI` 25–28). Unchained, it's 9–17.
+  Inlining saves 0–3 cycles. The cost is the latency chain (load → classify
+  → bitmask → index → next address), not the call and not the
+  classification.
+- On files where plain scalars are rare (quoted and block-scalar files,
+  about one call per KB), rows swing 2–7% between passes, beyond the null
+  test's range, and every alternative tends to beat `PCMPESTRI`. Perhaps a
+  rarely called microcoded instruction costs more than its chained figure;
+  not established.
 - `PCMPESTRI`'s ranges also stop at `\` and `|`; the scanner treats them as
   text. The exact-set candidates are safe drop-ins.

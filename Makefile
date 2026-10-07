@@ -53,7 +53,7 @@ TEST_FLOW := $(OBJDIR)/test_flow
 
 .PHONY: all static shared pkgconfig install uninstall dist version \
         clean test test-suite test-schema test-emitter test-merge \
-        test-resolve test-errors test-flow test-all bench bench-parser bench-cmp bench-parser-cmp bench-compare
+        test-resolve test-errors test-flow test-all bench bench-parser bench-cmp bench-parser-cmp bench-compare bench-classify
 
 all: $(LIB) $(TEST)
 
@@ -210,6 +210,10 @@ bench-cmp: $(OBJDIR)/bench_scanner_cmp
 # Compare with libyaml, libfyaml and rapidyaml; see bench/compare/run.sh
 bench-compare:
 	@bench/compare/run.sh $(SIZE)
+
+# Compare plain-scalar classifiers inside the parser; see bench/classify/run.sh
+bench-classify:
+	@bench/classify/run.sh
 
 bench-parser-cmp: $(OBJDIR)/bench_parser_cmp
 	@./$(OBJDIR)/bench_parser_cmp $(SIZE)
