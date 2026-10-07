@@ -53,7 +53,7 @@ TEST_FLOW := $(OBJDIR)/test_flow
 
 .PHONY: all static shared pkgconfig install uninstall dist version \
         clean test test-suite test-schema test-emitter test-merge \
-        test-resolve test-errors test-flow test-all bench bench-parser bench-cmp bench-parser-cmp bench-compare bench-classify
+        test-resolve test-errors test-flow test-all bench bench-parser bench-cmp bench-parser-cmp bench-compare bench-classify bench-oracle
 
 all: $(LIB) $(TEST)
 
@@ -214,6 +214,10 @@ bench-compare:
 # Compare plain-scalar classifiers inside the parser; see bench/classify/run.sh
 bench-classify:
 	@bench/classify/run.sh
+
+# Estimate what free byte finding would be worth; see bench/oracle/run.sh
+bench-oracle:
+	@bench/oracle/run.sh
 
 bench-parser-cmp: $(OBJDIR)/bench_parser_cmp
 	@./$(OBJDIR)/bench_parser_cmp $(SIZE)
