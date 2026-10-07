@@ -1,10 +1,12 @@
-yam (1.0.0-1) unstable; urgency=medium
+oyl (1.0.0-1) unstable; urgency=medium
 
+  * Renamed from yam to oyl: the oyl_/OYL_ API prefix, <oyl/oyl.h>,
+    liboyl, and the oyl source package.
   * First stable release. The ABI is now stable within 1.x; the runtime
-    library is libyam.so.1 (package libyam1, replacing libyam0).
+    library is liboyl.so.1 (package liboyl1, replacing libyam0).
   * API: events and tokens are owned by the library and returned by const
     pointer; schemas are opaque; the emitter is configured with setters and
-    gains yam_emit_* builders. Only the public API is exported.
+    gains oyl_emit_* builders. Only the public API is exported.
   * Conformance: all 308 valid YAML Test Suite cases parse to the expected
     events and all 94 invalid cases are rejected; emitted YAML parses back
     to the same data.

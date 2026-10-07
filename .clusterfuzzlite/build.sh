@@ -1,5 +1,5 @@
 #!/bin/bash -eu
-# Build yam's fuzz target for ClusterFuzzLite. $CC, $CFLAGS (with the
+# Build oyl's fuzz target for ClusterFuzzLite. $CC, $CFLAGS (with the
 # sanitizer flags), $LIB_FUZZING_ENGINE and $OUT come from the base image.
 
 for f in src/*.c; do

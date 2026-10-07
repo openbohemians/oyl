@@ -1,5 +1,5 @@
 /*
- * yam_simd.c — SIMD scan primitives with runtime CPU dispatch.
+ * oyl_simd.c — SIMD scan primitives with runtime CPU dispatch.
  *
  * The SSE4.2 implementations carry a target("sse4.2") attribute, so their
  * intrinsics compile regardless of the global -march flags the translation
@@ -14,18 +14,18 @@
  * where STT_GNU_IFUNC is unavailable.
  */
 
-#include "yam_simd.h"
-#include "yam_chars.h"
+#include "oyl_simd.h"
+#include "oyl_chars.h"
 
 #include <stdint.h>
 
 #if defined(__x86_64__) || defined(__i386__)
-#  define YAM_X86 1
+#  define OYL_X86 1
 #  include <nmmintrin.h>
 /* PCMPESTRI mode: unsigned bytes, range compare, least-significant match.
  * Defined as a macro (not a const int) because _mm_cmpestri requires its mode
  * argument to be a literal constant expression under Clang. */
-#  define YAM_PCMP_MODE (_SIDD_UBYTE_OPS | _SIDD_CMP_RANGES | _SIDD_LEAST_SIGNIFICANT)
+#  define OYL_PCMP_MODE (_SIDD_UBYTE_OPS | _SIDD_CMP_RANGES | _SIDD_LEAST_SIGNIFICANT)
 #endif
 
 /* ── Scalar implementations (always available) ───────────────────────────── */
@@ -57,7 +57,7 @@ static size_t scan_to_break_scalar(const char *buf, size_t len) {
 
 /* ── SSE4.2 implementations ──────────────────────────────────────────────── */
 
-#if defined(YAM_X86)
+#if defined(OYL_X86)
 
 __attribute__((target("sse4.2")))
 static size_t scan_plain_scalar_sse42(const char *buf, size_t len) {
@@ -69,14 +69,14 @@ static size_t scan_plain_scalar_sse42(const char *buf, size_t len) {
      * Mode: unsigned bytes, ranges, find first match.
      */
     const __m128i ranges = _mm_loadu_si128(
-        (const __m128i *)yam_simd_struct_ranges
+        (const __m128i *)oyl_simd_struct_ranges
     );
 
     for (; i + 16 <= len; i += 16) {
         __m128i chunk = _mm_loadu_si128((const __m128i *)(buf + i));
         int chunk_len = (len - i) < 16 ? (int)(len - i) : 16;
-        int idx = _mm_cmpestri(ranges, YAM_SIMD_STRUCT_RANGES_LEN,
-                               chunk, chunk_len, YAM_PCMP_MODE);
+        int idx = _mm_cmpestri(ranges, OYL_SIMD_STRUCT_RANGES_LEN,
+                               chunk, chunk_len, OYL_PCMP_MODE);
         if (idx < 16) return i + idx;
     }
 
@@ -136,7 +136,7 @@ static size_t scan_to_break_sse42(const char *buf, size_t len) {
     return len;
 }
 
-#endif /* YAM_X86 */
+#endif /* OYL_X86 */
 
 /* ── Dispatch ────────────────────────────────────────────────────────────── */
 
@@ -148,8 +148,8 @@ static size_t (*scan_to_break_impl)(const char *, size_t) =
     scan_to_break_scalar;
 
 __attribute__((constructor))
-static void yam_simd_init(void) {
-#if defined(YAM_X86)
+static void oyl_simd_init(void) {
+#if defined(OYL_X86)
     __builtin_cpu_init();
     if (__builtin_cpu_supports("sse4.2")) {
         scan_plain_scalar_impl = scan_plain_scalar_sse42;
@@ -159,14 +159,14 @@ static void yam_simd_init(void) {
 #endif
 }
 
-size_t yam_scan_plain_scalar(const char *buf, size_t len) {
+size_t oyl_scan_plain_scalar(const char *buf, size_t len) {
     return scan_plain_scalar_impl(buf, len);
 }
 
-size_t yam_skip_blanks(const char *buf, size_t len) {
+size_t oyl_skip_blanks(const char *buf, size_t len) {
     return skip_blanks_impl(buf, len);
 }
 
-size_t yam_scan_to_break(const char *buf, size_t len) {
+size_t oyl_scan_to_break(const char *buf, size_t len) {
     return scan_to_break_impl(buf, len);
 }

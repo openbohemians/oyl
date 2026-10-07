@@ -23,7 +23,7 @@ jobs:
         run: |
           version="$(make version)"
           if [ "$TAG_NAME" != "v$version" ]; then
-            echo "tag $TAG_NAME does not match yam.h version v$version"
+            echo "tag $TAG_NAME does not match oyl.h version v$version"
             exit 1
           fi
 
@@ -44,14 +44,14 @@ jobs:
         # SONAME not findable by the loader after ldconfig.
         run: |
           pacman -Sy --noconfirm --needed --quiet pkgconf >/dev/null
-          pacman -U --noconfirm pkg/yam-[0-9]*.pkg.tar.zst
-          gcc $(pkg-config --cflags yam) test/smoke_install.c $(pkg-config --libs yam) -o /tmp/smoke
+          pacman -U --noconfirm pkg/oyl-[0-9]*.pkg.tar.zst
+          gcc $(pkg-config --cflags oyl) test/smoke_install.c $(pkg-config --libs oyl) -o /tmp/smoke
           /tmp/smoke
 
       - name: Upload Arch artifact
         uses: actions/upload-artifact@v7
         with:
-          name: yam-arch
+          name: oyl-arch
           path: pkg/*.pkg.tar.zst
 
   deb:
@@ -72,7 +72,7 @@ jobs:
         run: |
           version="$(make version)"
           if [ "$TAG_NAME" != "v$version" ]; then
-            echo "tag $TAG_NAME does not match yam.h version v$version"
+            echo "tag $TAG_NAME does not match oyl.h version v$version"
             exit 1
           fi
 
@@ -83,9 +83,9 @@ jobs:
         run: |
           version="$(make version)"
           mkdir -p pkg/build
-          tar -xzf "pkg/yam-${version}.tar.gz" -C pkg/build
-          cp -a pkg/debian "pkg/build/yam-${version}/debian"
-          cd "pkg/build/yam-${version}"
+          tar -xzf "pkg/oyl-${version}.tar.gz" -C pkg/build
+          cp -a pkg/debian "pkg/build/oyl-${version}/debian"
+          cd "pkg/build/oyl-${version}"
           dpkg-buildpackage -us -uc -b
 
       - name: Collect Debian artifacts
@@ -109,15 +109,15 @@ jobs:
               export DEBIAN_FRONTEND=noninteractive
               apt-get update -qq
               apt-get install -y -qq gcc pkg-config libc6-dev >/dev/null
-              apt-get install -y -qq /pkg/libyam1_*.deb /pkg/libyam-dev_*.deb >/dev/null
-              gcc $(pkg-config --cflags yam) /smoke.c $(pkg-config --libs yam) -o /smoke
+              apt-get install -y -qq /pkg/liboyl1_*.deb /pkg/liboyl-dev_*.deb >/dev/null
+              gcc $(pkg-config --cflags oyl) /smoke.c $(pkg-config --libs oyl) -o /smoke
               /smoke
             '
 
       - name: Upload Debian artifact
         uses: actions/upload-artifact@v7
         with:
-          name: yam-deb
+          name: oyl-deb
           path: |
             dist/*.deb
             dist/*.ddeb
@@ -139,7 +139,7 @@ jobs:
         run: |
           version="$(make version)"
           if [ "$TAG_NAME" != "v$version" ]; then
-            echo "tag $TAG_NAME does not match yam.h version v$version"
+            echo "tag $TAG_NAME does not match oyl.h version v$version"
             exit 1
           fi
 
@@ -152,9 +152,9 @@ jobs:
         run: |
           version="$(make version)"
           mkdir -p ~/rpmbuild/SOURCES ~/rpmbuild/SPECS
-          cp "pkg/yam-${version}.tar.gz" ~/rpmbuild/SOURCES/
-          cp pkg/yam.spec ~/rpmbuild/SPECS/
-          rpmbuild -bb ~/rpmbuild/SPECS/yam.spec
+          cp "pkg/oyl-${version}.tar.gz" ~/rpmbuild/SOURCES/
+          cp pkg/oyl.spec ~/rpmbuild/SPECS/
+          rpmbuild -bb ~/rpmbuild/SPECS/oyl.spec
 
       - name: Collect RPM artifacts
         run: |
@@ -166,14 +166,14 @@ jobs:
         # build a downstream program against the installed lib via pkg-config.
         run: |
           dnf install -y -q gcc pkgconf-pkg-config \
-            dist/yam-[0-9]*.rpm dist/yam-devel-*.rpm >/dev/null
-          gcc $(pkg-config --cflags yam) test/smoke_install.c $(pkg-config --libs yam) -o /tmp/smoke
+            dist/oyl-[0-9]*.rpm dist/oyl-devel-*.rpm >/dev/null
+          gcc $(pkg-config --cflags oyl) test/smoke_install.c $(pkg-config --libs oyl) -o /tmp/smoke
           /tmp/smoke
 
       - name: Upload RPM artifact
         uses: actions/upload-artifact@v7
         with:
-          name: yam-rpm
+          name: oyl-rpm
           path: dist/*.rpm
 
   release-assets:
@@ -191,7 +191,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: |
-            yam-arch/*.pkg.tar.zst
-            yam-deb/*.deb
-            yam-deb/*.ddeb
-            yam-rpm/*.rpm
+            oyl-arch/*.pkg.tar.zst
+            oyl-deb/*.deb
+            oyl-deb/*.ddeb
+            oyl-rpm/*.rpm

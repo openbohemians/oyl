@@ -1,5 +1,5 @@
 /*
- * yam_emitter.c — YAML 1.2 event emitter
+ * oyl_emitter.c — YAML 1.2 event emitter
  *
  * Consumes parser events and produces YAML text in three styles:
  *   - BLOCK: standard indented YAML (default)
@@ -7,8 +7,8 @@
  *   - MINIMAL: compact flow, no optional whitespace
  */
 
-#include "yam_internal.h"
-#include "yam_chars.h"
+#include "oyl_internal.h"
+#include "oyl_chars.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -33,13 +33,13 @@ typedef struct {
 /* ── Emitter state ───────────────────────────────────────── */
 
 typedef struct {
-    yam_emit_style style;
+    oyl_emit_style style;
     int            indent;   /* spaces per level, 1-10 */
 } emit_opts;
 
-struct yam_emitter {
+struct oyl_emitter {
     emit_opts     opts;
-    yam_arena    *arena;
+    oyl_arena    *arena;
 
     /* output buffer (malloc'd) */
     char   *buf;
@@ -65,61 +65,61 @@ struct yam_emitter {
 
 #define EMIT_INIT_CAP 4096
 
-static yam_status buf_ensure(yam_emitter *e, size_t need) {
-    if (e->len + need <= e->cap) return YAM_OK;
+static oyl_status buf_ensure(oyl_emitter *e, size_t need) {
+    if (e->len + need <= e->cap) return OYL_OK;
     size_t new_cap = e->cap * 2;
     if (new_cap < e->len + need) new_cap = e->len + need;
     char *nb = realloc(e->buf, new_cap);
-    if (!nb) return YAM_ERR_MEMORY;
+    if (!nb) return OYL_ERR_MEMORY;
     e->buf = nb;
     e->cap = new_cap;
-    return YAM_OK;
+    return OYL_OK;
 }
 
-static yam_status buf_put(yam_emitter *e, char c) {
-    yam_status st = buf_ensure(e, 1);
-    if (st != YAM_OK) return st;
+static oyl_status buf_put(oyl_emitter *e, char c) {
+    oyl_status st = buf_ensure(e, 1);
+    if (st != OYL_OK) return st;
     e->buf[e->len++] = c;
     if (c == '\n') e->column = 0;
     else e->column++;
-    return YAM_OK;
+    return OYL_OK;
 }
 
-static yam_status buf_puts(yam_emitter *e, const char *s, size_t slen) {
-    yam_status st = buf_ensure(e, slen);
-    if (st != YAM_OK) return st;
+static oyl_status buf_puts(oyl_emitter *e, const char *s, size_t slen) {
+    oyl_status st = buf_ensure(e, slen);
+    if (st != OYL_OK) return st;
     memcpy(e->buf + e->len, s, slen);
     e->len += slen;
     for (size_t i = slen; i > 0; i--) {
         if (s[i - 1] == '\n') {
             e->column = (int)(slen - i);
-            return YAM_OK;
+            return OYL_OK;
         }
     }
     e->column += (int)slen;
-    return YAM_OK;
+    return OYL_OK;
 }
 
 #define PUTS(e, lit) buf_puts(e, lit, sizeof(lit) - 1)
 
-static yam_status buf_indent(yam_emitter *e, int spaces) {
-    if (spaces <= 0) return YAM_OK;
-    yam_status st = buf_ensure(e, (size_t)spaces);
-    if (st != YAM_OK) return st;
+static oyl_status buf_indent(oyl_emitter *e, int spaces) {
+    if (spaces <= 0) return OYL_OK;
+    oyl_status st = buf_ensure(e, (size_t)spaces);
+    if (st != OYL_OK) return st;
     memset(e->buf + e->len, ' ', (size_t)spaces);
     e->len += (size_t)spaces;
     e->column += spaces;
-    return YAM_OK;
+    return OYL_OK;
 }
 
 /* ── Context stack ───────────────────────────────────────── */
 
-static yam_status push_ctx(yam_emitter *e, emit_ctx_type type, int indent) {
+static oyl_status push_ctx(oyl_emitter *e, emit_ctx_type type, int indent) {
     if (e->stack_len >= e->stack_cap) {
         int new_cap = e->stack_cap * 2;
         if (new_cap < 8) new_cap = 8;
         emit_ctx *ns = realloc(e->stack, (size_t)new_cap * sizeof(emit_ctx));
-        if (!ns) return YAM_ERR_MEMORY;
+        if (!ns) return OYL_ERR_MEMORY;
         e->stack = ns;
         e->stack_cap = new_cap;
     }
@@ -129,19 +129,19 @@ static yam_status push_ctx(yam_emitter *e, emit_ctx_type type, int indent) {
         .count = 0,
         .expect_key = (type == EMIT_CTX_BLOCK_MAP || type == EMIT_CTX_FLOW_MAP),
     };
-    return YAM_OK;
+    return OYL_OK;
 }
 
-static emit_ctx *top_ctx(yam_emitter *e) {
+static emit_ctx *top_ctx(oyl_emitter *e) {
     if (e->stack_len == 0) return NULL;
     return &e->stack[e->stack_len - 1];
 }
 
-static void pop_ctx(yam_emitter *e) {
+static void pop_ctx(oyl_emitter *e) {
     if (e->stack_len > 0) e->stack_len--;
 }
 
-static bool in_any_flow(yam_emitter *e) {
+static bool in_any_flow(oyl_emitter *e) {
     for (int i = e->stack_len - 1; i >= 0; i--) {
         if (e->stack[i].type == EMIT_CTX_FLOW_MAP ||
             e->stack[i].type == EMIT_CTX_FLOW_SEQ)
@@ -152,20 +152,20 @@ static bool in_any_flow(yam_emitter *e) {
 
 /* ── Separator strings ───────────────────────────────────── */
 
-static const char *entry_sep(yam_emitter *e) {
-    return (e->opts.style == YAM_EMIT_MINIMAL) ? "," : ", ";
+static const char *entry_sep(oyl_emitter *e) {
+    return (e->opts.style == OYL_EMIT_MINIMAL) ? "," : ", ";
 }
 
-static int entry_sep_len(yam_emitter *e) {
-    return (e->opts.style == YAM_EMIT_MINIMAL) ? 1 : 2;
+static int entry_sep_len(oyl_emitter *e) {
+    return (e->opts.style == OYL_EMIT_MINIMAL) ? 1 : 2;
 }
 
-static const char *kv_sep(yam_emitter *e) {
+static const char *kv_sep(oyl_emitter *e) {
     (void)e;
     return ": "; /* always space after : for safe round-tripping */
 }
 
-static int kv_sep_len(yam_emitter *e) {
+static int kv_sep_len(oyl_emitter *e) {
     (void)e;
     return 2;
 }
@@ -199,7 +199,7 @@ static bool is_yaml_keyword(const char *s, size_t len) {
     return false;
 }
 
-/* Forward declarations for int/float matchers from yam_schema.c */
+/* Forward declarations for int/float matchers from oyl_schema.c */
 /* We duplicate the logic here to avoid exposing internal functions */
 static bool looks_like_number(const char *s, size_t len) {
     if (len == 0) return false;
@@ -225,7 +225,7 @@ static bool looks_like_number(const char *s, size_t len) {
 
 static bool has_break(const char *s, size_t len) {
     for (size_t i = 0; i < len; i++) {
-        if (yam_is_break((uint8_t)s[i])) return true;
+        if (oyl_is_break((uint8_t)s[i])) return true;
     }
     return false;
 }
@@ -249,12 +249,12 @@ static bool needs_quoting(const char *s, size_t len, bool flow_ctx) {
      * when followed by a "safe" character: not a blank, and in flow
      * context not a flow indicator ("-123", "?x", ":x", "-foo") */
     uint8_t first = (uint8_t)s[0];
-    if (yam_is_indicator(first)) {
+    if (oyl_is_indicator(first)) {
         if (!(first == '-' || first == '?' || first == ':')) return true;
         if (len < 2) return true;
         uint8_t next = (uint8_t)s[1];
-        if (yam_is_blank_or_break(next)) return true;
-        if (flow_ctx && yam_is_flow(next)) return true;
+        if (oyl_is_blank_or_break(next)) return true;
+        if (flow_ctx && oyl_is_flow(next)) return true;
     }
     /* space or tab at start */
     if (first == ' ' || first == '\t') return true;
@@ -274,9 +274,9 @@ static bool needs_quoting(const char *s, size_t len, bool flow_ctx) {
         if (c == ':' && (i + 1 == len || s[i + 1] == ' ' || s[i + 1] == '\t')) return true;
         if ((c == ' ' || c == '\t') && i + 1 < len && s[i + 1] == '#') return true;
         /* line breaks */
-        if (yam_is_break(c)) return true;
+        if (oyl_is_break(c)) return true;
         /* flow indicators in flow context */
-        if (flow_ctx && yam_is_flow(c)) return true;
+        if (flow_ctx && oyl_is_flow(c)) return true;
         /* trailing space/tab */
         if ((c == ' ' || c == '\t') && i + 1 == len) return true;
     }
@@ -297,7 +297,7 @@ static bool literal_ok(const char *s, size_t len) {
     return !(i < len && s[i] == ' ');
 }
 
-static bool is_str_tag(yam_str tag) {
+static bool is_str_tag(oyl_str tag) {
     static const char str_tag[] = "tag:yaml.org,2002:str";
     return tag.len == sizeof(str_tag) - 1 && memcmp(tag.data, str_tag, tag.len) == 0;
 }
@@ -306,66 +306,66 @@ static bool is_str_tag(yam_str tag) {
  * event means "resolve by schema", so 8080 or true stay untyped text and
  * reparse as they came in. Only a scalar tagged !!str that would resolve to
  * another type (number, bool, null) is quoted to keep it a string. */
-static yam_scalar_style choose_style(yam_scalar_style requested,
+static oyl_scalar_style choose_style(oyl_scalar_style requested,
                                      const char *val, size_t len,
-                                     bool flow_ctx, bool is_key, yam_str tag) {
+                                     bool flow_ctx, bool is_key, oyl_str tag) {
     /* Block scalars are written literal (folded values are already
      * folded, and literal keeps them exact), only in block context and
      * not as keys; otherwise double-quoted */
     bool block_ok = !flow_ctx && !is_key && literal_ok(val, len);
-    if (requested == YAM_SCALAR_LITERAL || requested == YAM_SCALAR_FOLDED)
-        return block_ok ? YAM_SCALAR_LITERAL : YAM_SCALAR_DOUBLE_QUOTED;
+    if (requested == OYL_SCALAR_LITERAL || requested == OYL_SCALAR_FOLDED)
+        return block_ok ? OYL_SCALAR_LITERAL : OYL_SCALAR_DOUBLE_QUOTED;
     /* single quotes fold line breaks; keep the value exact with escapes */
-    if (requested == YAM_SCALAR_SINGLE_QUOTED)
-        return has_break(val, len) ? YAM_SCALAR_DOUBLE_QUOTED : requested;
-    if (requested == YAM_SCALAR_DOUBLE_QUOTED) return requested;
+    if (requested == OYL_SCALAR_SINGLE_QUOTED)
+        return has_break(val, len) ? OYL_SCALAR_DOUBLE_QUOTED : requested;
+    if (requested == OYL_SCALAR_DOUBLE_QUOTED) return requested;
 
     /* PLAIN requested — auto-detect */
     if (len == 0 && !is_str_tag(tag))
-        return YAM_SCALAR_PLAIN;              /* empty (null) node */
+        return OYL_SCALAR_PLAIN;              /* empty (null) node */
     if (needs_escape(val, len))
-        return YAM_SCALAR_DOUBLE_QUOTED;      /* control characters */
+        return OYL_SCALAR_DOUBLE_QUOTED;      /* control characters */
     if (!needs_quoting(val, len, flow_ctx)) {
         if (is_str_tag(tag) && (is_yaml_keyword(val, len) || looks_like_number(val, len)))
-            return YAM_SCALAR_DOUBLE_QUOTED;
-        return YAM_SCALAR_PLAIN;
+            return OYL_SCALAR_DOUBLE_QUOTED;
+        return OYL_SCALAR_PLAIN;
     }
 
     /* needs quoting — pick style */
     if (needs_escape(val, len))
-        return YAM_SCALAR_DOUBLE_QUOTED;
+        return OYL_SCALAR_DOUBLE_QUOTED;
 
     /* multiline in block context → literal */
     if (block_ok && has_break(val, len))
-        return YAM_SCALAR_LITERAL;
+        return OYL_SCALAR_LITERAL;
 
-    return YAM_SCALAR_DOUBLE_QUOTED;
+    return OYL_SCALAR_DOUBLE_QUOTED;
 }
 
 /* ── Scalar emission ─────────────────────────────────────── */
 
-static yam_status emit_plain(yam_emitter *e, const char *s, size_t len) {
+static oyl_status emit_plain(oyl_emitter *e, const char *s, size_t len) {
     return buf_puts(e, s, len);
 }
 
-static yam_status emit_single_quoted(yam_emitter *e, const char *s, size_t len) {
-    yam_status st = buf_put(e, '\'');
-    if (st != YAM_OK) return st;
+static oyl_status emit_single_quoted(oyl_emitter *e, const char *s, size_t len) {
+    oyl_status st = buf_put(e, '\'');
+    if (st != OYL_OK) return st;
     for (size_t i = 0; i < len; i++) {
         if (s[i] == '\'') {
             st = PUTS(e, "''");
-            if (st != YAM_OK) return st;
+            if (st != OYL_OK) return st;
         } else {
             st = buf_put(e, s[i]);
-            if (st != YAM_OK) return st;
+            if (st != OYL_OK) return st;
         }
     }
     return buf_put(e, '\'');
 }
 
-static yam_status emit_double_quoted(yam_emitter *e, const char *s, size_t len) {
-    yam_status st = buf_put(e, '"');
-    if (st != YAM_OK) return st;
+static oyl_status emit_double_quoted(oyl_emitter *e, const char *s, size_t len) {
+    oyl_status st = buf_put(e, '"');
+    if (st != OYL_OK) return st;
     for (size_t i = 0; i < len; i++) {
         uint8_t c = (uint8_t)s[i];
         switch (c) {
@@ -387,7 +387,7 @@ static yam_status emit_double_quoted(yam_emitter *e, const char *s, size_t len) 
             }
             break;
         }
-        if (st != YAM_OK) return st;
+        if (st != OYL_OK) return st;
     }
     return buf_put(e, '"');
 }
@@ -396,9 +396,9 @@ static yam_status emit_double_quoted(yam_emitter *e, const char *s, size_t len) 
  * check literal_ok() first. Chomping follows the trailing line breaks:
  * none "|-", one "|", more (or nothing but breaks) "|+". Empty lines are
  * written without indentation. */
-static yam_status emit_block_scalar(yam_emitter *e, const char *s, size_t len,
+static oyl_status emit_block_scalar(oyl_emitter *e, const char *s, size_t len,
                                     int indent) {
-    yam_status st;
+    oyl_status st;
     size_t trail = 0;
     while (trail < len && s[len - 1 - trail] == '\n') trail++;
     size_t body = len - trail;
@@ -406,7 +406,7 @@ static yam_status emit_block_scalar(yam_emitter *e, const char *s, size_t len,
     const char *header = body == 0 ? (trail ? "|+\n" : "|-\n")
                        : trail == 0 ? "|-\n" : trail == 1 ? "|\n" : "|+\n";
     st = buf_puts(e, header, strlen(header));
-    if (st != YAM_OK) return st;
+    if (st != OYL_OK) return st;
 
     /* body lines, each ending in a line break */
     size_t pos = 0;
@@ -415,12 +415,12 @@ static yam_status emit_block_scalar(yam_emitter *e, const char *s, size_t len,
         while (eol < body && s[eol] != '\n') eol++;
         if (eol > pos) {
             st = buf_indent(e, indent);
-            if (st != YAM_OK) return st;
+            if (st != OYL_OK) return st;
             st = buf_puts(e, s + pos, eol - pos);
-            if (st != YAM_OK) return st;
+            if (st != OYL_OK) return st;
         }
         st = buf_put(e, '\n');
-        if (st != YAM_OK) return st;
+        if (st != OYL_OK) return st;
         pos = eol + 1;
     }
 
@@ -428,26 +428,26 @@ static yam_status emit_block_scalar(yam_emitter *e, const char *s, size_t len,
      * empty lines (all of them when there is no body) */
     for (size_t i = body ? 1 : 0; i < trail; i++) {
         st = buf_put(e, '\n');
-        if (st != YAM_OK) return st;
+        if (st != OYL_OK) return st;
     }
-    return YAM_OK;
+    return OYL_OK;
 }
 
-static yam_status emit_scalar(yam_emitter *e, const yam_event *evt) {
+static oyl_status emit_scalar(oyl_emitter *e, const oyl_event *evt) {
     const char *val = evt->value.data;
     size_t vlen = evt->value.len;
-    bool flow_ctx = in_any_flow(e) || e->opts.style != YAM_EMIT_BLOCK;
+    bool flow_ctx = in_any_flow(e) || e->opts.style != OYL_EMIT_BLOCK;
 
     emit_ctx *ctx = top_ctx(e);
     bool is_key = ctx && (ctx->type == EMIT_CTX_BLOCK_MAP || ctx->type == EMIT_CTX_FLOW_MAP) &&
                   ctx->expect_key;
-    yam_scalar_style style = choose_style(evt->scalar_style, val, vlen, flow_ctx,
+    oyl_scalar_style style = choose_style(evt->scalar_style, val, vlen, flow_ctx,
                                           is_key, evt->tag);
 
     int indent = ctx ? ctx->indent + e->opts.indent : e->opts.indent;
 
     switch (style) {
-    case YAM_SCALAR_PLAIN:
+    case OYL_SCALAR_PLAIN:
         if (vlen == 0) {
             /* empty node: nothing to write, except in a flow sequence
              * where "[a, ]" would drop the entry, so write ~ (null). Keep
@@ -456,28 +456,28 @@ static yam_status emit_scalar(yam_emitter *e, const yam_event *evt) {
                 return buf_put(e, '~');
             if (!e->wrote_props && !is_key && e->len > 0 && e->buf[e->len - 1] == ' ')
                 e->len--;
-            return YAM_OK;
+            return OYL_OK;
         }
         return emit_plain(e, val, vlen);
-    case YAM_SCALAR_SINGLE_QUOTED:
+    case OYL_SCALAR_SINGLE_QUOTED:
         return emit_single_quoted(e, val, vlen);
-    case YAM_SCALAR_DOUBLE_QUOTED:
+    case OYL_SCALAR_DOUBLE_QUOTED:
         return emit_double_quoted(e, val, vlen);
-    case YAM_SCALAR_LITERAL:
-    case YAM_SCALAR_FOLDED:
+    case OYL_SCALAR_LITERAL:
+    case OYL_SCALAR_FOLDED:
         return emit_block_scalar(e, val, vlen, indent);
     }
-    return YAM_ERR_EMIT;
+    return OYL_ERR_EMIT;
 }
 
 /* ── Property emission (anchor, tag) ─────────────────────── */
 
-static yam_status emit_anchor(yam_emitter *e, yam_str anchor) {
-    if (!anchor.data || anchor.len == 0) return YAM_OK;
-    yam_status st = buf_put(e, '&');
-    if (st != YAM_OK) return st;
+static oyl_status emit_anchor(oyl_emitter *e, oyl_str anchor) {
+    if (!anchor.data || anchor.len == 0) return OYL_OK;
+    oyl_status st = buf_put(e, '&');
+    if (st != OYL_OK) return st;
     st = buf_puts(e, anchor.data, anchor.len);
-    if (st != YAM_OK) return st;
+    if (st != OYL_OK) return st;
     return buf_put(e, ' ');
 }
 
@@ -490,7 +490,7 @@ static bool is_uri_char(uint8_t c) {
 /* Characters allowed in a shorthand tag's suffix: URI characters other
  * than '!' and the flow indicators */
 static bool is_tag_char(uint8_t c) {
-    return is_uri_char(c) && c != '!' && !yam_is_flow(c);
+    return is_uri_char(c) && c != '!' && !oyl_is_flow(c);
 }
 
 static bool all_tag_chars(const char *s, size_t len) {
@@ -502,22 +502,22 @@ static bool all_tag_chars(const char *s, size_t len) {
 /* Write a tag as "!!suffix" (standard tags), "!suffix" (local tags), or
  * verbatim "!<...>" with any other byte percent-encoded; the parser
  * decodes verbatim tags, so each form reads back as the same tag. */
-static yam_status emit_tag(yam_emitter *e, yam_str tag) {
-    if (!tag.data || tag.len == 0) return YAM_OK;
+static oyl_status emit_tag(oyl_emitter *e, oyl_str tag) {
+    if (!tag.data || tag.len == 0) return OYL_OK;
     static const char prefix[] = "tag:yaml.org,2002:";
     static const size_t plen = sizeof(prefix) - 1;
 
-    yam_status st;
+    oyl_status st;
     if (tag.len > plen && memcmp(tag.data, prefix, plen) == 0 &&
         all_tag_chars(tag.data + plen, tag.len - plen)) {
         st = PUTS(e, "!!");
-        if (st != YAM_OK) return st;
+        if (st != OYL_OK) return st;
         st = buf_puts(e, tag.data + plen, tag.len - plen);
     } else if (tag.data[0] == '!' && all_tag_chars(tag.data + 1, tag.len - 1)) {
         st = buf_puts(e, tag.data, tag.len);
     } else {
         st = PUTS(e, "!<");
-        for (size_t i = 0; i < tag.len && st == YAM_OK; i++) {
+        for (size_t i = 0; i < tag.len && st == OYL_OK; i++) {
             uint8_t c = (uint8_t)tag.data[i];
             if (is_uri_char(c)) {
                 st = buf_put(e, (char)c);
@@ -527,39 +527,39 @@ static yam_status emit_tag(yam_emitter *e, yam_str tag) {
                 st = buf_puts(e, esc, 3);
             }
         }
-        if (st != YAM_OK) return st;
+        if (st != OYL_OK) return st;
         st = buf_put(e, '>');
     }
-    if (st != YAM_OK) return st;
+    if (st != OYL_OK) return st;
     return buf_put(e, ' ');
 }
 
-static yam_status emit_props(yam_emitter *e, const yam_event *evt) {
+static oyl_status emit_props(oyl_emitter *e, const oyl_event *evt) {
     e->wrote_props = (evt->anchor.data && evt->anchor.len) || (evt->tag.data && evt->tag.len);
-    yam_status st = emit_anchor(e, evt->anchor);
-    if (st != YAM_OK) return st;
+    oyl_status st = emit_anchor(e, evt->anchor);
+    if (st != OYL_OK) return st;
     return emit_tag(e, evt->tag);
 }
 
-static bool has_props(const yam_event *evt) {
+static bool has_props(const oyl_event *evt) {
     return (evt->anchor.data && evt->anchor.len) || (evt->tag.data && evt->tag.len);
 }
 
 /* Properties of a block collection go on the line that introduces it
  * ("key: &a !!map", "- &a"), and the collection itself starts on the next
  * line; a block collection can never start on its properties' line. */
-static yam_status emit_block_collection_props(yam_emitter *e, const yam_event *evt,
+static oyl_status emit_block_collection_props(oyl_emitter *e, const oyl_event *evt,
                                               bool after_key) {
-    yam_status st;
-    if (!has_props(evt)) return YAM_OK;
+    oyl_status st;
+    if (!has_props(evt)) return OYL_OK;
     if (after_key) {
         st = buf_put(e, ' ');
-        if (st != YAM_OK) return st;
+        if (st != OYL_OK) return st;
     }
     st = emit_props(e, evt);
-    if (st != YAM_OK) return st;
+    if (st != OYL_OK) return st;
     if (e->len > 0 && e->buf[e->len - 1] == ' ') e->len--; /* trailing space */
-    return YAM_OK;
+    return OYL_OK;
 }
 
 /* A block collection as a mapping key must use the explicit form:
@@ -568,30 +568,30 @@ static yam_status emit_block_collection_props(yam_emitter *e, const yam_event *e
  *   : <value>
  * Writes "?" and the key's properties; the collection follows on the next
  * lines, and the value's ':' goes on its own line (see emit_pre_node). */
-static yam_status emit_complex_key_open(yam_emitter *e, emit_ctx *map,
-                                        const yam_event *evt) {
-    yam_status st = buf_put(e, '?');
-    if (st != YAM_OK) return st;
+static oyl_status emit_complex_key_open(oyl_emitter *e, emit_ctx *map,
+                                        const oyl_event *evt) {
+    oyl_status st = buf_put(e, '?');
+    if (st != OYL_OK) return st;
     st = emit_block_collection_props(e, evt, true);
-    if (st != YAM_OK) return st;
+    if (st != OYL_OK) return st;
     map->complex_key = true;
     e->after_seq_dash = false;
-    return YAM_OK;
+    return OYL_OK;
 }
 
 /* ── Pre-node prefix ─────────────────────────────────────── */
 
-static yam_status emit_pre_node(yam_emitter *e, bool is_collection) {
+static oyl_status emit_pre_node(oyl_emitter *e, bool is_collection) {
     emit_ctx *ctx = top_ctx(e);
-    yam_status st;
+    oyl_status st;
 
     if (!ctx) {
         /* root level — newline between documents */
         if (e->len > 0 && e->buf[e->len - 1] != '\n') {
             st = buf_put(e, '\n');
-            if (st != YAM_OK) return st;
+            if (st != OYL_OK) return st;
         }
-        return YAM_OK;
+        return OYL_OK;
     }
 
     switch (ctx->type) {
@@ -602,13 +602,13 @@ static yam_status emit_pre_node(yam_emitter *e, bool is_collection) {
                 /* compact mapping in sequence: first key shares "- " line */
             } else if (e->len > 0 && e->buf[e->len - 1] != '\n') {
                 st = buf_put(e, '\n');
-                if (st != YAM_OK) return st;
+                if (st != OYL_OK) return st;
                 st = buf_indent(e, ctx->indent);
-                if (st != YAM_OK) return st;
+                if (st != OYL_OK) return st;
             } else if (e->len > 0) {
                 /* after a newline, just indent */
                 st = buf_indent(e, ctx->indent);
-                if (st != YAM_OK) return st;
+                if (st != OYL_OK) return st;
             }
         } else {
             /* after an explicit "? key", the value indicator starts its own
@@ -616,10 +616,10 @@ static yam_status emit_pre_node(yam_emitter *e, bool is_collection) {
             if (ctx->complex_key) {
                 if (e->len > 0 && e->buf[e->len - 1] != '\n') {
                     st = buf_put(e, '\n');
-                    if (st != YAM_OK) return st;
+                    if (st != OYL_OK) return st;
                 }
                 st = buf_indent(e, ctx->indent);
-                if (st != YAM_OK) return st;
+                if (st != OYL_OK) return st;
                 ctx->complex_key = false;
             }
             /* ":" before a block collection value (its properties and the
@@ -628,15 +628,15 @@ static yam_status emit_pre_node(yam_emitter *e, bool is_collection) {
              * read as part of the alias name ("*a : v") */
             if (e->key_was_alias) {
                 st = buf_put(e, ' ');
-                if (st != YAM_OK) return st;
+                if (st != OYL_OK) return st;
                 e->key_was_alias = false;
             }
             if (is_collection) {
                 st = PUTS(e, ":");
-                if (st != YAM_OK) return st;
+                if (st != OYL_OK) return st;
             } else {
                 st = PUTS(e, ": ");
-                if (st != YAM_OK) return st;
+                if (st != OYL_OK) return st;
             }
             e->wrote_block_key = false;
         }
@@ -647,12 +647,12 @@ static yam_status emit_pre_node(yam_emitter *e, bool is_collection) {
          * start, e.g. after a block scalar, which ends with one) */
         if (e->len > 0 && e->buf[e->len - 1] != '\n') {
             st = buf_put(e, '\n');
-            if (st != YAM_OK) return st;
+            if (st != OYL_OK) return st;
         }
         st = buf_indent(e, ctx->indent);
-        if (st != YAM_OK) return st;
+        if (st != OYL_OK) return st;
         st = PUTS(e, "- ");
-        if (st != YAM_OK) return st;
+        if (st != OYL_OK) return st;
         e->after_seq_dash = true;
         break;
 
@@ -660,32 +660,32 @@ static yam_status emit_pre_node(yam_emitter *e, bool is_collection) {
         if (ctx->expect_key) {
             if (ctx->count > 0) {
                 st = buf_puts(e, entry_sep(e), (size_t)entry_sep_len(e));
-                if (st != YAM_OK) return st;
+                if (st != OYL_OK) return st;
             }
         } else {
             if (e->key_was_alias) {
                 st = buf_put(e, ' ');
-                if (st != YAM_OK) return st;
+                if (st != OYL_OK) return st;
                 e->key_was_alias = false;
             }
             st = buf_puts(e, kv_sep(e), (size_t)kv_sep_len(e));
-            if (st != YAM_OK) return st;
+            if (st != OYL_OK) return st;
         }
         break;
 
     case EMIT_CTX_FLOW_SEQ:
         if (ctx->count > 0) {
             st = buf_puts(e, entry_sep(e), (size_t)entry_sep_len(e));
-            if (st != YAM_OK) return st;
+            if (st != OYL_OK) return st;
         }
         break;
     }
 
-    return YAM_OK;
+    return OYL_OK;
 }
 
 /* Advance the parent context after emitting a node */
-static void advance_ctx(yam_emitter *e) {
+static void advance_ctx(oyl_emitter *e) {
     emit_ctx *ctx = top_ctx(e);
     if (!ctx) return;
 
@@ -707,54 +707,54 @@ static void advance_ctx(yam_emitter *e) {
 
 /* ── Main emit function ──────────────────────────────────── */
 
-yam_status yam_emit(yam_emitter *e, const yam_event *evt) {
-    yam_status st;
+oyl_status oyl_emit(oyl_emitter *e, const oyl_event *evt) {
+    oyl_status st;
 
     switch (evt->type) {
-    case YAM_EVT_STREAM_START:
+    case OYL_EVT_STREAM_START:
         e->first_doc = true;
-        return YAM_OK;
+        return OYL_OK;
 
-    case YAM_EVT_STREAM_END:
+    case OYL_EVT_STREAM_END:
         /* ensure trailing newline */
         if (e->len > 0 && e->buf[e->len - 1] != '\n')
             return buf_put(e, '\n');
-        return YAM_OK;
+        return OYL_OK;
 
-    case YAM_EVT_DOC_START:
+    case OYL_EVT_DOC_START:
         if (!evt->implicit) {
             if (!e->first_doc && e->len > 0 && e->buf[e->len - 1] != '\n') {
                 st = buf_put(e, '\n');
-                if (st != YAM_OK) return st;
+                if (st != OYL_OK) return st;
             }
             st = PUTS(e, "---");
-            if (st != YAM_OK) return st;
+            if (st != OYL_OK) return st;
         }
         e->doc_open = true;
         e->first_doc = false;
-        return YAM_OK;
+        return OYL_OK;
 
-    case YAM_EVT_DOC_END:
+    case OYL_EVT_DOC_END:
         if (!evt->implicit) {
             if (e->len > 0 && e->buf[e->len - 1] != '\n') {
                 st = buf_put(e, '\n');
-                if (st != YAM_OK) return st;
+                if (st != OYL_OK) return st;
             }
             st = PUTS(e, "...\n");
-            if (st != YAM_OK) return st;
+            if (st != OYL_OK) return st;
         }
         e->doc_open = false;
-        return YAM_OK;
+        return OYL_OK;
 
-    case YAM_EVT_MAPPING_START: {
+    case OYL_EVT_MAPPING_START: {
         /* inside a flow collection everything must be flow */
-        bool use_flow = (e->opts.style != YAM_EMIT_BLOCK) || evt->flow || in_any_flow(e);
+        bool use_flow = (e->opts.style != OYL_EMIT_BLOCK) || evt->flow || in_any_flow(e);
         emit_ctx *outer = top_ctx(e);
         bool map_value = !use_flow && outer && outer->type == EMIT_CTX_BLOCK_MAP &&
                          !outer->expect_key;
 
         st = emit_pre_node(e, !use_flow);
-        if (st != YAM_OK) return st;
+        if (st != OYL_OK) return st;
 
         if (!use_flow && outer && outer->type == EMIT_CTX_BLOCK_MAP && outer->expect_key) {
             st = emit_complex_key_open(e, outer, evt);
@@ -764,14 +764,14 @@ yam_status yam_emit(yam_emitter *e, const yam_event *evt) {
             st = emit_block_collection_props(e, evt, map_value);
             /* a mapping with properties in a sequence can't share the
              * "- &a" line with its first key (the props would go to the key) */
-            if (st == YAM_OK && e->after_seq_dash && has_props(evt))
+            if (st == OYL_OK && e->after_seq_dash && has_props(evt))
                 e->after_seq_dash = false;
         }
-        if (st != YAM_OK) return st;
+        if (st != OYL_OK) return st;
 
         if (use_flow) {
             st = buf_put(e, '{');
-            if (st != YAM_OK) return st;
+            if (st != OYL_OK) return st;
             st = push_ctx(e, EMIT_CTX_FLOW_MAP, 0);
         } else {
             emit_ctx *parent = top_ctx(e);
@@ -786,57 +786,57 @@ yam_status yam_emit(yam_emitter *e, const yam_event *evt) {
             }
             st = push_ctx(e, EMIT_CTX_BLOCK_MAP, indent);
         }
-        if (st != YAM_OK) return st;
+        if (st != OYL_OK) return st;
         /* advance parent context, preserving after_seq_dash for compact mapping */
         bool saved_dash = e->after_seq_dash;
         e->stack_len--;
         advance_ctx(e);
         e->stack_len++;
         e->after_seq_dash = saved_dash;
-        return YAM_OK;
+        return OYL_OK;
     }
 
-    case YAM_EVT_MAPPING_END: {
+    case OYL_EVT_MAPPING_END: {
         emit_ctx *ctx = top_ctx(e);
-        if (!ctx) return YAM_ERR_EMIT;
+        if (!ctx) return OYL_ERR_EMIT;
 
         if (ctx->type == EMIT_CTX_FLOW_MAP) {
             st = buf_put(e, '}');
-            if (st != YAM_OK) return st;
+            if (st != OYL_OK) return st;
         } else if (ctx->count == 0) {
             /* empty block mapping → {} ("k: {}", "? {}") */
             if (e->len > 0 && e->buf[e->len - 1] != ' ' && e->buf[e->len - 1] != '\n') {
                 st = buf_put(e, ' ');
-                if (st != YAM_OK) return st;
+                if (st != OYL_OK) return st;
             }
             st = PUTS(e, "{}");
-            if (st != YAM_OK) return st;
+            if (st != OYL_OK) return st;
         }
         pop_ctx(e);
         e->after_seq_dash = false;
-        return YAM_OK;
+        return OYL_OK;
     }
 
-    case YAM_EVT_SEQUENCE_START: {
+    case OYL_EVT_SEQUENCE_START: {
         /* inside a flow collection everything must be flow */
-        bool use_flow = (e->opts.style != YAM_EMIT_BLOCK) || evt->flow || in_any_flow(e);
+        bool use_flow = (e->opts.style != OYL_EMIT_BLOCK) || evt->flow || in_any_flow(e);
         emit_ctx *outer = top_ctx(e);
         bool map_value = !use_flow && outer && outer->type == EMIT_CTX_BLOCK_MAP &&
                          !outer->expect_key;
 
         st = emit_pre_node(e, !use_flow);
-        if (st != YAM_OK) return st;
+        if (st != OYL_OK) return st;
 
         if (!use_flow && outer && outer->type == EMIT_CTX_BLOCK_MAP && outer->expect_key)
             st = emit_complex_key_open(e, outer, evt);
         else
             st = use_flow ? emit_props(e, evt)
                           : emit_block_collection_props(e, evt, map_value);
-        if (st != YAM_OK) return st;
+        if (st != OYL_OK) return st;
 
         if (use_flow) {
             st = buf_put(e, '[');
-            if (st != YAM_OK) return st;
+            if (st != OYL_OK) return st;
             st = push_ctx(e, EMIT_CTX_FLOW_SEQ, 0);
         } else {
             emit_ctx *parent = top_ctx(e);
@@ -850,54 +850,54 @@ yam_status yam_emit(yam_emitter *e, const yam_event *evt) {
             }
             st = push_ctx(e, EMIT_CTX_BLOCK_SEQ, indent);
         }
-        if (st != YAM_OK) return st;
+        if (st != OYL_OK) return st;
         /* advance parent context, preserving after_seq_dash */
         bool saved_dash2 = e->after_seq_dash;
         e->stack_len--;
         advance_ctx(e);
         e->stack_len++;
         e->after_seq_dash = saved_dash2;
-        return YAM_OK;
+        return OYL_OK;
     }
 
-    case YAM_EVT_SEQUENCE_END: {
+    case OYL_EVT_SEQUENCE_END: {
         emit_ctx *ctx = top_ctx(e);
-        if (!ctx) return YAM_ERR_EMIT;
+        if (!ctx) return OYL_ERR_EMIT;
 
         if (ctx->type == EMIT_CTX_FLOW_SEQ) {
             st = buf_put(e, ']');
-            if (st != YAM_OK) return st;
+            if (st != OYL_OK) return st;
         } else if (ctx->count == 0) {
             /* empty block sequence → [] ("k: []", "? []") */
             if (e->len > 0 && e->buf[e->len - 1] != ' ' && e->buf[e->len - 1] != '\n') {
                 st = buf_put(e, ' ');
-                if (st != YAM_OK) return st;
+                if (st != OYL_OK) return st;
             }
             st = PUTS(e, "[]");
-            if (st != YAM_OK) return st;
+            if (st != OYL_OK) return st;
         }
         pop_ctx(e);
         e->after_seq_dash = false;
-        return YAM_OK;
+        return OYL_OK;
     }
 
-    case YAM_EVT_SCALAR: {
+    case OYL_EVT_SCALAR: {
         st = emit_pre_node(e, false);
-        if (st != YAM_OK) return st;
+        if (st != OYL_OK) return st;
 
         st = emit_props(e, evt);
-        if (st != YAM_OK) return st;
+        if (st != OYL_OK) return st;
 
         st = emit_scalar(e, evt);
-        if (st != YAM_OK) return st;
+        if (st != OYL_OK) return st;
 
         advance_ctx(e);
-        return YAM_OK;
+        return OYL_OK;
     }
 
-    case YAM_EVT_ALIAS: {
+    case OYL_EVT_ALIAS: {
         st = emit_pre_node(e, false);
-        if (st != YAM_OK) return st;
+        if (st != OYL_OK) return st;
         {
             emit_ctx *ctx = top_ctx(e);
             e->key_was_alias = ctx && (ctx->type == EMIT_CTX_BLOCK_MAP ||
@@ -905,27 +905,27 @@ yam_status yam_emit(yam_emitter *e, const yam_event *evt) {
         }
 
         st = buf_put(e, '*');
-        if (st != YAM_OK) return st;
+        if (st != OYL_OK) return st;
         st = buf_puts(e, evt->value.data, evt->value.len);
-        if (st != YAM_OK) return st;
+        if (st != OYL_OK) return st;
 
         advance_ctx(e);
-        return YAM_OK;
+        return OYL_OK;
     }
 
     default:
-        return YAM_ERR_EMIT;
+        return OYL_ERR_EMIT;
     }
 }
 
 /* ── Constructor / destructor ────────────────────────────── */
 
-yam_emitter *yam_emitter_new(yam_arena *a) {
-    yam_emitter *e = malloc(sizeof(*e));
+oyl_emitter *oyl_emitter_new(oyl_arena *a) {
+    oyl_emitter *e = malloc(sizeof(*e));
     if (!e) return NULL;
     memset(e, 0, sizeof(*e));
 
-    e->opts = (emit_opts){ YAM_EMIT_BLOCK, 2 };
+    e->opts = (emit_opts){ OYL_EMIT_BLOCK, 2 };
     e->arena = a;
 
     e->cap = EMIT_INIT_CAP;
@@ -940,12 +940,12 @@ yam_emitter *yam_emitter_new(yam_arena *a) {
     return e;
 }
 
-void yam_emitter_set_style(yam_emitter *e, yam_emit_style style) {
-    if (style == YAM_EMIT_BLOCK || style == YAM_EMIT_FLOW || style == YAM_EMIT_MINIMAL)
+void oyl_emitter_set_style(oyl_emitter *e, oyl_emit_style style) {
+    if (style == OYL_EMIT_BLOCK || style == OYL_EMIT_FLOW || style == OYL_EMIT_MINIMAL)
         e->opts.style = style;
 }
 
-void yam_emitter_set_indent(yam_emitter *e, int indent) {
+void oyl_emitter_set_indent(oyl_emitter *e, int indent) {
     if (indent < 1) indent = 1;
     if (indent > 10) indent = 10;
     e->opts.indent = indent;
@@ -953,68 +953,68 @@ void yam_emitter_set_indent(yam_emitter *e, int indent) {
 
 /* ── Event constructors ──────────────────────────────────── */
 
-yam_status yam_emit_stream_start(yam_emitter *e) {
-    yam_event evt = { .type = YAM_EVT_STREAM_START };
-    return yam_emit(e, &evt);
+oyl_status oyl_emit_stream_start(oyl_emitter *e) {
+    oyl_event evt = { .type = OYL_EVT_STREAM_START };
+    return oyl_emit(e, &evt);
 }
 
-yam_status yam_emit_stream_end(yam_emitter *e) {
-    yam_event evt = { .type = YAM_EVT_STREAM_END };
-    return yam_emit(e, &evt);
+oyl_status oyl_emit_stream_end(oyl_emitter *e) {
+    oyl_event evt = { .type = OYL_EVT_STREAM_END };
+    return oyl_emit(e, &evt);
 }
 
-yam_status yam_emit_document_start(yam_emitter *e, bool implicit) {
-    yam_event evt = { .type = YAM_EVT_DOC_START, .implicit = implicit };
-    return yam_emit(e, &evt);
+oyl_status oyl_emit_document_start(oyl_emitter *e, bool implicit) {
+    oyl_event evt = { .type = OYL_EVT_DOC_START, .implicit = implicit };
+    return oyl_emit(e, &evt);
 }
 
-yam_status yam_emit_document_end(yam_emitter *e, bool implicit) {
-    yam_event evt = { .type = YAM_EVT_DOC_END, .implicit = implicit };
-    return yam_emit(e, &evt);
+oyl_status oyl_emit_document_end(oyl_emitter *e, bool implicit) {
+    oyl_event evt = { .type = OYL_EVT_DOC_END, .implicit = implicit };
+    return oyl_emit(e, &evt);
 }
 
-yam_status yam_emit_scalar(yam_emitter *e, yam_str value, yam_scalar_style style,
-                           yam_str anchor, yam_str tag) {
-    yam_event evt = { .type = YAM_EVT_SCALAR, .value = value, .scalar_style = style,
+oyl_status oyl_emit_scalar(oyl_emitter *e, oyl_str value, oyl_scalar_style style,
+                           oyl_str anchor, oyl_str tag) {
+    oyl_event evt = { .type = OYL_EVT_SCALAR, .value = value, .scalar_style = style,
                       .anchor = anchor, .tag = tag };
-    return yam_emit(e, &evt);
+    return oyl_emit(e, &evt);
 }
 
-yam_status yam_emit_alias(yam_emitter *e, yam_str name) {
-    yam_event evt = { .type = YAM_EVT_ALIAS, .value = name };
-    return yam_emit(e, &evt);
+oyl_status oyl_emit_alias(oyl_emitter *e, oyl_str name) {
+    oyl_event evt = { .type = OYL_EVT_ALIAS, .value = name };
+    return oyl_emit(e, &evt);
 }
 
-yam_status yam_emit_mapping_start(yam_emitter *e, yam_str anchor, yam_str tag, bool flow) {
-    yam_event evt = { .type = YAM_EVT_MAPPING_START, .anchor = anchor, .tag = tag,
+oyl_status oyl_emit_mapping_start(oyl_emitter *e, oyl_str anchor, oyl_str tag, bool flow) {
+    oyl_event evt = { .type = OYL_EVT_MAPPING_START, .anchor = anchor, .tag = tag,
                       .flow = flow };
-    return yam_emit(e, &evt);
+    return oyl_emit(e, &evt);
 }
 
-yam_status yam_emit_mapping_end(yam_emitter *e) {
-    yam_event evt = { .type = YAM_EVT_MAPPING_END };
-    return yam_emit(e, &evt);
+oyl_status oyl_emit_mapping_end(oyl_emitter *e) {
+    oyl_event evt = { .type = OYL_EVT_MAPPING_END };
+    return oyl_emit(e, &evt);
 }
 
-yam_status yam_emit_sequence_start(yam_emitter *e, yam_str anchor, yam_str tag, bool flow) {
-    yam_event evt = { .type = YAM_EVT_SEQUENCE_START, .anchor = anchor, .tag = tag,
+oyl_status oyl_emit_sequence_start(oyl_emitter *e, oyl_str anchor, oyl_str tag, bool flow) {
+    oyl_event evt = { .type = OYL_EVT_SEQUENCE_START, .anchor = anchor, .tag = tag,
                       .flow = flow };
-    return yam_emit(e, &evt);
+    return oyl_emit(e, &evt);
 }
 
-yam_status yam_emit_sequence_end(yam_emitter *e) {
-    yam_event evt = { .type = YAM_EVT_SEQUENCE_END };
-    return yam_emit(e, &evt);
+oyl_status oyl_emit_sequence_end(oyl_emitter *e) {
+    oyl_event evt = { .type = OYL_EVT_SEQUENCE_END };
+    return oyl_emit(e, &evt);
 }
 
-yam_str yam_emitter_output(yam_emitter *e) {
-    if (!e || !e->buf || e->len == 0) return YAM_STR_NULL;
-    char *copy = yam_arena_dup(e->arena, e->buf, e->len);
-    if (!copy) return YAM_STR_NULL;
-    return (yam_str){copy, e->len};
+oyl_str oyl_emitter_output(oyl_emitter *e) {
+    if (!e || !e->buf || e->len == 0) return OYL_STR_NULL;
+    char *copy = oyl_arena_dup(e->arena, e->buf, e->len);
+    if (!copy) return OYL_STR_NULL;
+    return (oyl_str){copy, e->len};
 }
 
-void yam_emitter_free(yam_emitter *e) {
+void oyl_emitter_free(oyl_emitter *e) {
     if (!e) return;
     free(e->buf);
     free(e->stack);

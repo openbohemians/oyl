@@ -1,11 +1,11 @@
 /*
- * test_yaml_suite.c — YAML Test Suite runner for yam parser
+ * test_yaml_suite.c — YAML Test Suite runner for oyl parser
  *
  * Reads test cases from yaml-test-suite/src/<id>.yaml,
  * runs the parser, and compares output events against expected trees.
  */
 
-#include "yam/yam.h"
+#include "oyl/oyl.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -368,7 +368,7 @@ static int parse_test_file(const char *path, const char *id, test_case *cases, i
 /* ── Event formatter ─────────────────────────────────────── */
 
 /*
- * Format a yam_event into test suite notation:
+ * Format a oyl_event into test suite notation:
  *   +STR, -STR, +DOC, +DOC ---, -DOC, -DOC ...,
  *   +MAP, +MAP {}, +SEQ, +SEQ [],
  *   -MAP, -SEQ,
@@ -394,40 +394,40 @@ static size_t escape_scalar(const char *src, size_t srclen, char *dst, size_t ds
     return di;
 }
 
-static char scalar_style_char(yam_scalar_style s) {
+static char scalar_style_char(oyl_scalar_style s) {
     switch (s) {
-    case YAM_SCALAR_PLAIN:         return ':';
-    case YAM_SCALAR_SINGLE_QUOTED: return '\'';
-    case YAM_SCALAR_DOUBLE_QUOTED: return '"';
-    case YAM_SCALAR_LITERAL:       return '|';
-    case YAM_SCALAR_FOLDED:        return '>';
+    case OYL_SCALAR_PLAIN:         return ':';
+    case OYL_SCALAR_SINGLE_QUOTED: return '\'';
+    case OYL_SCALAR_DOUBLE_QUOTED: return '"';
+    case OYL_SCALAR_LITERAL:       return '|';
+    case OYL_SCALAR_FOLDED:        return '>';
     }
     return ':';
 }
 
-static size_t format_event(const yam_event *evt, char *buf, size_t cap) {
+static size_t format_event(const oyl_event *evt, char *buf, size_t cap) {
     size_t n = 0;
 
     switch (evt->type) {
-    case YAM_EVT_STREAM_START:
+    case OYL_EVT_STREAM_START:
         n = snprintf(buf, cap, "+STR\n");
         break;
-    case YAM_EVT_STREAM_END:
+    case OYL_EVT_STREAM_END:
         n = snprintf(buf, cap, "-STR\n");
         break;
-    case YAM_EVT_DOC_START:
+    case OYL_EVT_DOC_START:
         if (evt->implicit)
             n = snprintf(buf, cap, "+DOC\n");
         else
             n = snprintf(buf, cap, "+DOC ---\n");
         break;
-    case YAM_EVT_DOC_END:
+    case OYL_EVT_DOC_END:
         if (evt->implicit)
             n = snprintf(buf, cap, "-DOC\n");
         else
             n = snprintf(buf, cap, "-DOC ...\n");
         break;
-    case YAM_EVT_MAPPING_START: {
+    case OYL_EVT_MAPPING_START: {
         char props[512] = "";
         size_t pi = 0;
         /* flow indicator comes first in test suite format */
@@ -445,10 +445,10 @@ static size_t format_event(const yam_event *evt, char *buf, size_t cap) {
         n = snprintf(buf, cap, "+MAP%s\n", props);
         break;
     }
-    case YAM_EVT_MAPPING_END:
+    case OYL_EVT_MAPPING_END:
         n = snprintf(buf, cap, "-MAP\n");
         break;
-    case YAM_EVT_SEQUENCE_START: {
+    case OYL_EVT_SEQUENCE_START: {
         char props[512] = "";
         size_t pi = 0;
         /* flow indicator comes first in test suite format */
@@ -466,10 +466,10 @@ static size_t format_event(const yam_event *evt, char *buf, size_t cap) {
         n = snprintf(buf, cap, "+SEQ%s\n", props);
         break;
     }
-    case YAM_EVT_SEQUENCE_END:
+    case OYL_EVT_SEQUENCE_END:
         n = snprintf(buf, cap, "-SEQ\n");
         break;
-    case YAM_EVT_SCALAR: {
+    case OYL_EVT_SCALAR: {
         char props[512] = "";
         size_t pi = 0;
         if (evt->anchor.data && evt->anchor.len > 0) {
@@ -490,11 +490,11 @@ static size_t format_event(const yam_event *evt, char *buf, size_t cap) {
                      scalar_style_char(evt->scalar_style), escaped);
         break;
     }
-    case YAM_EVT_ALIAS:
+    case OYL_EVT_ALIAS:
         n = snprintf(buf, cap, "=ALI *%.*s\n",
                      (int)evt->value.len, evt->value.data);
         break;
-    case YAM_EVT_NONE:
+    case OYL_EVT_NONE:
         break;
     }
     return n;
@@ -504,7 +504,7 @@ static size_t format_event(const yam_event *evt, char *buf, size_t cap) {
 
 typedef enum { RESULT_PASS, RESULT_FAIL, RESULT_ERROR, RESULT_SKIP } test_result;
 
-/* Invalid-YAML tests (fail: true) that yam currently accepts instead of
+/* Invalid-YAML tests (fail: true) that oyl currently accepts instead of
  * rejecting. They are reported as XFAIL rather than FAIL so the suite can
  * gate regressions; once one is fixed the runner reports XPASS (and fails)
  * until it is removed from this list. Keep the list shrinking. */
@@ -524,44 +524,44 @@ static test_result run_test(test_case *tc, bool verbose, bool eager) {
     /* skip tests with no expected tree (unless fail test) */
     if (!tc->fail && strlen(tc->tree) == 0) return RESULT_SKIP;
 
-    yam_arena *arena = yam_arena_new(4096);
+    oyl_arena *arena = oyl_arena_new(4096);
     if (!arena) return RESULT_ERROR;
 
-    yam_parser *parser = yam_parser_new(tc->yaml, input_len, arena);
+    oyl_parser *parser = oyl_parser_new(tc->yaml, input_len, arena);
     /* Merge keys force the eager (whole-stream) parser; no suite case
      * relies on merge semantics, so both modes must produce the same
      * events and reject the same inputs. */
-    if (parser && eager) yam_parser_set_merge(parser, true);
+    if (parser && eager) oyl_parser_set_merge(parser, true);
     if (!parser) {
-        yam_arena_free(arena);
+        oyl_arena_free(arena);
         return RESULT_ERROR;
     }
 
     /* collect events */
     char actual[16384];
     size_t actual_len = 0;
-    const yam_event *evt;
-    yam_status st;
+    const oyl_event *evt;
+    oyl_status st;
     bool parse_error = false;
     int evt_count = 0;
 
     while (evt_count < 500) {
-        st = yam_parse_next(parser, &evt);
-        if (st != YAM_OK) {
+        st = oyl_parse_next(parser, &evt);
+        if (st != OYL_OK) {
             parse_error = true;
             break;
         }
-        if (evt->type == YAM_EVT_NONE) break;
+        if (evt->type == OYL_EVT_NONE) break;
 
         actual_len += format_event(evt, actual + actual_len,
                                    sizeof(actual) - actual_len);
         evt_count++;
 
-        if (evt->type == YAM_EVT_STREAM_END) break;
+        if (evt->type == OYL_EVT_STREAM_END) break;
     }
 
-    yam_parser_free(parser);
-    yam_arena_free(arena);
+    oyl_parser_free(parser);
+    oyl_arena_free(arena);
 
     if (tc->fail) {
         /* invalid YAML: the parser must report an error */
@@ -649,7 +649,7 @@ static test_result run_test(test_case *tc, bool verbose, bool eager) {
  * both null and compare equal (the emitter writes ~ for an empty entry in
  * a flow sequence). */
 
-static size_t canon_str(char *out, size_t cap, yam_str s) {
+static size_t canon_str(char *out, size_t cap, oyl_str s) {
     size_t n = 0;
     for (size_t i = 0; i < s.len && n + 4 < cap; i++) {
         unsigned char c = (unsigned char)s.data[i];
@@ -661,19 +661,19 @@ static size_t canon_str(char *out, size_t cap, yam_str s) {
     return n;
 }
 
-static size_t canon_event(const yam_event *e, char *out, size_t cap) {
+static size_t canon_event(const oyl_event *e, char *out, size_t cap) {
     size_t n = 0;
     if (cap < 64) return 0;
     switch (e->type) {
-    case YAM_EVT_STREAM_START: case YAM_EVT_STREAM_END: return 0;
-    case YAM_EVT_DOC_START:      n += (size_t)snprintf(out + n, cap - n, "+DOC"); break;
-    case YAM_EVT_DOC_END:        n += (size_t)snprintf(out + n, cap - n, "-DOC"); break;
-    case YAM_EVT_MAPPING_START:  n += (size_t)snprintf(out + n, cap - n, "+MAP"); break;
-    case YAM_EVT_MAPPING_END:    n += (size_t)snprintf(out + n, cap - n, "-MAP"); break;
-    case YAM_EVT_SEQUENCE_START: n += (size_t)snprintf(out + n, cap - n, "+SEQ"); break;
-    case YAM_EVT_SEQUENCE_END:   n += (size_t)snprintf(out + n, cap - n, "-SEQ"); break;
-    case YAM_EVT_SCALAR:         n += (size_t)snprintf(out + n, cap - n, "=VAL"); break;
-    case YAM_EVT_ALIAS:          n += (size_t)snprintf(out + n, cap - n, "=ALI *"); break;
+    case OYL_EVT_STREAM_START: case OYL_EVT_STREAM_END: return 0;
+    case OYL_EVT_DOC_START:      n += (size_t)snprintf(out + n, cap - n, "+DOC"); break;
+    case OYL_EVT_DOC_END:        n += (size_t)snprintf(out + n, cap - n, "-DOC"); break;
+    case OYL_EVT_MAPPING_START:  n += (size_t)snprintf(out + n, cap - n, "+MAP"); break;
+    case OYL_EVT_MAPPING_END:    n += (size_t)snprintf(out + n, cap - n, "-MAP"); break;
+    case OYL_EVT_SEQUENCE_START: n += (size_t)snprintf(out + n, cap - n, "+SEQ"); break;
+    case OYL_EVT_SEQUENCE_END:   n += (size_t)snprintf(out + n, cap - n, "-SEQ"); break;
+    case OYL_EVT_SCALAR:         n += (size_t)snprintf(out + n, cap - n, "=VAL"); break;
+    case OYL_EVT_ALIAS:          n += (size_t)snprintf(out + n, cap - n, "=ALI *"); break;
     default: return 0;
     }
     if (e->anchor.data && e->anchor.len) {
@@ -685,8 +685,8 @@ static size_t canon_event(const yam_event *e, char *out, size_t cap) {
         n += canon_str(out + n, cap - n, e->tag);
         n += (size_t)snprintf(out + n, cap - n, ">");
     }
-    if (e->type == YAM_EVT_SCALAR) {
-        bool plain = e->scalar_style == YAM_SCALAR_PLAIN;
+    if (e->type == OYL_EVT_SCALAR) {
+        bool plain = e->scalar_style == OYL_SCALAR_PLAIN;
         bool untagged = !(e->tag.data && e->tag.len);
         bool null_text = untagged && plain && (e->value.len == 0 ||
                                    (e->value.len == 1 && e->value.data[0] == '~'));
@@ -695,7 +695,7 @@ static size_t canon_event(const yam_event *e, char *out, size_t cap) {
         } else {
             if (!(e->tag.data && e->tag.len)) {
                 /* untagged: the core schema type is part of the meaning */
-                yam_str t = yam_schema_resolve(yam_schema_core(), e->value, e->scalar_style);
+                oyl_str t = oyl_schema_resolve(oyl_schema_core(), e->value, e->scalar_style);
                 const char *short_tag = strrchr(t.data, ':');
                 n += (size_t)snprintf(out + n, cap - n, " (%.*s)",
                                       (int)(t.len - (size_t)(short_tag + 1 - t.data)),
@@ -704,7 +704,7 @@ static size_t canon_event(const yam_event *e, char *out, size_t cap) {
             n += (size_t)snprintf(out + n, cap - n, " :");
             n += canon_str(out + n, cap - n, e->value);
         }
-    } else if (e->type == YAM_EVT_ALIAS) {
+    } else if (e->type == OYL_EVT_ALIAS) {
         n += canon_str(out + n, cap - n, e->value);
     }
     if (n + 2 < cap) out[n++] = '\n';
@@ -714,41 +714,41 @@ static size_t canon_event(const yam_event *e, char *out, size_t cap) {
 
 /* Parse `yaml` and write its canonical event stream to `out`. When `e` is
  * given, also feed every event to it. Returns false on a parse error. */
-static bool canon_parse(const char *yaml, size_t len, bool eager, yam_emitter *e,
+static bool canon_parse(const char *yaml, size_t len, bool eager, oyl_emitter *e,
                         char *out, size_t cap) {
-    yam_arena *a = yam_arena_new(4096);
-    yam_parser *p = yam_parser_new(yaml, len, a);
-    if (eager) yam_parser_set_merge(p, true);
-    yam_parser_set_max_events(p, 0);
-    const yam_event *evt;
-    yam_status st;
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_parser *p = oyl_parser_new(yaml, len, a);
+    if (eager) oyl_parser_set_merge(p, true);
+    oyl_parser_set_max_events(p, 0);
+    const oyl_event *evt;
+    oyl_status st;
     size_t n = 0;
     out[0] = '\0';
-    while ((st = yam_parse_next(p, &evt)) == YAM_OK && evt->type != YAM_EVT_NONE) {
-        if (e) yam_emit(e, evt);
+    while ((st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_NONE) {
+        if (e) oyl_emit(e, evt);
         n += canon_event(evt, out + n, cap - n);
-        if (evt->type == YAM_EVT_STREAM_END) break;
+        if (evt->type == OYL_EVT_STREAM_END) break;
     }
-    yam_parser_free(p);
-    yam_arena_free(a);
-    return st == YAM_OK;
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+    return st == OYL_OK;
 }
 
-static const char *style_name(yam_emit_style st) {
-    return st == YAM_EMIT_BLOCK ? "block" : st == YAM_EMIT_FLOW ? "flow" : "minimal";
+static const char *style_name(oyl_emit_style st) {
+    return st == OYL_EMIT_BLOCK ? "block" : st == OYL_EMIT_FLOW ? "flow" : "minimal";
 }
 
 /* Round-trip one case in one mode and style; on failure describe it. */
-static bool roundtrip_ok(const test_case *tc, bool eager, yam_emit_style style,
+static bool roundtrip_ok(const test_case *tc, bool eager, oyl_emit_style style,
                          bool verbose) {
     static char before[65536], after[65536];
     size_t len = strlen(tc->yaml);
-    yam_arena *a = yam_arena_new(4096);
-    yam_emitter *e = yam_emitter_new(a);
-    yam_emitter_set_style(e, style);
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_emitter *e = oyl_emitter_new(a);
+    oyl_emitter_set_style(e, style);
 
     bool ok = canon_parse(tc->yaml, len, eager, e, before, sizeof before);
-    yam_str out = yam_emitter_output(e);
+    oyl_str out = oyl_emitter_output(e);
     const char *why = NULL;
     if (ok) {
         if (!canon_parse(out.data ? out.data : "", out.len, eager, NULL, after, sizeof after))
@@ -773,8 +773,8 @@ static bool roundtrip_ok(const test_case *tc, bool eager, yam_emit_style style,
             printf("      got:      %.*s\n", (int)strcspn(c, "\n"), c);
         }
     }
-    yam_emitter_free(e);
-    yam_arena_free(a);
+    oyl_emitter_free(e);
+    oyl_arena_free(a);
     return why == NULL;
 }
 
@@ -785,7 +785,7 @@ static const char *known_roundtrip_failures[] = {
     NULL
 };
 
-static bool is_known_roundtrip_failure(const char *label, yam_emit_style style) {
+static bool is_known_roundtrip_failure(const char *label, oyl_emit_style style) {
     char key[400];
     snprintf(key, sizeof key, "%s:%s", label, style_name(style));
     for (size_t i = 0; known_roundtrip_failures[i]; i++)
@@ -875,7 +875,7 @@ int main(int argc, char **argv) {
 
             /* valid cases must also survive an emitter round trip */
             if (result == RESULT_PASS && !tc->fail && strlen(tc->tree) > 0) {
-                const yam_emit_style styles[] = { YAM_EMIT_BLOCK, YAM_EMIT_FLOW, YAM_EMIT_MINIMAL };
+                const oyl_emit_style styles[] = { OYL_EMIT_BLOCK, OYL_EMIT_FLOW, OYL_EMIT_MINIMAL };
                 for (int si = 0; si < 3; si++) {
                     bool ok = roundtrip_ok(tc, false, styles[si], verbose) &&
                               roundtrip_ok(tc, true, styles[si], verbose);

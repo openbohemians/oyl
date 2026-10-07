@@ -1,5 +1,5 @@
 /*
- * bench_parser.c — Throughput benchmark for yam vs libyaml (parser)
+ * bench_parser.c — Throughput benchmark for oyl vs libyaml (parser)
  *
  * Generates a large YAML document and measures parse throughput.
  * Usage: ./bench_parser [size_mb]
@@ -7,7 +7,7 @@
 
 #define _POSIX_C_SOURCE 199309L
 
-#include "yam/yam.h"
+#include "oyl/oyl.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,24 +23,24 @@ static double time_sec(void) {
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
 
-/* ── Benchmark: yam parser ───────────────────────────────── */
+/* ── Benchmark: oyl parser ───────────────────────────────── */
 
-static double bench_yam(const char *input, size_t len, int *event_count) {
+static double bench_oyl(const char *input, size_t len, int *event_count) {
     double t0 = time_sec();
 
-    yam_arena *a = yam_arena_new(1 << 20); /* 1MB arena */
-    yam_parser *p = yam_parser_new(input, len, a);
-    yam_parser_set_max_events(p, 0);
+    oyl_arena *a = oyl_arena_new(1 << 20); /* 1MB arena */
+    oyl_parser *p = oyl_parser_new(input, len, a);
+    oyl_parser_set_max_events(p, 0);
 
-    const yam_event *evt;
+    const oyl_event *evt;
     int count = 0;
-    while (yam_parse_next(p, &evt) == YAM_OK) {
-        if (evt->type == YAM_EVT_STREAM_END || evt->type == YAM_EVT_NONE) break;
+    while (oyl_parse_next(p, &evt) == OYL_OK) {
+        if (evt->type == OYL_EVT_STREAM_END || evt->type == OYL_EVT_NONE) break;
         count++;
     }
 
-    yam_parser_free(p);
-    yam_arena_free(a);
+    oyl_parser_free(p);
+    oyl_arena_free(a);
 
     *event_count = count;
     return time_sec() - t0;
@@ -83,7 +83,7 @@ static void run_bench(const char *label, char *yaml, size_t len) {
 
     /* warmup */
     int events;
-    bench_yam(yaml, len, &events);
+    bench_oyl(yaml, len, &events);
 
     int iterations = 5;
     double total = 0;
@@ -93,7 +93,7 @@ static void run_bench(const char *label, char *yaml, size_t len) {
     printf("  ──────────────────────────────────────────────────\n");
 
     for (int i = 0; i < iterations; i++) {
-        double elapsed = bench_yam(yaml, len, &events);
+        double elapsed = bench_oyl(yaml, len, &events);
         double mbps = (len / (1024.0 * 1024.0)) / elapsed;
         total += elapsed;
         if (elapsed < best) best = elapsed;
@@ -148,7 +148,7 @@ int main(int argc, char **argv) {
 
     size_t target_size = target_mb * 1024 * 1024;
 
-    printf("\nyam parser benchmark (%zu MB)\n", target_mb);
+    printf("\noyl parser benchmark (%zu MB)\n", target_mb);
     printf("═══════════════════════════════════════════════════════════\n\n");
 
 #if defined(__SSE4_2__)

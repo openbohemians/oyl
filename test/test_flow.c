@@ -11,7 +11,7 @@
 #define _DARWIN_C_SOURCE        /* struct rusage's ru_maxrss */
 #endif
 
-#include "yam/yam.h"
+#include "oyl/oyl.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -38,23 +38,23 @@ static int tests_failed = 0;
 static void render(const char *yaml, bool eager, char *out, size_t cap) {
     size_t n = 0;
     out[0] = '\0';
-    yam_arena  *a = yam_arena_new(4096);
-    yam_parser *p = yam_parser_new(yaml, strlen(yaml), a);
-    if (eager) yam_parser_set_merge(p, true);
+    oyl_arena  *a = oyl_arena_new(4096);
+    oyl_parser *p = oyl_parser_new(yaml, strlen(yaml), a);
+    if (eager) oyl_parser_set_merge(p, true);
 
-    const yam_event *evt;
-    yam_status st;
+    const oyl_event *evt;
+    oyl_status st;
     for (int guard = 0; guard < 1000; guard++) {
-        st = yam_parse_next(p, &evt);
-        if (st != YAM_OK) { n += snprintf(out + n, cap - n, n ? " ERR" : "ERR"); break; }
-        if (evt->type == YAM_EVT_NONE || evt->type == YAM_EVT_STREAM_END) break;
+        st = oyl_parse_next(p, &evt);
+        if (st != OYL_OK) { n += snprintf(out + n, cap - n, n ? " ERR" : "ERR"); break; }
+        if (evt->type == OYL_EVT_NONE || evt->type == OYL_EVT_STREAM_END) break;
         const char *s = NULL;
         switch (evt->type) {
-        case YAM_EVT_SEQUENCE_START: s = "["; break;
-        case YAM_EVT_SEQUENCE_END:   s = "]"; break;
-        case YAM_EVT_MAPPING_START:  s = "{"; break;
-        case YAM_EVT_MAPPING_END:    s = "}"; break;
-        case YAM_EVT_SCALAR: case YAM_EVT_ALIAS: break;
+        case OYL_EVT_SEQUENCE_START: s = "["; break;
+        case OYL_EVT_SEQUENCE_END:   s = "]"; break;
+        case OYL_EVT_MAPPING_START:  s = "{"; break;
+        case OYL_EVT_MAPPING_END:    s = "}"; break;
+        case OYL_EVT_SCALAR: case OYL_EVT_ALIAS: break;
         default: continue;
         }
         if (n) n += snprintf(out + n, cap - n, " ");
@@ -64,7 +64,7 @@ static void render(const char *yaml, bool eager, char *out, size_t cap) {
             n += snprintf(out + n, cap - n, "<%.*s> ", (int)evt->tag.len, evt->tag.data);
         if (s) {
             n += snprintf(out + n, cap - n, "%s", s);
-        } else if (evt->type == YAM_EVT_ALIAS) {
+        } else if (evt->type == OYL_EVT_ALIAS) {
             n += snprintf(out + n, cap - n, "*%.*s", (int)evt->value.len, evt->value.data);
         } else if (evt->value.len == 0) {
             n += snprintf(out + n, cap - n, "~");
@@ -73,8 +73,8 @@ static void render(const char *yaml, bool eager, char *out, size_t cap) {
         }
         if (n >= cap) break;
     }
-    yam_parser_free(p);
-    yam_arena_free(a);
+    oyl_parser_free(p);
+    oyl_arena_free(a);
 }
 
 /* On error, the eager parser delivers no events at all (it parses the whole
@@ -218,19 +218,19 @@ static void test_quoted_values(void) {
     check("[\"line\n  fold\", 'one\n\n  two']", "[ line fold one\ntwo ]");
 
     const char *yaml = "{\"key\": \"value\"}";
-    yam_arena  *a = yam_arena_new(4096);
-    yam_parser *p = yam_parser_new(yaml, strlen(yaml), a);
-    const yam_event *evt;
+    oyl_arena  *a = oyl_arena_new(4096);
+    oyl_parser *p = oyl_parser_new(yaml, strlen(yaml), a);
+    const oyl_event *evt;
     int scalars = 0;
-    while (yam_parse_next(p, &evt) == YAM_OK && evt->type != YAM_EVT_STREAM_END) {
-        if (evt->type != YAM_EVT_SCALAR) continue;
+    while (oyl_parse_next(p, &evt) == OYL_OK && evt->type != OYL_EVT_STREAM_END) {
+        if (evt->type != OYL_EVT_SCALAR) continue;
         ASSERT(evt->value.data >= yaml && evt->value.data < yaml + strlen(yaml),
                "unescaped double-quoted scalar points into the input");
         scalars++;
     }
     ASSERT(scalars == 2, "two scalars parsed");
-    yam_parser_free(p);
-    yam_arena_free(a);
+    oyl_parser_free(p);
+    oyl_arena_free(a);
 }
 
 /* ── Scanner error after buffered events ───────────────────── */
@@ -262,54 +262,54 @@ static void test_deep_nesting_linear(void) {
     buf[depth * 2] = '\n';
 
     double t0 = now();
-    yam_arena  *a = yam_arena_new(4096);
-    yam_parser *p = yam_parser_new(buf, (size_t)depth * 2 + 1, a);
-    yam_parser_set_max_events(p, 0);
-    yam_parser_set_max_depth(p, 0);
-    const yam_event *evt;
-    yam_status st;
+    oyl_arena  *a = oyl_arena_new(4096);
+    oyl_parser *p = oyl_parser_new(buf, (size_t)depth * 2 + 1, a);
+    oyl_parser_set_max_events(p, 0);
+    oyl_parser_set_max_depth(p, 0);
+    const oyl_event *evt;
+    oyl_status st;
     int events = 0;
-    while ((st = yam_parse_next(p, &evt)) == YAM_OK &&
-           evt->type != YAM_EVT_STREAM_END && evt->type != YAM_EVT_NONE)
+    while ((st = oyl_parse_next(p, &evt)) == OYL_OK &&
+           evt->type != OYL_EVT_STREAM_END && evt->type != OYL_EVT_NONE)
         events++;
     double elapsed = now() - t0;
 
-    ASSERT(st == YAM_OK, "deeply nested sequence parses");
+    ASSERT(st == OYL_OK, "deeply nested sequence parses");
     /* STREAM_START, DOC_START, a start and end per level, DOC_END */
     ASSERT(events == depth * 2 + 3, "one start and end event per level");
     ASSERT(elapsed < 2.0, "deep nesting parses in linear time");
 
-    yam_parser_free(p);
-    yam_arena_free(a);
+    oyl_parser_free(p);
+    oyl_arena_free(a);
     free(buf);
 }
 
 /* ── Safety limits ─────────────────────────────────────────── */
 
-static yam_status parse_all(const char *yaml, size_t len, bool eager,
+static oyl_status parse_all(const char *yaml, size_t len, bool eager,
                             int max_depth, const char **msg) {
-    yam_arena  *a = yam_arena_new(4096);
-    yam_parser *p = yam_parser_new(yaml, len, a);
-    if (eager) yam_parser_set_merge(p, true);
-    yam_parser_set_max_events(p, 0);
-    if (max_depth >= 0) yam_parser_set_max_depth(p, max_depth);
-    const yam_event *evt;
-    yam_status st;
+    oyl_arena  *a = oyl_arena_new(4096);
+    oyl_parser *p = oyl_parser_new(yaml, len, a);
+    if (eager) oyl_parser_set_merge(p, true);
+    oyl_parser_set_max_events(p, 0);
+    if (max_depth >= 0) oyl_parser_set_max_depth(p, max_depth);
+    const oyl_event *evt;
+    oyl_status st;
     int guard = 0;
-    while ((st = yam_parse_next(p, &evt)) == YAM_OK &&
-           evt->type != YAM_EVT_STREAM_END && evt->type != YAM_EVT_NONE &&
+    while ((st = oyl_parse_next(p, &evt)) == OYL_OK &&
+           evt->type != OYL_EVT_STREAM_END && evt->type != OYL_EVT_NONE &&
            ++guard < 10000000)
         ;
     static char buf[256];
-    const char *m = yam_parser_error(p);
+    const char *m = oyl_parser_error(p);
     snprintf(buf, sizeof buf, "%s", m ? m : "");
     *msg = buf;
-    yam_parser_free(p);
-    yam_arena_free(a);
+    oyl_parser_free(p);
+    oyl_arena_free(a);
     return st;
 }
 
-/* Deep nesting stops with YAM_ERR_LIMIT in both parse modes; the eager
+/* Deep nesting stops with OYL_ERR_LIMIT in both parse modes; the eager
  * (recursive) mode used to overflow the stack. */
 static void test_depth_limit(void) {
     printf("test_depth_limit:\n");
@@ -319,8 +319,8 @@ static void test_depth_limit(void) {
     const char *msg;
 
     for (int eager = 0; eager <= 1; eager++) {
-        yam_status st = parse_all(buf, (size_t)depth * 4, eager, -1, &msg);
-        ASSERT(st == YAM_ERR_LIMIT, "deep nesting hits the depth limit");
+        oyl_status st = parse_all(buf, (size_t)depth * 4, eager, -1, &msg);
+        ASSERT(st == OYL_ERR_LIMIT, "deep nesting hits the depth limit");
         ASSERT(strstr(msg, "depth") != NULL, "depth limit has an error message");
     }
 
@@ -329,32 +329,32 @@ static void test_depth_limit(void) {
     memset(ok, '[', 8);
     memset(ok + 8, ']', 8);
     ok[16] = '\0';
-    ASSERT(parse_all(ok, 16, false, 8, &msg) == YAM_OK, "depth == limit parses");
-    ASSERT(parse_all(ok, 16, true, 8, &msg) == YAM_OK, "depth == limit parses (eager)");
-    ASSERT(parse_all(ok, 16, false, 7, &msg) == YAM_ERR_LIMIT, "depth > limit fails");
-    ASSERT(parse_all(ok, 16, true, 7, &msg) == YAM_ERR_LIMIT, "depth > limit fails (eager)");
+    ASSERT(parse_all(ok, 16, false, 8, &msg) == OYL_OK, "depth == limit parses");
+    ASSERT(parse_all(ok, 16, true, 8, &msg) == OYL_OK, "depth == limit parses (eager)");
+    ASSERT(parse_all(ok, 16, false, 7, &msg) == OYL_ERR_LIMIT, "depth > limit fails");
+    ASSERT(parse_all(ok, 16, true, 7, &msg) == OYL_ERR_LIMIT, "depth > limit fails (eager)");
     free(buf);
 }
 
-/* Hitting the event limit reports YAM_ERR_LIMIT with a message. */
+/* Hitting the event limit reports OYL_ERR_LIMIT with a message. */
 static void test_event_limit(void) {
     printf("test_event_limit:\n");
     const char *yaml = "[a, b, c, d, e, f, g, h, i, j]";
     for (int eager = 0; eager <= 1; eager++) {
-        yam_arena  *a = yam_arena_new(4096);
-        yam_parser *p = yam_parser_new(yaml, strlen(yaml), a);
-        if (eager) yam_parser_set_merge(p, true);
-        yam_parser_set_max_events(p, 5);
-        const yam_event *evt;
-        yam_status st;
-        while ((st = yam_parse_next(p, &evt)) == YAM_OK &&
-               evt->type != YAM_EVT_STREAM_END && evt->type != YAM_EVT_NONE)
+        oyl_arena  *a = oyl_arena_new(4096);
+        oyl_parser *p = oyl_parser_new(yaml, strlen(yaml), a);
+        if (eager) oyl_parser_set_merge(p, true);
+        oyl_parser_set_max_events(p, 5);
+        const oyl_event *evt;
+        oyl_status st;
+        while ((st = oyl_parse_next(p, &evt)) == OYL_OK &&
+               evt->type != OYL_EVT_STREAM_END && evt->type != OYL_EVT_NONE)
             ;
-        ASSERT(st == YAM_ERR_LIMIT, "event limit returns YAM_ERR_LIMIT");
-        const char *m = yam_parser_error(p);
+        ASSERT(st == OYL_ERR_LIMIT, "event limit returns OYL_ERR_LIMIT");
+        const char *m = oyl_parser_error(p);
         ASSERT(m && strstr(m, "event limit"), "event limit has an error message");
-        yam_parser_free(p);
-        yam_arena_free(a);
+        oyl_parser_free(p);
+        oyl_arena_free(a);
     }
 }
 
@@ -367,9 +367,9 @@ static void test_stray_flow_indicators(void) {
     const char *msg;
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
         for (int eager = 0; eager <= 1; eager++) {
-            yam_status st = parse_all(cases[i], strlen(cases[i]), eager, -1, &msg);
+            oyl_status st = parse_all(cases[i], strlen(cases[i]), eager, -1, &msg);
             tests_run++;
-            if (st != YAM_ERR_PARSE) {
+            if (st != OYL_ERR_PARSE) {
                 printf("  FAIL: %s (%s): status %d\n", cases[i],
                        eager ? "eager" : "incremental", st);
                 tests_failed++;
@@ -481,23 +481,23 @@ static void test_plain_scalar_memory(void) {
                                 "k%d: some plain text\n  continued here\n", i);
 
     long rss0 = peak_rss_mb();
-    yam_arena  *a = yam_arena_new(4096);
-    yam_parser *p = yam_parser_new(buf, len, a);
-    yam_parser_set_max_events(p, 0);
-    const yam_event *evt;
-    yam_status st;
+    oyl_arena  *a = oyl_arena_new(4096);
+    oyl_parser *p = oyl_parser_new(buf, len, a);
+    oyl_parser_set_max_events(p, 0);
+    const oyl_event *evt;
+    oyl_status st;
     int scalars = 0;
-    while ((st = yam_parse_next(p, &evt)) == YAM_OK &&
-           evt->type != YAM_EVT_STREAM_END && evt->type != YAM_EVT_NONE)
-        if (evt->type == YAM_EVT_SCALAR) scalars++;
+    while ((st = oyl_parse_next(p, &evt)) == OYL_OK &&
+           evt->type != OYL_EVT_STREAM_END && evt->type != OYL_EVT_NONE)
+        if (evt->type == OYL_EVT_SCALAR) scalars++;
     long grew = peak_rss_mb() - rss0;
 
-    ASSERT(st == YAM_OK, "many multi-line plain scalars parse");
+    ASSERT(st == OYL_OK, "many multi-line plain scalars parse");
     ASSERT(scalars == entries * 2, "one key and one value per entry");
     ASSERT(grew < 256, "memory stays proportional to the input");
 
-    yam_parser_free(p);
-    yam_arena_free(a);
+    oyl_parser_free(p);
+    oyl_arena_free(a);
     free(buf);
 }
 

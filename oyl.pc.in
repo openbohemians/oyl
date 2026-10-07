@@ -3,9 +3,9 @@ exec_prefix=${prefix}
 libdir=@LIBDIR@
 includedir=@INCLUDEDIR@
 
-Name: yam
+Name: oyl
 Description: YAML 1.2 parser and emitter in C11 (fast, minimal, zero-copy)
-URL: https://github.com/trans/yam
+URL: https://github.com/trans/oyl
 Version: @VERSION@
-Libs: -L${libdir} -lyam
+Libs: -L${libdir} -loyl
 Cflags: -I${includedir}

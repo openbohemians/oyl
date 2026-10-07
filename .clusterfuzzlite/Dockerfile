@@ -1,5 +1,5 @@
 FROM gcr.io/oss-fuzz-base/base-builder:v1
 RUN apt-get update && apt-get install -y zip
-COPY . $SRC/yam
-WORKDIR $SRC/yam
+COPY . $SRC/oyl
+WORKDIR $SRC/oyl
 COPY ./.clusterfuzzlite/build.sh $SRC/

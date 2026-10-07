@@ -1,5 +1,5 @@
 /*
- * fuzz_parser.c — libFuzzer harness for the yam parser.
+ * fuzz_parser.c — libFuzzer harness for the oyl parser.
  *
  * The first input byte selects options: bit 0 merge keys, bit 1 alias
  * resolution, bit 2 core schema, bits 3-4 emitter style. So both the
@@ -18,7 +18,7 @@
  *
  * Build (via `just fuzz`):
  *   clang -fsanitize=fuzzer,address,undefined -g -O1 -Iinclude \
- *         fuzz/fuzz_parser.c src/yam_*.c -o build/fuzz_parser
+ *         fuzz/fuzz_parser.c src/oyl_*.c -o build/fuzz_parser
  *
  * Run:
  *   ./build/fuzz_parser -max_total_time=60 \
@@ -28,7 +28,7 @@
  * fuzz/corpus/ and is gitignored.
  */
 
-#include "yam/yam.h"
+#include "oyl/oyl.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -39,8 +39,8 @@
 #define MAX_EVENTS 10000
 
 /* Append a canonical form of one event (see test_yaml_suite.c). */
-static void canon(const yam_event *e, char **buf, size_t *len, size_t *cap) {
-    if (e->type == YAM_EVT_STREAM_START || e->type == YAM_EVT_STREAM_END) return;
+static void canon(const oyl_event *e, char **buf, size_t *len, size_t *cap) {
+    if (e->type == OYL_EVT_STREAM_START || e->type == OYL_EVT_STREAM_END) return;
     char head[64];
     int n = snprintf(head, sizeof head, "%d|%zu|%zu|", (int)e->type,
                      e->anchor.len, e->tag.len);
@@ -56,15 +56,15 @@ static void canon(const yam_event *e, char **buf, size_t *len, size_t *cap) {
     memcpy(o, head, (size_t)n); o += n;
     if (e->anchor.len) { memcpy(o, e->anchor.data, e->anchor.len); o += e->anchor.len; }
     if (e->tag.len) { memcpy(o, e->tag.data, e->tag.len); o += e->tag.len; }
-    if (e->type == YAM_EVT_SCALAR || e->type == YAM_EVT_ALIAS) {
+    if (e->type == OYL_EVT_SCALAR || e->type == OYL_EVT_ALIAS) {
         bool untagged = !e->tag.len;
-        bool plain = e->scalar_style == YAM_SCALAR_PLAIN;
-        if (e->type == YAM_EVT_SCALAR && untagged && plain &&
+        bool plain = e->scalar_style == OYL_SCALAR_PLAIN;
+        if (e->type == OYL_EVT_SCALAR && untagged && plain &&
             (e->value.len == 0 || (e->value.len == 1 && e->value.data[0] == '~'))) {
             *o++ = '~';                         /* both mean null */
         } else {
-            if (e->type == YAM_EVT_SCALAR && untagged) {
-                yam_str t = yam_schema_resolve(yam_schema_core(), e->value, e->scalar_style);
+            if (e->type == OYL_EVT_SCALAR && untagged) {
+                oyl_str t = oyl_schema_resolve(oyl_schema_core(), e->value, e->scalar_style);
                 *o++ = t.data[t.len - 2];       /* last letters differ per type */
                 *o++ = t.data[t.len - 1];
             }
@@ -77,31 +77,31 @@ static void canon(const yam_event *e, char **buf, size_t *len, size_t *cap) {
 
 /* Parse `yaml` into a canonical string, optionally feeding an emitter.
  * Returns false if parsing fails. */
-static bool parse_canon(const char *yaml, size_t len, uint8_t flags, yam_emitter *em,
+static bool parse_canon(const char *yaml, size_t len, uint8_t flags, oyl_emitter *em,
                         char **out, size_t *out_len) {
-    yam_arena *a = yam_arena_new(4096);
+    oyl_arena *a = oyl_arena_new(4096);
     if (!a) return false;
-    yam_parser *p = yam_parser_new(yaml, len, a);
-    if (!p) { yam_arena_free(a); return false; }
-    yam_parser_set_max_events(p, MAX_EVENTS);
-    if (flags & 1) yam_parser_set_merge(p, true);
-    if (flags & 2) yam_parser_set_resolve(p, true);
-    if (flags & 4) yam_parser_set_schema(p, yam_schema_core());
+    oyl_parser *p = oyl_parser_new(yaml, len, a);
+    if (!p) { oyl_arena_free(a); return false; }
+    oyl_parser_set_max_events(p, MAX_EVENTS);
+    if (flags & 1) oyl_parser_set_merge(p, true);
+    if (flags & 2) oyl_parser_set_resolve(p, true);
+    if (flags & 4) oyl_parser_set_schema(p, oyl_schema_core());
 
     size_t cap = 0;
-    const yam_event *evt;
-    yam_status st;
+    const oyl_event *evt;
+    oyl_status st;
     int events = 0;
-    while ((st = yam_parse_next(p, &evt)) == YAM_OK) {
-        if (evt->type == YAM_EVT_NONE) break;
+    while ((st = oyl_parse_next(p, &evt)) == OYL_OK) {
+        if (evt->type == OYL_EVT_NONE) break;
         if (++events > MAX_EVENTS) __builtin_trap(); /* limit bypassed */
-        if (em) yam_emit(em, evt);
+        if (em) oyl_emit(em, evt);
         canon(evt, out, out_len, &cap);
-        if (evt->type == YAM_EVT_STREAM_END) break;
+        if (evt->type == OYL_EVT_STREAM_END) break;
     }
-    yam_parser_free(p);
-    yam_arena_free(a);
-    return st == YAM_OK;
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+    return st == OYL_OK;
 }
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
@@ -114,12 +114,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (!buf) return 0;
     memcpy(buf, data, size);
 
-    yam_arena *ea = yam_arena_new(4096);
-    yam_emitter *em = ea ? yam_emitter_new(ea) : NULL;
+    oyl_arena *ea = oyl_arena_new(4096);
+    oyl_emitter *em = ea ? oyl_emitter_new(ea) : NULL;
     if (em) {
         int style = (flags >> 3) & 3;
-        yam_emitter_set_style(em, style == 1 ? YAM_EMIT_FLOW
-                                  : style == 2 ? YAM_EMIT_MINIMAL : YAM_EMIT_BLOCK);
+        oyl_emitter_set_style(em, style == 1 ? OYL_EMIT_FLOW
+                                  : style == 2 ? OYL_EMIT_MINIMAL : OYL_EMIT_BLOCK);
     }
 
     char *before = NULL, *after = NULL;
@@ -130,7 +130,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
      * Merge/alias expansion applies to the input only: the emitted text
      * already has them expanded. */
     if (ok && em) {
-        yam_str out = yam_emitter_output(em);
+        oyl_str out = oyl_emitter_output(em);
         if (!parse_canon(out.data ? out.data : "", out.len, flags & 4, NULL,
                          &after, &after_len))
             __builtin_trap(); /* emitted YAML does not parse */
@@ -141,8 +141,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
     free(before);
     free(after);
-    yam_emitter_free(em);
-    yam_arena_free(ea);
+    oyl_emitter_free(em);
+    oyl_arena_free(ea);
     free(buf);
     return 0;
 }

@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>YAM | YAML Parser and Emitter</title>
-  <meta name="description" content="YAM is a fast, minimal YAML 1.2 parser and emitter in C11 with SIMD scanning, event parser, and robust emitter.">
+  <title>Oyl | YAML Parser and Emitter</title>
+  <meta name="description" content="Oyl, the optimized YAML library: a fast, minimal YAML 1.2 parser and emitter in C11 with SIMD scanning, event parser, and robust emitter.">
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Anton&family=Rubik+Spray+Paint&display=swap');
 
@@ -41,8 +41,8 @@
       --brass-hi: #f3cf6b;
       --brass-lo: #7d5810;
       --wheel-ink: #1d1405;
-      /* benchmark marks: yam in spinach, the other parsers recede in slate */
-      --bar-yam: #4d9f57;
+      /* benchmark marks: oyl in spinach, the other parsers recede in slate */
+      --bar-oyl: #4d9f57;
       --bar-other: #5f7a8f;
       --text-primary: #f4f6f8;
       --text-secondary: #b7c8d8;
@@ -437,7 +437,7 @@
       color: var(--text-secondary);
     }
 
-    /* ── Benchmarks: small multiples, yam emphasized ── */
+    /* ── Benchmarks: small multiples, oyl emphasized ── */
 
     .bench-lede {
       max-width: 75ch;
@@ -511,8 +511,8 @@
       margin-top: auto;
     }
 
-    /* yam's figure leads each panel; the bars below get the full track */
-    .bench-yam {
+    /* oyl's figure leads each panel; the bars below get the full track */
+    .bench-oyl {
       flex: none;
       text-align: right;
       white-space: nowrap;
@@ -521,7 +521,7 @@
       font-size: 0.95rem;
     }
 
-    .bench-yam small {
+    .bench-oyl small {
       display: block;
       font-weight: 400;
       font-size: 0.72rem;
@@ -573,13 +573,13 @@
       background: var(--bar-other);
     }
 
-    .bench-row.is-yam .bench-lib {
+    .bench-row.is-oyl .bench-lib {
       color: var(--text-primary);
       font-weight: 700;
     }
 
-    .bench-row.is-yam .bench-bar {
-      background: var(--bar-yam);
+    .bench-row.is-oyl .bench-bar {
+      background: var(--bar-oyl);
     }
 
     /* every value on hover or keyboard focus */
@@ -646,7 +646,7 @@
       font-weight: 700;
     }
 
-    .bench-table .yam {
+    .bench-table .oyl {
       color: #b0efb8;
       font-weight: 700;
     }
@@ -725,28 +725,29 @@
   <div class="wrap">
     <header class="hero">
       <figure class="hero-image">
-        <img src="iyam.png" alt="Popeye style hero saying I YAM WHAT I YAM for the YAM YAML parser and emitter project">
+        <img src="iyam.png" alt="Popeye-style illustration saying I YAM WHAT I YAM, from the days when Oyl was named yam">
       </figure>
-      <h1>YAM</h1>
+      <h1>Oyl</h1>
       <p class="hero-caption">spinach-powered parsing</p>
       <div class="hero-pills">
         <span class="tag">YAML 1.2 | C11</span>
-        <a class="pill-link" href="https://github.com/trans/yam">GitHub Repo</a>
-        <a class="pill-link" href="https://github.com/trans/yam/blob/main/docs/api/index.md">API Docs</a>
+        <a class="pill-link" href="https://github.com/trans/oyl">GitHub Repo</a>
+        <a class="pill-link" href="https://github.com/trans/oyl/blob/main/docs/api/index.md">API Docs</a>
       </div>
       <p class="lede">
-        A fast, minimal, zero-copy YAML parser and emitter with SIMD scanning,
-        event-driven parsing, merge and alias support, and dependable error reporting.
+        The optimized YAML library: a fast, minimal, zero-copy parser and emitter
+        for YAML 1.2, with SIMD scanning, event-driven parsing, merge and alias
+        support, and dependable error reporting.
       </p>
       <div class="tally">
         <div class="tally-housing" id="tally" role="img" data-total="4187798713"
              aria-label="4,187,798,713 fuzz inputs parsed"></div>
         <p class="tally-label">Fuzzies parsed</p>
         <p class="tally-note">
-          Random inputs ClusterFuzzLite has thrown at yam since September 24, 2026,
+          Random inputs ClusterFuzzLite has thrown at Oyl since September 24, 2026,
           under AddressSanitizer and UndefinedBehaviorSanitizer, each checked for
           crashes, memory errors and round-trip mistakes. Counted from the
-          <a href="https://github.com/trans/yam/actions">fuzzing logs</a> after every run.
+          <a href="https://github.com/trans/oyl/actions">fuzzing logs</a> after every run.
         </p>
       </div>
       <div class="stats">
@@ -760,7 +761,7 @@
     <section class="section reveal">
       <h2>Build and Run</h2>
       <p>Build with a C11 compiler (GCC/Clang tested on Linux and macOS).</p>
-      <pre class="terminal"><code>make              # build libyam.a
+      <pre class="terminal"><code>make              # build liboyl.a
 make test-all     # run all tests
 make test-suite   # run YAML Test Suite (needs submodules)
 make bench        # scanner benchmark on your machine</code></pre>
@@ -790,7 +791,7 @@ make bench        # scanner benchmark on your machine</code></pre>
 
     <section class="section reveal">
       <h2>Architecture</h2>
-      <p>YAM keeps scanner and parser responsibilities clean: raw tokens first, structure and properties in parser, then emit text.</p>
+      <p>Oyl keeps scanner and parser responsibilities clean: raw tokens first, structure and properties in parser, then emit text.</p>
       <div class="flow">
         <div>Input Bytes</div>
         <div>Scanner<br><span class="accent-gold">Tokens</span></div>
@@ -804,17 +805,17 @@ make bench        # scanner benchmark on your machine</code></pre>
       <div class="grid-2">
         <article class="tile">
           <h3>Event Loop</h3>
-          <pre class="terminal"><code>const yam_event *evt;
-while (yam_parse_next(parser, &evt) == YAM_OK) {
-  if (evt->type == YAM_EVT_STREAM_END) break;
+          <pre class="terminal"><code>const oyl_event *evt;
+while (oyl_parse_next(parser, &evt) == OYL_OK) {
+  if (evt->type == OYL_EVT_STREAM_END) break;
   /* consume event */
 }</code></pre>
         </article>
         <article class="tile">
           <h3>Error Reporting</h3>
-          <pre class="terminal"><code>if (yam_parse_next(parser, &evt) != YAM_OK) {
-  const char *msg = yam_parser_error(parser);
-  yam_mark mark = yam_parser_error_mark(parser);
+          <pre class="terminal"><code>if (oyl_parse_next(parser, &evt) != OYL_OK) {
+  const char *msg = oyl_parser_error(parser);
+  oyl_mark mark = oyl_parser_error_mark(parser);
   printf("%zu:%zu: %s\n", mark.line, mark.col, msg);
 }</code></pre>
         </article>
@@ -828,7 +829,7 @@ while (yam_parse_next(parser, &evt) == YAM_OK) {
         reads the same bytes; each panel has its own scale.
       </p>
       <div class="bench-legend" aria-hidden="true">
-        <span><i style="background: var(--bar-yam)"></i>yam</span>
+        <span><i style="background: var(--bar-oyl)"></i>oyl</span>
         <span><i style="background: var(--bar-other)"></i>other parsers</span>
       </div>
       <div id="bench-groups"></div>
@@ -838,12 +839,12 @@ while (yam_parse_next(parser, &evt) == YAM_OK) {
       </details>
       <p class="bench-method">
         Intel Core Ultra 7 155H, one core, GCC 16.2 <code>-O2</code>, median of 11
-        runs in each of 3 passes, October 2026. yam, libyaml 0.2.5 and libfyaml
+        runs in each of 3 passes, October 2026. Oyl, libyaml 0.2.5 and libfyaml
         0.9.6 produce events; rapidyaml 0.16 is shown as its event parser with
         buffers reused between parses, its fastest mode (and in the table also
         as its usual tree API). Run <code>make bench-compare</code> on your own
         machine, or see the
-        <a href="https://github.com/trans/yam#performance">README</a> for details.
+        <a href="https://github.com/trans/oyl#performance">README</a> for details.
       </p>
       <div class="callout">
         <strong class="accent-green">Conformance:</strong>
@@ -854,7 +855,7 @@ while (yam_parse_next(parser, &evt) == YAM_OK) {
     </section>
 
     <footer>
-      YAM | YAML parser and emitter in C11 | MIT license
+      Oyl | the optimized YAML library in C11 | MIT license
     </footer>
   </div>
 
@@ -874,7 +875,7 @@ while (yam_parse_next(parser, &evt) == YAM_OK) {
      * The total comes from fuzz-stats.json on the fuzz-stats branch, which a
      * workflow updates after every ClusterFuzzLite run; the data-total
      * attribute is the fallback if it can't be fetched. */
-    const STATS_URL = 'https://raw.githubusercontent.com/trans/yam/fuzz-stats/fuzz-stats.json';
+    const STATS_URL = 'https://raw.githubusercontent.com/trans/oyl/fuzz-stats/fuzz-stats.json';
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const tally = document.getElementById('tally');
 
@@ -931,13 +932,13 @@ while (yam_parse_next(parser, &evt) == YAM_OK) {
   "groups": [
     {
       "title": "Generated input, 10 MB each",
-      "note": "Mostly short keys and values, where the cost per token dominates. rapidyaml leads here; yam is 1.7–3.2× faster than libyaml and libfyaml.",
+      "note": "Mostly short keys and values, where the cost per token dominates. rapidyaml leads here; Oyl is 1.7–3.2× faster than libyaml and libfyaml.",
       "inputs": [
         {
           "name": "Block YAML",
           "detail": "mappings and sequences",
           "mbps": {
-            "yam": 175,
+            "oyl": 175,
             "rapidyaml": 236,
             "libfyaml": 61,
             "libyaml": 73,
@@ -948,7 +949,7 @@ while (yam_parse_next(parser, &evt) == YAM_OK) {
           "name": "Mixed YAML",
           "detail": "block, flow and quoted",
           "mbps": {
-            "yam": 214,
+            "oyl": 214,
             "rapidyaml": 268,
             "libfyaml": 73,
             "libyaml": 84,
@@ -959,7 +960,7 @@ while (yam_parse_next(parser, &evt) == YAM_OK) {
           "name": "JSON",
           "detail": "an array of objects",
           "mbps": {
-            "yam": 187,
+            "oyl": 187,
             "rapidyaml": 322,
             "libfyaml": 59,
             "libyaml": 69,
@@ -970,7 +971,7 @@ while (yam_parse_next(parser, &evt) == YAM_OK) {
           "name": "Config files",
           "detail": "comments, block scalars, anchors",
           "mbps": {
-            "yam": 200,
+            "oyl": 200,
             "rapidyaml": 349,
             "libfyaml": 102,
             "libyaml": 120,
@@ -981,13 +982,13 @@ while (yam_parse_next(parser, &evt) == YAM_OK) {
     },
     {
       "title": "Real files, repeated to ~10 MB",
-      "note": "From rapidyaml’s own benchmark set. yam is fastest on all three, 1.1–1.8× ahead of rapidyaml.",
+      "note": "From rapidyaml’s own benchmark set. Oyl is fastest on all three, 1.1–1.8× ahead of rapidyaml.",
       "inputs": [
         {
           "name": "travis.yml",
           "detail": "Travis CI configuration",
           "mbps": {
-            "yam": 479,
+            "oyl": 479,
             "rapidyaml": 411,
             "libfyaml": 174,
             "libyaml": 141,
@@ -998,7 +999,7 @@ while (yam_parse_next(parser, &evt) == YAM_OK) {
           "name": "appveyor.yml",
           "detail": "AppVeyor CI configuration",
           "mbps": {
-            "yam": 434,
+            "oyl": 434,
             "rapidyaml": 395,
             "libfyaml": 145,
             "libyaml": 126,
@@ -1009,7 +1010,7 @@ while (yam_parse_next(parser, &evt) == YAM_OK) {
           "name": "compile_commands.json",
           "detail": "a compilation database",
           "mbps": {
-            "yam": 2132,
+            "oyl": 2132,
             "rapidyaml": 1183,
             "libfyaml": 291,
             "libyaml": 214,
@@ -1020,13 +1021,13 @@ while (yam_parse_next(parser, &evt) == YAM_OK) {
     },
     {
       "title": "Long text",
-      "note": "Multi-line scalars in each style, also from rapidyaml’s set. yam copies them a line or a run at a time with SIMD: 2–8× rapidyaml, up to 13× libyaml.",
+      "note": "Multi-line scalars in each style, also from rapidyaml’s set. Oyl copies them a line or a run at a time with SIMD: 2–8× rapidyaml, up to 13× libyaml.",
       "inputs": [
         {
           "name": "Literal block scalars",
           "detail": "literal style (|)",
           "mbps": {
-            "yam": 2967,
+            "oyl": 2967,
             "rapidyaml": 962,
             "libfyaml": 278,
             "libyaml": 274,
@@ -1037,7 +1038,7 @@ while (yam_parse_next(parser, &evt) == YAM_OK) {
           "name": "Folded block scalars",
           "detail": "folded style (>)",
           "mbps": {
-            "yam": 2006,
+            "oyl": 2006,
             "rapidyaml": 872,
             "libfyaml": 278,
             "libyaml": 276,
@@ -1048,7 +1049,7 @@ while (yam_parse_next(parser, &evt) == YAM_OK) {
           "name": "Double-quoted",
           "detail": "with escapes and line breaks",
           "mbps": {
-            "yam": 2817,
+            "oyl": 2817,
             "rapidyaml": 340,
             "libfyaml": 323,
             "libyaml": 210,
@@ -1059,7 +1060,7 @@ while (yam_parse_next(parser, &evt) == YAM_OK) {
           "name": "Single-quoted",
           "detail": "with line breaks",
           "mbps": {
-            "yam": 2669,
+            "oyl": 2669,
             "rapidyaml": 355,
             "libfyaml": 324,
             "libyaml": 212,
@@ -1070,7 +1071,7 @@ while (yam_parse_next(parser, &evt) == YAM_OK) {
           "name": "Plain",
           "detail": "multi-line, unquoted",
           "mbps": {
-            "yam": 840,
+            "oyl": 840,
             "rapidyaml": 295,
             "libfyaml": 417,
             "libyaml": 196,
@@ -1081,8 +1082,8 @@ while (yam_parse_next(parser, &evt) == YAM_OK) {
     }
   ]
 };
-    const CHART_LIBS = [['yam', 'yam'], ['rapidyaml', 'rapidyaml'], ['libfyaml', 'libfyaml'], ['libyaml', 'libyaml']];
-    const TABLE_LIBS = [['yam', 'yam'], ['rapidyaml', 'rapidyaml (events)'], ['rapidyamlTree', 'rapidyaml (tree)'],
+    const CHART_LIBS = [['oyl', 'oyl'], ['rapidyaml', 'rapidyaml'], ['libfyaml', 'libfyaml'], ['libyaml', 'libyaml']];
+    const TABLE_LIBS = [['oyl', 'oyl'], ['rapidyaml', 'rapidyaml (events)'], ['rapidyamlTree', 'rapidyaml (tree)'],
                         ['libfyaml', 'libfyaml'], ['libyaml', 'libyaml']];
     const mbps = (n) => n.toLocaleString('en-US') + ' MB/s';
 
@@ -1103,8 +1104,8 @@ while (yam_parse_next(parser, &evt) == YAM_OK) {
         const cap = el('figcaption');
         const text = el('div', 'bench-cap');
         text.append(el('strong', '', input.name), el('span', '', input.detail));
-        const fig = el('div', 'bench-yam', input.mbps.yam.toLocaleString('en-US'));
-        fig.append(el('small', '', 'MB/s, yam'));
+        const fig = el('div', 'bench-oyl', input.mbps.oyl.toLocaleString('en-US'));
+        fig.append(el('small', '', 'MB/s, oyl'));
         cap.append(text, fig);
         panel.append(cap);
         const rows = el('div', 'bench-rows');
@@ -1112,7 +1113,7 @@ while (yam_parse_next(parser, &evt) == YAM_OK) {
         const max = Math.max(...CHART_LIBS.map(([k]) => input.mbps[k]));
         for (const [key, name] of CHART_LIBS) {
           const v = input.mbps[key];
-          const row = el('div', 'bench-row' + (key === 'yam' ? ' is-yam' : ''));
+          const row = el('div', 'bench-row' + (key === 'oyl' ? ' is-oyl' : ''));
           row.tabIndex = 0;
           row.dataset.tip = name + ': ' + mbps(v);
           row.setAttribute('aria-label', name + ', ' + input.name + ': ' + mbps(v));
@@ -1132,7 +1133,7 @@ while (yam_parse_next(parser, &evt) == YAM_OK) {
     const table = el('table');
     const head = el('tr');
     head.append(el('th', '', 'Input'));
-    for (const [key, name] of TABLE_LIBS) head.append(el('th', key === 'yam' ? 'yam' : '', name));
+    for (const [key, name] of TABLE_LIBS) head.append(el('th', key === 'oyl' ? 'oyl' : '', name));
     const thead = el('thead');
     thead.append(head);
     const tbody = el('tbody');
@@ -1141,7 +1142,7 @@ while (yam_parse_next(parser, &evt) == YAM_OK) {
         const tr = el('tr');
         tr.append(el('td', '', input.name));
         for (const [key] of TABLE_LIBS) {
-          tr.append(el('td', key === 'yam' ? 'yam' : '', input.mbps[key].toLocaleString('en-US')));
+          tr.append(el('td', key === 'oyl' ? 'oyl' : '', input.mbps[key].toLocaleString('en-US')));
         }
         tbody.append(tr);
       }

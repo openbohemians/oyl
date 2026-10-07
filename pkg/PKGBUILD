@@ -1,16 +1,16 @@
 # Maintainer: Thomas Sawyer <transfire@gmail.com>
-pkgname=yam
+pkgname=oyl
 pkgver=1.0.0
 pkgrel=1
 pkgdesc="Fast, minimal, zero-copy YAML 1.2 parser and emitter library in C11"
 arch=('x86_64' 'aarch64')
-url="https://github.com/trans/yam"
+url="https://github.com/trans/oyl"
 license=('MIT')
 depends=('glibc')
 makedepends=('gcc' 'make')
-# Listing the bare soname lets makepkg auto-append the version (libyam.so=1-64)
+# Listing the bare soname lets makepkg auto-append the version (liboyl.so=1-64)
 # so dependents can depend on it.
-provides=('libyam.so')
+provides=('liboyl.so')
 # Keep the static library (makepkg strips *.a by default via !staticlibs).
 options=('staticlibs')
 source=("${pkgname}-${pkgver}.tar.gz")

@@ -3,8 +3,8 @@
  * the cross-library comparison in bench/compare/.
  */
 
-#ifndef YAM_BENCH_GEN_H
-#define YAM_BENCH_GEN_H
+#ifndef OYL_BENCH_GEN_H
+#define OYL_BENCH_GEN_H
 
 #include <stdio.h>
 #include <stdlib.h>

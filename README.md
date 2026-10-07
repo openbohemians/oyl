@@ -1,6 +1,8 @@
-# yam
+# Oyl
 
-A YAML 1.2 parser and emitter written in C11. Fast, minimal, zero-copy.
+The optimized YAML library: a YAML 1.2 parser and emitter written in C11.
+Fast, minimal, zero-copy. (Formerly *yam*; see the
+[changelog](CHANGELOG.md) for what the rename changed.)
 
 Features a SIMD-accelerated scanner (SSE4.2 with scalar fallback),
 an event-based parser, an emitter with block/flow/minimal output styles,
@@ -28,7 +30,7 @@ parses, although strict YAML 1.2 would reject the unindented `]`.
 ## Build
 
 ```
-make              # build libyam.a
+make              # build liboyl.a
 make test         # run scanner unit tests
 make test-schema  # run schema/tag resolution tests
 make test-emitter # run emitter tests
@@ -47,30 +49,30 @@ Requires a C11 compiler. Tested with GCC and Clang on Linux and macOS.
 ### Parser (event API)
 
 ```c
-#include "yam/yam.h"
+#include "oyl/oyl.h"
 
 const char *yaml = "greeting: hello\nitems:\n  - one\n  - two\n";
 
-yam_arena  *arena  = yam_arena_new(4096);
-yam_parser *parser = yam_parser_new(yaml, strlen(yaml), arena);
-const yam_event *evt;
+oyl_arena  *arena  = oyl_arena_new(4096);
+oyl_parser *parser = oyl_parser_new(yaml, strlen(yaml), arena);
+const oyl_event *evt;
 
-while (yam_parse_next(parser, &evt) == YAM_OK) {
-    if (evt->type == YAM_EVT_STREAM_END) break;
+while (oyl_parse_next(parser, &evt) == OYL_OK) {
+    if (evt->type == OYL_EVT_STREAM_END) break;
 
-    printf("%s", yam_event_type_str(evt->type));
+    printf("%s", oyl_event_type_str(evt->type));
     if (evt->anchor.data) printf(" &%.*s", (int)evt->anchor.len, evt->anchor.data);
     if (evt->tag.data)    printf(" <%.*s>", (int)evt->tag.len, evt->tag.data);
-    if (evt->type == YAM_EVT_SCALAR)
+    if (evt->type == OYL_EVT_SCALAR)
         printf(" %.*s", (int)evt->value.len, evt->value.data);
     printf("\n");
 }
 
-yam_parser_free(parser);
-yam_arena_free(arena);
+oyl_parser_free(parser);
+oyl_arena_free(arena);
 ```
 
-`yam_parse_next` hands back a pointer to an event owned by the parser,
+`oyl_parse_next` hands back a pointer to an event owned by the parser,
 valid until the next call. Its string fields (`value`, `anchor`, `tag`)
 point into your input or the arena and stay valid until those are freed,
 so they can be kept without copying.
@@ -78,58 +80,58 @@ so they can be kept without copying.
 ### File Input
 
 ```c
-yam_arena *arena = yam_arena_new(4096);
-yam_str    data  = yam_read_file("config.yaml", arena);
+oyl_arena *arena = oyl_arena_new(4096);
+oyl_str    data  = oyl_read_file("config.yaml", arena);
 
 if (data.data) {
-    yam_parser *p = yam_parser_new(data.data, data.len, arena);
+    oyl_parser *p = oyl_parser_new(data.data, data.len, arena);
     /* ... parse ... */
-    yam_parser_free(p);
+    oyl_parser_free(p);
 }
 
-yam_arena_free(arena);  /* frees file data too */
+oyl_arena_free(arena);  /* frees file data too */
 ```
 
 ### Emitter (roundtrip)
 
 ```c
-yam_arena   *arena = yam_arena_new(4096);
+oyl_arena   *arena = oyl_arena_new(4096);
 const char  *yaml  = "greeting: hello\nitems:\n  - one\n  - two\n";
 
 /* parse */
-yam_parser *p = yam_parser_new(yaml, strlen(yaml), arena);
+oyl_parser *p = oyl_parser_new(yaml, strlen(yaml), arena);
 
 /* emit */
-yam_emitter *e = yam_emitter_new(arena);
-const yam_event *evt;
-while (yam_parse_next(p, &evt) == YAM_OK) {
-    yam_emit(e, evt);
-    if (evt->type == YAM_EVT_STREAM_END) break;
+oyl_emitter *e = oyl_emitter_new(arena);
+const oyl_event *evt;
+while (oyl_parse_next(p, &evt) == OYL_OK) {
+    oyl_emit(e, evt);
+    if (evt->type == OYL_EVT_STREAM_END) break;
 }
 
-yam_str out = yam_emitter_output(e);
+oyl_str out = oyl_emitter_output(e);
 fwrite(out.data, 1, out.len, stdout);
 
-yam_emitter_free(e);
-yam_parser_free(p);
-yam_arena_free(arena);
+oyl_emitter_free(e);
+oyl_parser_free(p);
+oyl_arena_free(arena);
 ```
 
 ### Emitter (building output)
 
 ```c
-yam_emitter *e = yam_emitter_new(arena);
+oyl_emitter *e = oyl_emitter_new(arena);
 
-yam_emit_stream_start(e);
-yam_emit_document_start(e, true);                       /* implicit: no "---" */
-yam_emit_mapping_start(e, YAM_STR_NULL, YAM_STR_NULL, false);
-yam_emit_scalar(e, YAM_STR_LIT("name"), YAM_SCALAR_PLAIN, YAM_STR_NULL, YAM_STR_NULL);
-yam_emit_scalar(e, YAM_STR_LIT("yam"),  YAM_SCALAR_PLAIN, YAM_STR_NULL, YAM_STR_NULL);
-yam_emit_mapping_end(e);
-yam_emit_document_end(e, true);
-yam_emit_stream_end(e);
+oyl_emit_stream_start(e);
+oyl_emit_document_start(e, true);                       /* implicit: no "---" */
+oyl_emit_mapping_start(e, OYL_STR_NULL, OYL_STR_NULL, false);
+oyl_emit_scalar(e, OYL_STR_LIT("name"), OYL_SCALAR_PLAIN, OYL_STR_NULL, OYL_STR_NULL);
+oyl_emit_scalar(e, OYL_STR_LIT("oyl"),  OYL_SCALAR_PLAIN, OYL_STR_NULL, OYL_STR_NULL);
+oyl_emit_mapping_end(e);
+oyl_emit_document_end(e, true);
+oyl_emit_stream_end(e);
 
-yam_str out = yam_emitter_output(e);   /* "name: yam\n" */
+oyl_str out = oyl_emitter_output(e);   /* "name: oyl\n" */
 ```
 
 ### Scanner (token API)
@@ -138,29 +140,29 @@ For lower-level access, the scanner produces a flat token stream without
 synthetic block structure tokens:
 
 ```c
-yam_scanner *scanner = yam_scanner_new(yaml, len, arena);
-const yam_token *tok;
+oyl_scanner *scanner = oyl_scanner_new(yaml, len, arena);
+const oyl_token *tok;
 
-while (yam_scan_next(scanner, &tok) == YAM_OK) {
-    if (tok->type == YAM_TOK_STREAM_END) break;
+while (oyl_scan_next(scanner, &tok) == OYL_OK) {
+    if (tok->type == OYL_TOK_STREAM_END) break;
     printf("%-20s %.*s\n",
-           yam_token_type_str(tok->type),
+           oyl_token_type_str(tok->type),
            (int)tok->value.len, tok->value.data);
 }
 
-yam_scanner_free(scanner);
+oyl_scanner_free(scanner);
 ```
 
 ## API Overview
 
 | Type | Description |
 |------|-------------|
-| `yam_str` | Non-owning string view (`data`, `len`) |
-| `yam_mark` | Source position (`offset`, `line`, `col`) |
-| `yam_token` | Scanner output (`type`, `value`, `scalar_style`, `start`, `end`), owned by the scanner |
-| `yam_event` | Parser output (`type`, `value`, `anchor`, `tag`, `scalar_style`, `flow`), owned by the parser |
-| `yam_schema` | Opaque tag resolution schema (failsafe, JSON, core, or custom) |
-| `yam_emitter` | Event-to-YAML emitter, configured with setters |
+| `oyl_str` | Non-owning string view (`data`, `len`) |
+| `oyl_mark` | Source position (`offset`, `line`, `col`) |
+| `oyl_token` | Scanner output (`type`, `value`, `scalar_style`, `start`, `end`), owned by the scanner |
+| `oyl_event` | Parser output (`type`, `value`, `anchor`, `tag`, `scalar_style`, `flow`), owned by the parser |
+| `oyl_schema` | Opaque tag resolution schema (failsafe, JSON, core, or custom) |
+| `oyl_emitter` | Event-to-YAML emitter, configured with setters |
 
 Tokens and events are only ever allocated by the library and read through
 `const` pointers, and configuration goes through functions, so new fields
@@ -189,16 +191,16 @@ styles are available:
 
 | Style | Description |
 |-------|-------------|
-| `YAM_EMIT_BLOCK` | Indented block style (default) |
-| `YAM_EMIT_FLOW` | Flow style (`{key: value}`, `[a, b]`) |
-| `YAM_EMIT_MINIMAL` | Compact flow with minimal whitespace |
+| `OYL_EMIT_BLOCK` | Indented block style (default) |
+| `OYL_EMIT_FLOW` | Flow style (`{key: value}`, `[a, b]`) |
+| `OYL_EMIT_MINIMAL` | Compact flow with minimal whitespace |
 
 The default is block style with a 2-space indent. Change it with setters:
 
 ```c
-yam_emitter *e = yam_emitter_new(arena);
-yam_emitter_set_style(e, YAM_EMIT_FLOW);
-yam_emitter_set_indent(e, 4);   /* spaces per indent level, 1-10 */
+oyl_emitter *e = oyl_emitter_new(arena);
+oyl_emitter_set_style(e, OYL_EMIT_FLOW);
+oyl_emitter_set_indent(e, 4);   /* spaces per indent level, 1-10 */
 ```
 
 Plain scalars are written plain whenever that reads back as the same text,
@@ -212,7 +214,7 @@ stay a string.
 Enable merge key expansion (`<<`) to inherit keys from anchored mappings:
 
 ```c
-yam_parser_set_merge(parser, true);
+oyl_parser_set_merge(parser, true);
 ```
 
 ```yaml
@@ -238,7 +240,7 @@ Enable alias resolution to expand `*alias` references inline instead of
 emitting `ALIAS` events:
 
 ```c
-yam_parser_set_resolve(parser, true);
+oyl_parser_set_resolve(parser, true);
 ```
 
 Scalar, mapping, and sequence aliases are all expanded. An alias refers to
@@ -251,15 +253,15 @@ keys when both are enabled.
 ## Safety Limits
 
 The parser enforces limits against hostile or runaway input. Exceeding any
-of them stops parsing with `YAM_ERR_LIMIT` and an error message.
+of them stops parsing with `OYL_ERR_LIMIT` and an error message.
 
 **Event count.** Defaults to 10,000 events. This is sufficient for typical
 config files (roughly 100-200KB of dense YAML), but large documents may
 need a higher limit:
 
 ```c
-yam_parser_set_max_events(parser, 100000);  /* raise for large files */
-yam_parser_set_max_events(parser, 0);       /* disable limit entirely */
+oyl_parser_set_max_events(parser, 100000);  /* raise for large files */
+oyl_parser_set_max_events(parser, 0);       /* disable limit entirely */
 ```
 
 Each YAML node produces 1-3 events (a key-value pair is ~2 events, plus
@@ -272,7 +274,7 @@ the events delivered, so it also holds when alias or merge expansion nests
 deeper than the input does:
 
 ```c
-yam_parser_set_max_depth(parser, 1000);
+oyl_parser_set_max_depth(parser, 1000);
 ```
 
 Setting it to 0 disables the limit, but inputs using tags, anchors, merge
@@ -289,12 +291,12 @@ times the unexpanded stream plus 100,000 events.
 Both the scanner and parser provide error messages with source locations:
 
 ```c
-yam_parser *p = yam_parser_new(yaml, strlen(yaml), arena);
-const yam_event *evt;
+oyl_parser *p = oyl_parser_new(yaml, strlen(yaml), arena);
+const oyl_event *evt;
 
-if (yam_parse_next(p, &evt) != YAM_OK) {
-    const char *msg  = yam_parser_error(p);
-    yam_mark    mark = yam_parser_error_mark(p);
+if (oyl_parse_next(p, &evt) != OYL_OK) {
+    const char *msg  = oyl_parser_error(p);
+    oyl_mark    mark = oyl_parser_error_mark(p);
     fprintf(stderr, "error: line %zu col %zu: %s\n",
             mark.line, mark.col, msg);
 }
@@ -303,13 +305,13 @@ if (yam_parse_next(p, &evt) != YAM_OK) {
 Scanner errors are available directly or propagate through the parser:
 
 ```c
-const char *msg  = yam_scanner_error(scanner);
-yam_mark    mark = yam_scanner_error_mark(scanner);
+const char *msg  = oyl_scanner_error(scanner);
+oyl_mark    mark = oyl_scanner_error_mark(scanner);
 ```
 
 ## Tag Schemas
 
-yam supports pluggable tag resolution per YAML 1.2 Chapter 10. Three
+Oyl supports pluggable tag resolution per YAML 1.2 Chapter 10. Three
 built-in schemas ship as presets:
 
 | Schema | Resolves |
@@ -318,10 +320,10 @@ built-in schemas ship as presets:
 | **JSON** | `null`, `true`/`false`, integers, floats |
 | **Core** | JSON + `Null`/`NULL`/`~`, `True`/`TRUE`/`False`/`FALSE`, `0x`/`0o` ints |
 
-Schema is opt-in -- without `yam_parser_set_schema()`, scalars have no tag.
+Schema is opt-in -- without `oyl_parser_set_schema()`, scalars have no tag.
 
 ```c
-yam_parser_set_schema(parser, yam_schema_core());
+oyl_parser_set_schema(parser, oyl_schema_core());
 
 /* events now carry resolved tags:
  *   "true"  -> tag:yaml.org,2002:bool
@@ -338,26 +340,26 @@ Build your own schema to support YAML 1.1 booleans (`yes`/`no`/`on`/`off`)
 or any other resolution rules:
 
 ```c
-yam_schema_builder *b = yam_schema_builder_new(arena);
+oyl_schema_builder *b = oyl_schema_builder_new(arena);
 
 const char *trues[]  = {"true","True","TRUE","yes","Yes","YES","on","On","ON"};
 const char *falses[] = {"false","False","FALSE","no","No","NO","off","Off","OFF"};
-yam_schema_builder_add_bools(b, trues, 9, falses, 9);
+oyl_schema_builder_add_bools(b, trues, 9, falses, 9);
 
 const char *nulls[] = {"null","Null","NULL","~",""};
-yam_schema_builder_add_nulls(b, nulls, 5);
+oyl_schema_builder_add_nulls(b, nulls, 5);
 
-yam_schema_builder_add_int(b);    /* 42, 0xFF, 0o77 */
-yam_schema_builder_add_float(b);  /* 3.14, .inf, .nan */
+oyl_schema_builder_add_int(b);    /* 42, 0xFF, 0o77 */
+oyl_schema_builder_add_float(b);  /* 3.14, .inf, .nan */
 
-const yam_schema *schema = yam_schema_builder_finish(b);  /* lives in the arena */
-yam_schema_builder_free(b);
+const oyl_schema *schema = oyl_schema_builder_finish(b);  /* lives in the arena */
+oyl_schema_builder_free(b);
 
-yam_parser_set_schema(parser, schema);
+oyl_parser_set_schema(parser, schema);
 ```
 
-Rules are matched in order (first match wins). Match types: `YAM_MATCH_EXACT`,
-`YAM_MATCH_ICASE`, and `YAM_MATCH_BUILTIN` (procedural int/float matchers).
+Rules are matched in order (first match wins). Match types: `OYL_MATCH_EXACT`,
+`OYL_MATCH_ICASE`, and `OYL_MATCH_BUILTIN` (procedural int/float matchers).
 
 ## Architecture
 
@@ -384,7 +386,7 @@ Parse throughput in MB/s (higher is better), measured with
 `-O2`, median of 11 runs in each of 3 passes (passes agree within 6%), October 2026.
 Every library parses the same bytes:
 
-| Input | yam | libyaml 0.2.5 | libfyaml 0.9.6 | rapidyaml 0.16 (events) | rapidyaml 0.16 (tree) |
+| Input | Oyl | libyaml 0.2.5 | libfyaml 0.9.6 | rapidyaml 0.16 (events) | rapidyaml 0.16 (tree) |
 |---|---:|---:|---:|---:|---:|
 | **Generated, 10 MB** | | | | | |
 | block mappings and sequences | 175 | 73 | 61 | 236 | 104 |
@@ -402,13 +404,13 @@ Every library parses the same bytes:
 | multi-line single-quoted | 2669 | 212 | 324 | 355 | 349 |
 | multi-line plain | 840 | 196 | 417 | 295 | 289 |
 
-yam, libyaml and libfyaml are measured producing events. rapidyaml is
+Oyl, libyaml and libfyaml are measured producing events. rapidyaml is
 shown two ways: its event parser (`EventHandlerInts`, with buffers reused
 between parses, its fastest mode) and its usual API, parsing in place into
 a new tree. The real files and scalar-heavy inputs come from rapidyaml's
 own benchmark set.
 
-yam is 1.7–3.4× faster than libyaml and libfyaml on structure-heavy input
+Oyl is 1.7–3.4× faster than libyaml and libfyaml on structure-heavy input
 and up to 13× faster on scalar-heavy input. Against rapidyaml's event
 parser it is faster on the real configuration files and 2–8× faster on long
 scalars; rapidyaml leads on the generated structure-heavy inputs
@@ -428,7 +430,7 @@ Where the speed comes from:
 - Tags, schemas, merge keys and alias resolution use an eager parse of the
   whole document instead.
 
-Run `make bench` to measure yam alone. `make bench-compare` runs the table
+Run `make bench` to measure Oyl alone. `make bench-compare` runs the table
 above with whichever libraries are installed; see `bench/compare/run.sh`
 for adding rapidyaml (`RYML_HEADER`, `RYML_SRC`) and your own files
 (`CASES`).
@@ -441,7 +443,7 @@ that compares each parser's events with the suite's:
 
 | Parser | Valid (308) | Invalid rejected (94) |
 |---|---:|---:|
-| yam | 308 | 94 |
+| Oyl | 308 | 94 |
 | libfyaml 0.9.6 | 308 | 94 |
 | rapidyaml 0.16, built with `RYML_WITH_TAB_TOKENS` | 299 | 93 |
 | rapidyaml 0.16, default build | 293 | 90 |
@@ -451,7 +453,7 @@ rapidyaml's default build rejects tabs after `:` and `-` (a documented
 choice), and its event output leaves `%TAG` shorthands unexpanded, which
 accounts for 9 of its differences. libyaml implements YAML 1.1.
 
-yam's own suite runner (`make test-suite`) also checks both of its parser
+Oyl's own suite runner (`make test-suite`) also checks both of its parser
 modes and round-trips every valid case through the emitter in all three
 output styles. A libFuzzer harness (`fuzz/fuzz_parser.c`) checks that
 arbitrary input never crashes or exceeds the safety limits, and that

@@ -1,0 +1,4 @@
+usr/include/oyl/*.h
+usr/lib/*/liboyl.so
+usr/lib/*/liboyl.a
+usr/lib/*/pkgconfig/oyl.pc

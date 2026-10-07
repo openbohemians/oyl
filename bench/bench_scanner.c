@@ -1,5 +1,5 @@
 /*
- * bench_scanner.c — Throughput benchmark for yam vs libyaml
+ * bench_scanner.c — Throughput benchmark for oyl vs libyaml
  *
  * Generates a large YAML document and measures scan throughput.
  * Usage: ./bench_scanner [size_mb]
@@ -7,7 +7,7 @@
 
 #define _POSIX_C_SOURCE 199309L
 
-#include "yam/yam.h"
+#include "oyl/oyl.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -60,23 +60,23 @@ static double time_sec(void) {
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
 
-/* ── Benchmark: yam scanner ──────────────────────────────── */
+/* ── Benchmark: oyl scanner ──────────────────────────────── */
 
-static double bench_yam(const char *input, size_t len, int *token_count) {
+static double bench_oyl(const char *input, size_t len, int *token_count) {
     double t0 = time_sec();
 
-    yam_arena *a = yam_arena_new(1 << 20); /* 1MB arena */
-    yam_scanner *s = yam_scanner_new(input, len, a);
+    oyl_arena *a = oyl_arena_new(1 << 20); /* 1MB arena */
+    oyl_scanner *s = oyl_scanner_new(input, len, a);
 
-    const yam_token *tok;
+    const oyl_token *tok;
     int count = 0;
-    while (yam_scan_next(s, &tok) == YAM_OK) {
-        if (tok->type == YAM_TOK_STREAM_END || tok->type == YAM_TOK_NONE) break;
+    while (oyl_scan_next(s, &tok) == OYL_OK) {
+        if (tok->type == OYL_TOK_STREAM_END || tok->type == OYL_TOK_NONE) break;
         count++;
     }
 
-    yam_scanner_free(s);
-    yam_arena_free(a);
+    oyl_scanner_free(s);
+    oyl_arena_free(a);
 
     *token_count = count;
     return time_sec() - t0;
@@ -122,7 +122,7 @@ int main(int argc, char **argv) {
 
     size_t target_size = target_mb * 1024 * 1024;
 
-    printf("\nyam scanner benchmark\n");
+    printf("\noyl scanner benchmark\n");
     printf("═══════════════════════════════════════════════════════════\n\n");
 
     printf("  Generating %zu MB YAML document...\n", target_mb);
@@ -133,7 +133,7 @@ int main(int argc, char **argv) {
 
     /* warmup */
     int tokens;
-    bench_yam(yaml, len, &tokens);
+    bench_oyl(yaml, len, &tokens);
 
     /* benchmark: 5 iterations */
     int iterations = 5;
@@ -144,7 +144,7 @@ int main(int argc, char **argv) {
     printf("  ──────────────────────────────────────────────────\n");
 
     for (int i = 0; i < iterations; i++) {
-        double elapsed = bench_yam(yaml, len, &tokens);
+        double elapsed = bench_oyl(yaml, len, &tokens);
         double mbps = (len / (1024.0 * 1024.0)) / elapsed;
         total += elapsed;
         if (elapsed < best) best = elapsed;

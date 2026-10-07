@@ -2,15 +2,15 @@ CC      ?= gcc
 
 # Optimization flags. Overridable so distro packaging can supply its own
 # hardened flags. The default is portable: SIMD doesn't need -march=native
-# (yam_simd.c selects an SSE4.2 or scalar implementation at runtime), and
+# (oyl_simd.c selects an SSE4.2 or scalar implementation at runtime), and
 # it measured no faster, while its binaries can crash on older CPUs.
 CFLAGS  ?= -O2
 
 WARNINGS := -Wall -Wextra -Wpedantic
 
 # Flags always applied; do not override these from the command line.
-YAM_CFLAGS  := -std=c11 $(WARNINGS) $(CFLAGS) -Iinclude -fvisibility=hidden
-YAM_LDFLAGS := $(LDFLAGS)
+OYL_CFLAGS  := -std=c11 $(WARNINGS) $(CFLAGS) -Iinclude -fvisibility=hidden
+OYL_LDFLAGS := $(LDFLAGS)
 
 SRCDIR   := src
 OBJDIR   := build
@@ -21,10 +21,10 @@ SRCS    := $(wildcard $(SRCDIR)/*.c)
 OBJS    := $(SRCS:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 SHOBJS  := $(SRCS:$(SRCDIR)/%.c=$(OBJDIR)/%.shared.o)
 
-# ── Version (single source of truth: include/yam/yam.h) ──────────────────────
-VERSION_MAJOR := $(shell sed -n 's/^\#define YAM_VERSION_MAJOR \([0-9]*\).*/\1/p' include/yam/yam.h)
-VERSION_MINOR := $(shell sed -n 's/^\#define YAM_VERSION_MINOR \([0-9]*\).*/\1/p' include/yam/yam.h)
-VERSION_PATCH := $(shell sed -n 's/^\#define YAM_VERSION_PATCH \([0-9]*\).*/\1/p' include/yam/yam.h)
+# ── Version (single source of truth: include/oyl/oyl.h) ──────────────────────
+VERSION_MAJOR := $(shell sed -n 's/^\#define OYL_VERSION_MAJOR \([0-9]*\).*/\1/p' include/oyl/oyl.h)
+VERSION_MINOR := $(shell sed -n 's/^\#define OYL_VERSION_MINOR \([0-9]*\).*/\1/p' include/oyl/oyl.h)
+VERSION_PATCH := $(shell sed -n 's/^\#define OYL_VERSION_PATCH \([0-9]*\).*/\1/p' include/oyl/oyl.h)
 VERSION       := $(VERSION_MAJOR).$(VERSION_MINOR).$(VERSION_PATCH)
 SOVERSION     := $(VERSION_MAJOR)
 
@@ -36,11 +36,11 @@ INCLUDEDIR   ?= $(PREFIX)/include
 PKGCONFIGDIR ?= $(LIBDIR)/pkgconfig
 DISTDIR      ?= pkg
 
-LIB        := $(OBJDIR)/libyam.a
-SONAME     := libyam.so.$(SOVERSION)
-SHLIB      := libyam.so.$(VERSION)
+LIB        := $(OBJDIR)/liboyl.a
+SONAME     := liboyl.so.$(SOVERSION)
+SHLIB      := liboyl.so.$(VERSION)
 SHLIB_PATH := $(OBJDIR)/$(SHLIB)
-PC         := $(OBJDIR)/yam.pc
+PC         := $(OBJDIR)/oyl.pc
 
 TEST    := $(OBJDIR)/test_scanner
 TEST_SUITE := $(OBJDIR)/test_yaml_suite
@@ -61,28 +61,28 @@ $(OBJDIR):
 	@mkdir -p $(OBJDIR)
 
 $(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
-	$(CC) $(YAM_CFLAGS) -c $< -o $@
+	$(CC) $(OYL_CFLAGS) -c $< -o $@
 
 $(OBJDIR)/%.shared.o: $(SRCDIR)/%.c | $(OBJDIR)
-	$(CC) $(YAM_CFLAGS) -fPIC -c $< -o $@
+	$(CC) $(OYL_CFLAGS) -fPIC -c $< -o $@
 
 $(LIB): $(OBJS)
 	ar rcs $@ $^
 
-# ── Shared library (libyam.so.MAJOR -> libyam.so.VERSION, + dev symlink) ──────
+# ── Shared library (liboyl.so.MAJOR -> liboyl.so.VERSION, + dev symlink) ──────
 static: $(LIB)
 
 shared: $(SHLIB_PATH)
 
 $(SHLIB_PATH): $(SHOBJS)
-	$(CC) $(YAM_LDFLAGS) -shared -Wl,-soname,$(SONAME) -o $@ $^
+	$(CC) $(OYL_LDFLAGS) -shared -Wl,-soname,$(SONAME) -o $@ $^
 	ln -sf $(SHLIB) $(OBJDIR)/$(SONAME)
-	ln -sf $(SONAME) $(OBJDIR)/libyam.so
+	ln -sf $(SONAME) $(OBJDIR)/liboyl.so
 
 # ── pkg-config ────────────────────────────────────────────────────────────────
 pkgconfig: $(PC)
 
-$(PC): yam.pc.in | $(OBJDIR)
+$(PC): oyl.pc.in | $(OBJDIR)
 	sed -e 's,@PREFIX@,$(PREFIX),g' \
 	    -e 's,@LIBDIR@,$(LIBDIR),g' \
 	    -e 's,@INCLUDEDIR@,$(INCLUDEDIR),g' \
@@ -94,22 +94,22 @@ install: $(LIB) $(SHLIB_PATH) $(PC)
 	install -d $(DESTDIR)$(LIBDIR)
 	install -m 0755 $(SHLIB_PATH) $(DESTDIR)$(LIBDIR)/$(SHLIB)
 	ln -sf $(SHLIB) $(DESTDIR)$(LIBDIR)/$(SONAME)
-	ln -sf $(SONAME) $(DESTDIR)$(LIBDIR)/libyam.so
-	install -m 0644 $(LIB) $(DESTDIR)$(LIBDIR)/libyam.a
-	install -d $(DESTDIR)$(INCLUDEDIR)/yam
-	install -m 0644 include/yam/*.h $(DESTDIR)$(INCLUDEDIR)/yam/
+	ln -sf $(SONAME) $(DESTDIR)$(LIBDIR)/liboyl.so
+	install -m 0644 $(LIB) $(DESTDIR)$(LIBDIR)/liboyl.a
+	install -d $(DESTDIR)$(INCLUDEDIR)/oyl
+	install -m 0644 include/oyl/*.h $(DESTDIR)$(INCLUDEDIR)/oyl/
 	install -d $(DESTDIR)$(PKGCONFIGDIR)
-	install -m 0644 $(PC) $(DESTDIR)$(PKGCONFIGDIR)/yam.pc
-	@echo "installed yam $(VERSION) to $(DESTDIR)$(PREFIX)"
+	install -m 0644 $(PC) $(DESTDIR)$(PKGCONFIGDIR)/oyl.pc
+	@echo "installed oyl $(VERSION) to $(DESTDIR)$(PREFIX)"
 
 uninstall:
 	rm -f $(DESTDIR)$(LIBDIR)/$(SHLIB) \
 	      $(DESTDIR)$(LIBDIR)/$(SONAME) \
-	      $(DESTDIR)$(LIBDIR)/libyam.so \
-	      $(DESTDIR)$(LIBDIR)/libyam.a \
-	      $(DESTDIR)$(PKGCONFIGDIR)/yam.pc
-	rm -rf $(DESTDIR)$(INCLUDEDIR)/yam
-	@echo "removed yam from $(DESTDIR)$(PREFIX)"
+	      $(DESTDIR)$(LIBDIR)/liboyl.so \
+	      $(DESTDIR)$(LIBDIR)/liboyl.a \
+	      $(DESTDIR)$(PKGCONFIGDIR)/oyl.pc
+	rm -rf $(DESTDIR)$(INCLUDEDIR)/oyl
+	@echo "removed oyl from $(DESTDIR)$(PREFIX)"
 
 # ── Source tarball for packaging ──────────────────────────────────────────────
 # Captures tracked + new (non-ignored) files from the working tree, excluding
@@ -122,46 +122,46 @@ dist:
 	@mkdir -p $(DISTDIR)
 	git ls-files -z --cached --others --exclude-standard \
 	  | grep -zZv -e '^yaml-test-suite' -e '[.]png$$' \
-	  | tar --null -T - --transform 's,^,yam-$(VERSION)/,' \
-	        -czf $(DISTDIR)/yam-$(VERSION).tar.gz
-	@echo "wrote $(DISTDIR)/yam-$(VERSION).tar.gz"
+	  | tar --null -T - --transform 's,^,oyl-$(VERSION)/,' \
+	        -czf $(DISTDIR)/oyl-$(VERSION).tar.gz
+	@echo "wrote $(DISTDIR)/oyl-$(VERSION).tar.gz"
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 $(TEST): $(TESTDIR)/test_scanner.c $(LIB)
-	$(CC) $(YAM_CFLAGS) $< $(LIB) -o $@
+	$(CC) $(OYL_CFLAGS) $< $(LIB) -o $@
 
 $(OBJDIR)/bench_scanner: $(BENCHDIR)/bench_scanner.c $(LIB)
-	$(CC) $(YAM_CFLAGS) $< $(LIB) -o $@
+	$(CC) $(OYL_CFLAGS) $< $(LIB) -o $@
 
 $(OBJDIR)/bench_scanner_cmp: $(BENCHDIR)/bench_scanner.c $(LIB)
-	$(CC) $(YAM_CFLAGS) -DHAS_LIBYAML $< $(LIB) -lyaml -o $@
+	$(CC) $(OYL_CFLAGS) -DHAS_LIBYAML $< $(LIB) -lyaml -o $@
 
 $(OBJDIR)/bench_parser: $(BENCHDIR)/bench_parser.c $(LIB)
-	$(CC) $(YAM_CFLAGS) $< $(LIB) -o $@
+	$(CC) $(OYL_CFLAGS) $< $(LIB) -o $@
 
 $(OBJDIR)/bench_parser_cmp: $(BENCHDIR)/bench_parser.c $(LIB)
-	$(CC) $(YAM_CFLAGS) -DHAS_LIBYAML $< $(LIB) -lyaml -o $@
+	$(CC) $(OYL_CFLAGS) -DHAS_LIBYAML $< $(LIB) -lyaml -o $@
 
 $(TEST_SUITE): $(TESTDIR)/test_yaml_suite.c $(LIB)
-	$(CC) $(YAM_CFLAGS) $< $(LIB) -o $@
+	$(CC) $(OYL_CFLAGS) $< $(LIB) -o $@
 
 $(TEST_SCHEMA): $(TESTDIR)/test_schema.c $(LIB)
-	$(CC) $(YAM_CFLAGS) $< $(LIB) -o $@
+	$(CC) $(OYL_CFLAGS) $< $(LIB) -o $@
 
 $(TEST_EMITTER): $(TESTDIR)/test_emitter.c $(LIB)
-	$(CC) $(YAM_CFLAGS) $< $(LIB) -o $@
+	$(CC) $(OYL_CFLAGS) $< $(LIB) -o $@
 
 $(TEST_MERGE): $(TESTDIR)/test_merge.c $(LIB)
-	$(CC) $(YAM_CFLAGS) $< $(LIB) -o $@
+	$(CC) $(OYL_CFLAGS) $< $(LIB) -o $@
 
 $(TEST_RESOLVE): $(TESTDIR)/test_resolve.c $(LIB)
-	$(CC) $(YAM_CFLAGS) $< $(LIB) -o $@
+	$(CC) $(OYL_CFLAGS) $< $(LIB) -o $@
 
 $(TEST_ERRORS): $(TESTDIR)/test_errors.c $(LIB)
-	$(CC) $(YAM_CFLAGS) $< $(LIB) -o $@
+	$(CC) $(OYL_CFLAGS) $< $(LIB) -o $@
 
 $(TEST_FLOW): $(TESTDIR)/test_flow.c $(LIB)
-	$(CC) $(YAM_CFLAGS) $< $(LIB) -o $@
+	$(CC) $(OYL_CFLAGS) $< $(LIB) -o $@
 
 test: $(TEST)
 	@echo "─── Running scanner tests ───"

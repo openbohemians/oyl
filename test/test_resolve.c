@@ -2,7 +2,7 @@
  * test_resolve.c — Tests for YAML alias resolution
  */
 
-#include "yam/yam.h"
+#include "oyl/oyl.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -24,32 +24,32 @@ static int tests_failed = 0;
 /* ── Helpers ─────────────────────────────────────────────── */
 
 typedef struct {
-    yam_event events[512];
+    oyl_event events[512];
     int       len;
 } event_list;
 
 static event_list parse_with(const char *yaml, bool resolve, bool merge) {
     event_list el = {.len = 0};
-    yam_arena *a = yam_arena_new(4096);
-    yam_parser *p = yam_parser_new(yaml, strlen(yaml), a);
-    if (resolve) yam_parser_set_resolve(p, true);
-    if (merge) yam_parser_set_merge(p, true);
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_parser *p = oyl_parser_new(yaml, strlen(yaml), a);
+    if (resolve) oyl_parser_set_resolve(p, true);
+    if (merge) oyl_parser_set_merge(p, true);
 
-    const yam_event *evt;
-    while (el.len < 512 && yam_parse_next(p, &evt) == YAM_OK) {
+    const oyl_event *evt;
+    while (el.len < 512 && oyl_parse_next(p, &evt) == OYL_OK) {
         el.events[el.len++] = *evt;
-        if (evt->type == YAM_EVT_STREAM_END) break;
+        if (evt->type == OYL_EVT_STREAM_END) break;
     }
 
-    yam_parser_free(p);
-    yam_arena_free(a);
+    oyl_parser_free(p);
+    oyl_arena_free(a);
     return el;
 }
 
 static bool has_scalar(const event_list *el, const char *val) {
     size_t vlen = strlen(val);
     for (int i = 0; i < el->len; i++)
-        if (el->events[i].type == YAM_EVT_SCALAR &&
+        if (el->events[i].type == OYL_EVT_SCALAR &&
             el->events[i].value.len == vlen &&
             memcmp(el->events[i].value.data, val, vlen) == 0)
             return true;
@@ -58,12 +58,12 @@ static bool has_scalar(const event_list *el, const char *val) {
 
 static bool has_alias(const event_list *el) {
     for (int i = 0; i < el->len; i++)
-        if (el->events[i].type == YAM_EVT_ALIAS)
+        if (el->events[i].type == OYL_EVT_ALIAS)
             return true;
     return false;
 }
 
-static int count_event_type(const event_list *el, yam_event_type t) {
+static int count_event_type(const event_list *el, oyl_event_type t) {
     int count = 0;
     for (int i = 0; i < el->len; i++)
         if (el->events[i].type == t) count++;
@@ -74,7 +74,7 @@ static int count_scalar(const event_list *el, const char *val) {
     size_t vlen = strlen(val);
     int count = 0;
     for (int i = 0; i < el->len; i++)
-        if (el->events[i].type == YAM_EVT_SCALAR &&
+        if (el->events[i].type == OYL_EVT_SCALAR &&
             el->events[i].value.len == vlen &&
             memcmp(el->events[i].value.data, val, vlen) == 0)
             count++;
@@ -110,7 +110,7 @@ static void test_mapping_alias(void) {
 
     ASSERT(!has_alias(&el), "no ALIAS events");
     /* MAPPING_START should appear 3 times: outer, orig's value, copy's expansion */
-    ASSERT(count_event_type(&el, YAM_EVT_MAPPING_START) == 3,
+    ASSERT(count_event_type(&el, OYL_EVT_MAPPING_START) == 3,
            "3 mapping starts (outer + orig + copy expansion)");
     /* "a" and "1" should each appear twice */
     ASSERT(count_scalar(&el, "a") == 2, "'a' appears twice");
@@ -130,7 +130,7 @@ static void test_sequence_alias(void) {
     event_list el = parse_with(yaml, true, false);
 
     ASSERT(!has_alias(&el), "no ALIAS events");
-    ASSERT(count_event_type(&el, YAM_EVT_SEQUENCE_START) == 2,
+    ASSERT(count_event_type(&el, OYL_EVT_SEQUENCE_START) == 2,
            "2 sequence starts (orig + copy)");
     ASSERT(count_scalar(&el, "one") == 2, "'one' twice");
     ASSERT(count_scalar(&el, "two") == 2, "'two' twice");
@@ -325,23 +325,23 @@ static void test_billion_laughs(void) {
 
     for (int max = 0; max <= 1; max++) {
         for (int merge = 0; merge <= 1; merge++) {
-            yam_arena *a = yam_arena_new(4096);
-            yam_parser *p = yam_parser_new(yaml, n, a);
-            yam_parser_set_resolve(p, true);
-            if (merge) yam_parser_set_merge(p, true);
-            if (!max) yam_parser_set_max_events(p, 0);
+            oyl_arena *a = oyl_arena_new(4096);
+            oyl_parser *p = oyl_parser_new(yaml, n, a);
+            oyl_parser_set_resolve(p, true);
+            if (merge) oyl_parser_set_merge(p, true);
+            if (!max) oyl_parser_set_max_events(p, 0);
 
-            const yam_event *evt;
-            yam_status st;
-            while ((st = yam_parse_next(p, &evt)) == YAM_OK &&
-                   evt->type != YAM_EVT_STREAM_END && evt->type != YAM_EVT_NONE)
+            const oyl_event *evt;
+            oyl_status st;
+            while ((st = oyl_parse_next(p, &evt)) == OYL_OK &&
+                   evt->type != OYL_EVT_STREAM_END && evt->type != OYL_EVT_NONE)
                 ;
-            ASSERT(st == YAM_ERR_LIMIT, "exponential alias expansion hits a limit");
-            const char *msg = yam_parser_error(p);
+            ASSERT(st == OYL_ERR_LIMIT, "exponential alias expansion hits a limit");
+            const char *msg = oyl_parser_error(p);
             ASSERT(msg && strstr(msg, "expansion"), "expansion limit has a message");
 
-            yam_parser_free(p);
-            yam_arena_free(a);
+            oyl_parser_free(p);
+            oyl_arena_free(a);
         }
     }
 }

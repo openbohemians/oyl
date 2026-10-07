@@ -1,17 +1,17 @@
-Name:           yam
+Name:           oyl
 Version:        1.0.0
 Release:        1%{?dist}
 Summary:        Fast, minimal, zero-copy YAML 1.2 parser and emitter library in C11
 
 License:        MIT
-URL:            https://github.com/trans/yam
+URL:            https://github.com/trans/oyl
 Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  gcc
 BuildRequires:  make
 
 %description
-yam is a fast, minimal, zero-copy YAML 1.2 parser and emitter written in C11.
+oyl is a fast, minimal, zero-copy YAML 1.2 parser and emitter written in C11.
 It features a SIMD-accelerated scanner selected at runtime, an event-based
 parser, an emitter with block/flow/minimal output styles, merge key expansion,
 alias resolution, structured error messages, and an arena allocator.
@@ -19,12 +19,12 @@ alias resolution, structured error messages, and an arena allocator.
 This package contains the shared library.
 
 %package devel
-Summary:        Development files for yam
+Summary:        Development files for oyl
 Requires:       %{name}%{?_isa} = %{version}-%{release}
 
 %description devel
-The yam development files: C headers, the static library, the development
-symlink, and the pkg-config file needed to build against yam.
+The oyl development files: C headers, the static library, the development
+symlink, and the pkg-config file needed to build against oyl.
 
 %prep
 %autosetup
@@ -47,22 +47,24 @@ make test test-schema test-emitter test-merge test-resolve test-errors \
 %license LICENSE
 %doc README.md
 # Versioned shared library + SONAME symlink (the bare .so goes in -devel).
-%{_libdir}/libyam.so.*
+%{_libdir}/liboyl.so.*
 
 %files devel
-%dir %{_includedir}/yam
-%{_includedir}/yam/*.h
-%{_libdir}/libyam.so
-%{_libdir}/libyam.a
-%{_libdir}/pkgconfig/yam.pc
+%dir %{_includedir}/oyl
+%{_includedir}/oyl/*.h
+%{_libdir}/liboyl.so
+%{_libdir}/liboyl.a
+%{_libdir}/pkgconfig/oyl.pc
 
 %changelog
 * Thu Sep 24 2026 Thomas Sawyer <transfire@gmail.com> - 1.0.0-1
+- Renamed from yam to oyl: the oyl_/OYL_ API prefix, <oyl/oyl.h>,
+  liboyl, and the oyl package.
 - First stable release. The ABI is now stable within 1.x; the runtime
-  library is libyam.so.1 (package libyam1, replacing libyam0).
+  library is liboyl.so.1 (package liboyl1, replacing libyam0).
 - API: events and tokens are owned by the library and returned by const
   pointer; schemas are opaque; the emitter is configured with setters and
-  gains yam_emit_* builders. Only the public API is exported.
+  gains oyl_emit_* builders. Only the public API is exported.
 - Conformance: all 308 valid YAML Test Suite cases parse to the expected
   events and all 94 invalid cases are rejected; emitted YAML parses back
   to the same data.

@@ -2,7 +2,7 @@
  * test_merge.c — Tests for YAML merge key (<<) resolution
  */
 
-#include "yam/yam.h"
+#include "oyl/oyl.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -24,31 +24,31 @@ static int tests_failed = 0;
 /* ── Helpers ─────────────────────────────────────────────── */
 
 typedef struct {
-    yam_event events[512];
+    oyl_event events[512];
     int       len;
 } event_list;
 
 static event_list parse_yaml(const char *yaml, bool merge) {
     event_list el = {.len = 0};
-    yam_arena *a = yam_arena_new(4096);
-    yam_parser *p = yam_parser_new(yaml, strlen(yaml), a);
-    if (merge) yam_parser_set_merge(p, true);
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_parser *p = oyl_parser_new(yaml, strlen(yaml), a);
+    if (merge) oyl_parser_set_merge(p, true);
 
-    const yam_event *evt;
-    while (el.len < 512 && yam_parse_next(p, &evt) == YAM_OK) {
+    const oyl_event *evt;
+    while (el.len < 512 && oyl_parse_next(p, &evt) == OYL_OK) {
         el.events[el.len++] = *evt;
-        if (evt->type == YAM_EVT_STREAM_END) break;
+        if (evt->type == OYL_EVT_STREAM_END) break;
     }
 
-    yam_parser_free(p);
-    yam_arena_free(a);
+    oyl_parser_free(p);
+    oyl_arena_free(a);
     return el;
 }
 
 static bool has_scalar(const event_list *el, const char *val) {
     size_t vlen = strlen(val);
     for (int i = 0; i < el->len; i++)
-        if (el->events[i].type == YAM_EVT_SCALAR &&
+        if (el->events[i].type == OYL_EVT_SCALAR &&
             el->events[i].value.len == vlen &&
             memcmp(el->events[i].value.data, val, vlen) == 0)
             return true;
@@ -61,14 +61,14 @@ static int find_key_value(const event_list *el, int start, const char *key) {
     size_t klen = strlen(key);
     int depth = 0;
     for (int i = start; i < el->len; i++) {
-        yam_event_type t = el->events[i].type;
-        if (t == YAM_EVT_MAPPING_START || t == YAM_EVT_SEQUENCE_START)
+        oyl_event_type t = el->events[i].type;
+        if (t == OYL_EVT_MAPPING_START || t == OYL_EVT_SEQUENCE_START)
             depth++;
-        else if (t == YAM_EVT_MAPPING_END || t == YAM_EVT_SEQUENCE_END)
+        else if (t == OYL_EVT_MAPPING_END || t == OYL_EVT_SEQUENCE_END)
             depth--;
 
         /* only look at top-level keys in the mapping at depth 1 */
-        if (depth == 1 && t == YAM_EVT_SCALAR &&
+        if (depth == 1 && t == OYL_EVT_SCALAR &&
             el->events[i].value.len == klen &&
             memcmp(el->events[i].value.data, key, klen) == 0) {
             return i + 1; /* the value follows the key */
@@ -106,7 +106,7 @@ static void test_basic_merge(void) {
     int depth = 0;
     bool in_result = false;
     for (int i = 0; i < el.len; i++) {
-        if (el.events[i].type == YAM_EVT_SCALAR &&
+        if (el.events[i].type == OYL_EVT_SCALAR &&
             el.events[i].value.len == 6 &&
             memcmp(el.events[i].value.data, "result", 6) == 0) {
             in_result = true;
@@ -114,12 +114,12 @@ static void test_basic_merge(void) {
             continue;
         }
         if (in_result) {
-            if (el.events[i].type == YAM_EVT_MAPPING_START) depth++;
-            if (el.events[i].type == YAM_EVT_MAPPING_END) {
+            if (el.events[i].type == OYL_EVT_MAPPING_START) depth++;
+            if (el.events[i].type == OYL_EVT_MAPPING_END) {
                 depth--;
                 if (depth == 0) in_result = false;
             }
-            if (depth == 1 && el.events[i].type == YAM_EVT_SCALAR &&
+            if (depth == 1 && el.events[i].type == OYL_EVT_SCALAR &&
                 el.events[i].value.len == 2 &&
                 memcmp(el.events[i].value.data, "<<", 2) == 0)
                 found_merge_in_result = true;
@@ -150,12 +150,12 @@ static void test_override(void) {
     int y_count = 0;
     int depth = 0;
     for (int i = child_val; i < el.len; i++) {
-        if (el.events[i].type == YAM_EVT_MAPPING_START) depth++;
-        if (el.events[i].type == YAM_EVT_MAPPING_END) {
+        if (el.events[i].type == OYL_EVT_MAPPING_START) depth++;
+        if (el.events[i].type == OYL_EVT_MAPPING_END) {
             depth--;
             if (depth == 0) break;
         }
-        if (depth == 1 && el.events[i].type == YAM_EVT_SCALAR &&
+        if (depth == 1 && el.events[i].type == OYL_EVT_SCALAR &&
             el.events[i].value.len == 1 && el.events[i].value.data[0] == 'y')
             y_count++;
     }
@@ -164,7 +164,7 @@ static void test_override(void) {
     /* verify the value is the override, not the base */
     int y_val = find_key_value(&el, child_val, "y");
     ASSERT(y_val > 0, "found 'y' in child");
-    ASSERT(el.events[y_val].type == YAM_EVT_SCALAR, "y value is scalar");
+    ASSERT(el.events[y_val].type == OYL_EVT_SCALAR, "y value is scalar");
     ASSERT(el.events[y_val].value.len == 2 &&
            memcmp(el.events[y_val].value.data, "99", 2) == 0,
            "y value is '99' (override)");
@@ -253,12 +253,12 @@ static void test_quoted_not_merge(void) {
 
     int depth = 0;
     for (int i = result_val; i < el.len; i++) {
-        if (el.events[i].type == YAM_EVT_MAPPING_START) depth++;
-        if (el.events[i].type == YAM_EVT_MAPPING_END) {
+        if (el.events[i].type == OYL_EVT_MAPPING_START) depth++;
+        if (el.events[i].type == OYL_EVT_MAPPING_END) {
             depth--;
             if (depth == 0) break;
         }
-        if (el.events[i].type == YAM_EVT_ALIAS) found_alias = true;
+        if (el.events[i].type == OYL_EVT_ALIAS) found_alias = true;
     }
     ASSERT(found_alias, "alias preserved for quoted <<");
 }
@@ -290,17 +290,17 @@ static void test_nested_merge(void) {
 
 /* ── Test: Merge value that isn't a mapping ────────────────── */
 
-static yam_status parse_status(const char *yaml) {
-    yam_arena *a = yam_arena_new(4096);
-    yam_parser *p = yam_parser_new(yaml, strlen(yaml), a);
-    yam_parser_set_merge(p, true);
-    const yam_event *evt;
-    yam_status st;
-    while ((st = yam_parse_next(p, &evt)) == YAM_OK &&
-           evt->type != YAM_EVT_STREAM_END && evt->type != YAM_EVT_NONE)
+static oyl_status parse_status(const char *yaml) {
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_parser *p = oyl_parser_new(yaml, strlen(yaml), a);
+    oyl_parser_set_merge(p, true);
+    const oyl_event *evt;
+    oyl_status st;
+    while ((st = oyl_parse_next(p, &evt)) == OYL_OK &&
+           evt->type != OYL_EVT_STREAM_END && evt->type != OYL_EVT_NONE)
         ;
-    yam_parser_free(p);
-    yam_arena_free(a);
+    oyl_parser_free(p);
+    oyl_arena_free(a);
     return st;
 }
 
@@ -308,13 +308,13 @@ static yam_status parse_status(const char *yaml) {
  * those; anything else used to be dropped silently and is now an error. */
 static void test_merge_non_mapping(void) {
     printf("test_merge_non_mapping:\n");
-    ASSERT(parse_status("s: &s hello\nr:\n  <<: *s\n  x: 1\n") == YAM_ERR_PARSE,
+    ASSERT(parse_status("s: &s hello\nr:\n  <<: *s\n  x: 1\n") == OYL_ERR_PARSE,
            "merging an alias to a scalar is an error");
-    ASSERT(parse_status("r:\n  <<: hello\n  x: 1\n") == YAM_ERR_PARSE,
+    ASSERT(parse_status("r:\n  <<: hello\n  x: 1\n") == OYL_ERR_PARSE,
            "merging a scalar is an error");
-    ASSERT(parse_status("r:\n  <<: [hello]\n") == YAM_ERR_PARSE,
+    ASSERT(parse_status("r:\n  <<: [hello]\n") == OYL_ERR_PARSE,
            "merging a sequence of scalars is an error");
-    ASSERT(parse_status("r:\n  <<: *nope\n") == YAM_ERR_PARSE,
+    ASSERT(parse_status("r:\n  <<: *nope\n") == OYL_ERR_PARSE,
            "merging an undefined anchor is an error");
 }
 
@@ -378,11 +378,11 @@ static void test_opt_in(void) {
     bool found_merge = false;
     bool found_alias = false;
     for (int i = 0; i < el.len; i++) {
-        if (el.events[i].type == YAM_EVT_SCALAR &&
+        if (el.events[i].type == OYL_EVT_SCALAR &&
             el.events[i].value.len == 2 &&
             memcmp(el.events[i].value.data, "<<", 2) == 0)
             found_merge = true;
-        if (el.events[i].type == YAM_EVT_ALIAS)
+        if (el.events[i].type == OYL_EVT_ALIAS)
             found_alias = true;
     }
     ASSERT(found_merge, "<< present when merge disabled");
@@ -453,12 +453,12 @@ static void test_no_alias_in_resolved(void) {
     bool found_alias = false;
     int depth = 0;
     for (int i = result_val; i < el.len; i++) {
-        if (el.events[i].type == YAM_EVT_MAPPING_START) depth++;
-        if (el.events[i].type == YAM_EVT_MAPPING_END) {
+        if (el.events[i].type == OYL_EVT_MAPPING_START) depth++;
+        if (el.events[i].type == OYL_EVT_MAPPING_END) {
             depth--;
             if (depth == 0) break;
         }
-        if (el.events[i].type == YAM_EVT_ALIAS) found_alias = true;
+        if (el.events[i].type == OYL_EVT_ALIAS) found_alias = true;
     }
     ASSERT(!found_alias, "no ALIAS events in resolved mapping");
 }
@@ -477,7 +477,7 @@ static void test_non_merge_alias_preserved(void) {
     /* non-merge alias should be preserved */
     bool found_alias = false;
     for (int i = 0; i < el.len; i++) {
-        if (el.events[i].type == YAM_EVT_ALIAS) found_alias = true;
+        if (el.events[i].type == OYL_EVT_ALIAS) found_alias = true;
     }
     ASSERT(found_alias, "non-merge alias preserved");
 }

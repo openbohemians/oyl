@@ -45,18 +45,18 @@ sanitize:
 test-install-arch:
     #!/usr/bin/env bash
     set -euo pipefail
-    ls pkg/yam-[0-9]*.pkg.tar.zst >/dev/null 2>&1 || { echo "no Arch package in pkg/ — run 'just pkg-arch' first"; exit 1; }
+    ls pkg/oyl-[0-9]*.pkg.tar.zst >/dev/null 2>&1 || { echo "no Arch package in pkg/ — run 'just pkg-arch' first"; exit 1; }
     podman run --rm \
       -v "$PWD/pkg:/pkg:ro" \
       -v "$PWD/test/smoke_install.c:/smoke.c:ro" \
       archlinux:base bash -c '
         set -euo pipefail
         pacman -Sy --noconfirm --needed --quiet gcc pkgconf >/dev/null
-        pacman -U --noconfirm /pkg/yam-[0-9]*.pkg.tar.zst >/dev/null
+        pacman -U --noconfirm /pkg/oyl-[0-9]*.pkg.tar.zst >/dev/null
         echo "── installed package ──"
-        pacman -Qi yam | grep -E "^(Name|Version|Depends|Provides)" || true
+        pacman -Qi oyl | grep -E "^(Name|Version|Depends|Provides)" || true
         echo "── compile + run ──"
-        gcc $(pkg-config --cflags yam) /smoke.c $(pkg-config --libs yam) -o /smoke
+        gcc $(pkg-config --cflags oyl) /smoke.c $(pkg-config --libs oyl) -o /smoke
         /smoke
       '
 
@@ -64,7 +64,7 @@ test-install-arch:
 test-install-deb:
     #!/usr/bin/env bash
     set -euo pipefail
-    ls pkg/libyam1_*.deb pkg/libyam-dev_*.deb >/dev/null 2>&1 || { echo "no Debian packages in pkg/ — run 'just pkg-deb' first"; exit 1; }
+    ls pkg/liboyl1_*.deb pkg/liboyl-dev_*.deb >/dev/null 2>&1 || { echo "no Debian packages in pkg/ — run 'just pkg-deb' first"; exit 1; }
     podman run --rm \
       -v "$PWD/pkg:/pkg:ro" \
       -v "$PWD/test/smoke_install.c:/smoke.c:ro" \
@@ -73,11 +73,11 @@ test-install-deb:
         export DEBIAN_FRONTEND=noninteractive
         apt-get update -qq
         apt-get install -y -qq gcc pkg-config libc6-dev >/dev/null
-        apt-get install -y -qq /pkg/libyam1_*.deb /pkg/libyam-dev_*.deb >/dev/null
+        apt-get install -y -qq /pkg/liboyl1_*.deb /pkg/liboyl-dev_*.deb >/dev/null
         echo "── installed packages ──"
-        dpkg -l libyam1 libyam-dev | tail -3
+        dpkg -l liboyl1 liboyl-dev | tail -3
         echo "── compile + run ──"
-        gcc $(pkg-config --cflags yam) /smoke.c $(pkg-config --libs yam) -o /smoke
+        gcc $(pkg-config --cflags oyl) /smoke.c $(pkg-config --libs oyl) -o /smoke
         /smoke
       '
 
@@ -85,17 +85,17 @@ test-install-deb:
 test-install-rpm:
     #!/usr/bin/env bash
     set -euo pipefail
-    ls pkg/yam-[0-9]*.rpm pkg/yam-devel-*.rpm >/dev/null 2>&1 || { echo "no RPM packages in pkg/ — run 'just pkg-rpm' first"; exit 1; }
+    ls pkg/oyl-[0-9]*.rpm pkg/oyl-devel-*.rpm >/dev/null 2>&1 || { echo "no RPM packages in pkg/ — run 'just pkg-rpm' first"; exit 1; }
     podman run --rm \
       -v "$PWD/pkg:/pkg:ro" \
       -v "$PWD/test/smoke_install.c:/smoke.c:ro" \
       fedora:latest bash -c '
         set -euo pipefail
-        dnf install -y -q gcc pkgconf-pkg-config /pkg/yam-[0-9]*.rpm /pkg/yam-devel-*.rpm >/dev/null
+        dnf install -y -q gcc pkgconf-pkg-config /pkg/oyl-[0-9]*.rpm /pkg/oyl-devel-*.rpm >/dev/null
         echo "── installed packages ──"
-        rpm -qi yam | head -6
+        rpm -qi oyl | head -6
         echo "── compile + run ──"
-        gcc $(pkg-config --cflags yam) /smoke.c $(pkg-config --libs yam) -o /smoke
+        gcc $(pkg-config --cflags oyl) /smoke.c $(pkg-config --libs oyl) -o /smoke
         /smoke
       '
 
@@ -116,11 +116,11 @@ fuzz duration='60':
         -artifact_prefix=fuzz/crashes/ \
         fuzz/corpus
 
-# Print the version (from include/yam/yam.h)
+# Print the version (from include/oyl/oyl.h)
 version:
     @echo {{version}}
 
-# Bump the version everywhere: yam.h (source of truth), PKGBUILD, the RPM spec,
+# Bump the version everywhere: oyl.h (source of truth), PKGBUILD, the RPM spec,
 # and the Debian changelog. A new dated changelog stanza is prepended for deb
 # and rpm. Usage: just bump-version 0.4.0 "Summary of the release"
 bump-version new_version message='New upstream release.':
@@ -137,29 +137,29 @@ bump-version new_version message='New upstream release.':
     IFS=. read -r major minor patch <<< "$ver"
 
     # 1. C header — the single source of truth for the version.
-    sed -i "s/^#define YAM_VERSION_MAJOR .*/#define YAM_VERSION_MAJOR $major/" include/yam/yam.h
-    sed -i "s/^#define YAM_VERSION_MINOR .*/#define YAM_VERSION_MINOR $minor/" include/yam/yam.h
-    sed -i "s/^#define YAM_VERSION_PATCH .*/#define YAM_VERSION_PATCH $patch/" include/yam/yam.h
+    sed -i "s/^#define OYL_VERSION_MAJOR .*/#define OYL_VERSION_MAJOR $major/" include/oyl/oyl.h
+    sed -i "s/^#define OYL_VERSION_MINOR .*/#define OYL_VERSION_MINOR $minor/" include/oyl/oyl.h
+    sed -i "s/^#define OYL_VERSION_PATCH .*/#define OYL_VERSION_PATCH $patch/" include/oyl/oyl.h
 
     # 2. Arch PKGBUILD (reset pkgrel to 1 for the new version).
     sed -i "s/^pkgver=.*/pkgver=$ver/" pkg/PKGBUILD
     sed -i "s/^pkgrel=.*/pkgrel=1/" pkg/PKGBUILD
 
     # 3. RPM spec: version, release, and a new %changelog entry on top.
-    sed -i "s/^Version:.*/Version:        $ver/" pkg/yam.spec
-    sed -i "s/^Release:.*/Release:        1%{?dist}/" pkg/yam.spec
+    sed -i "s/^Version:.*/Version:        $ver/" pkg/oyl.spec
+    sed -i "s/^Release:.*/Release:        1%{?dist}/" pkg/oyl.spec
     awk -v e="* $(LC_ALL=C date '+%a %b %d %Y') $maint - $ver-1\n- $msg\n" \
         '/^%changelog/ { print; print e; next } { print }' \
-        pkg/yam.spec > pkg/yam.spec.tmp && mv pkg/yam.spec.tmp pkg/yam.spec
+        pkg/oyl.spec > pkg/oyl.spec.tmp && mv pkg/oyl.spec.tmp pkg/oyl.spec
 
     # 4. Debian changelog: prepend a new stanza.
-    { printf 'yam (%s-1) unstable; urgency=medium\n\n  * %s\n\n -- %s  %s\n\n' \
+    { printf 'oyl (%s-1) unstable; urgency=medium\n\n  * %s\n\n -- %s  %s\n\n' \
           "$ver" "$msg" "$maint" "$(LC_ALL=C date -R)"; \
       cat pkg/debian/changelog; } > pkg/debian/changelog.tmp \
       && mv pkg/debian/changelog.tmp pkg/debian/changelog
 
-    echo "bumped yam to $ver in:"
-    echo "  include/yam/yam.h  pkg/PKGBUILD  pkg/yam.spec  pkg/debian/changelog"
+    echo "bumped oyl to $ver in:"
+    echo "  include/oyl/oyl.h  pkg/PKGBUILD  pkg/oyl.spec  pkg/debian/changelog"
     echo
     echo "review the changes, then commit and tag:"
     echo "  git commit -am 'Bump version to $ver'"
@@ -173,23 +173,23 @@ dist:
 pkg-arch: dist
     cd pkg && makepkg -f
 
-# Build the Debian packages (libyam1 + libyam-dev) with dpkg-buildpackage
+# Build the Debian packages (liboyl1 + liboyl-dev) with dpkg-buildpackage
 pkg-deb: dist
-    rm -rf "pkg/build/yam-{{version}}"
+    rm -rf "pkg/build/oyl-{{version}}"
     mkdir -p pkg/build
-    tar -xzf "pkg/yam-{{version}}.tar.gz" -C pkg/build
-    cp -a pkg/debian "pkg/build/yam-{{version}}/debian"
-    cd "pkg/build/yam-{{version}}" && dpkg-buildpackage -us -uc -b
+    tar -xzf "pkg/oyl-{{version}}.tar.gz" -C pkg/build
+    cp -a pkg/debian "pkg/build/oyl-{{version}}/debian"
+    cd "pkg/build/oyl-{{version}}" && dpkg-buildpackage -us -uc -b
     mv pkg/build/*.deb pkg/build/*.ddeb pkg/ 2>/dev/null || true
     mv pkg/build/*.buildinfo pkg/build/*.changes pkg/ 2>/dev/null || true
 
-# Build the RPM packages (yam + yam-devel) with rpmbuild
+# Build the RPM packages (oyl + oyl-devel) with rpmbuild
 pkg-rpm: dist
     rm -rf pkg/rpmbuild
     mkdir -p pkg/rpmbuild/SOURCES pkg/rpmbuild/SPECS
-    cp "pkg/yam-{{version}}.tar.gz" pkg/rpmbuild/SOURCES/
-    cp pkg/yam.spec pkg/rpmbuild/SPECS/
-    rpmbuild --define "_topdir $(pwd)/pkg/rpmbuild" -bb pkg/rpmbuild/SPECS/yam.spec
+    cp "pkg/oyl-{{version}}.tar.gz" pkg/rpmbuild/SOURCES/
+    cp pkg/oyl.spec pkg/rpmbuild/SPECS/
+    rpmbuild --define "_topdir $(pwd)/pkg/rpmbuild" -bb pkg/rpmbuild/SPECS/oyl.spec
     find pkg/rpmbuild/RPMS -name '*.rpm' -exec cp {} pkg/ \;
 
 # Build all three package formats

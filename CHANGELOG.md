@@ -2,34 +2,43 @@
 
 ## 1.0.0 (2026-09-24)
 
-The first stable release. The ABI is now stable within 1.x: the runtime
-library is `libyam.so.1` (Debian package `libyam1`, replacing `libyam0`),
-and later 1.x releases keep binaries built against 1.0 working. See
-`RELEASING.md` for what counts as an ABI break.
+The first stable release, and the first under a new name: **yam is now
+Oyl**, the optimized YAML library. The ABI is now stable within 1.x: the
+runtime library is `liboyl.so.1` (Debian package `liboyl1`, replacing
+`libyam0`), and later 1.x releases keep binaries built against 1.0
+working. See `RELEASING.md` for what counts as an ABI break.
 
 ### Breaking changes
 
 Programs built against 0.x need these changes and a rebuild:
 
-- **Events and tokens are owned by the library.** `yam_parse_next` and
-  `yam_scan_next` return a pointer to an event or token that stays valid
+- **The library is renamed.** Every `yam_` and `YAM_` name becomes `oyl_`
+  and `OYL_`, the header is `<oyl/oyl.h>`, the library is `liboyl`
+  (`-loyl`, `pkg-config oyl`). Within your own sources this does most of it:
+
+  ```sh
+  sed -i -E 's/\byam_/oyl_/g; s/\bYAM_/OYL_/g; s#yam/yam\.h#oyl/oyl.h#g' *.c *.h
+  ```
+
+- **Events and tokens are owned by the library.** `oyl_parse_next` and
+  `oyl_scan_next` return a pointer to an event or token that stays valid
   until the next call, instead of filling in a struct you pass:
 
   ```c
   /* 0.x */                              /* 1.0 */
-  yam_event evt;                         const yam_event *evt;
-  yam_parse_next(p, &evt);               yam_parse_next(p, &evt);
-  if (evt.type == YAM_EVT_SCALAR) ...    if (evt->type == YAM_EVT_SCALAR) ...
+  yam_event evt;                         const oyl_event *evt;
+  yam_parse_next(p, &evt);               oyl_parse_next(p, &evt);
+  if (evt.type == YAM_EVT_SCALAR) ...    if (evt->type == OYL_EVT_SCALAR) ...
   ```
 
-- **Schemas are opaque.** `yam_schema_core()`, `yam_schema_json()`,
-  `yam_schema_failsafe()` and `yam_schema_builder_finish()` return
-  `const yam_schema *`. `yam_schema_resolve` takes the scalar's value and
+- **Schemas are opaque.** `oyl_schema_core()`, `oyl_schema_json()`,
+  `oyl_schema_failsafe()` and `oyl_schema_builder_finish()` return
+  `const oyl_schema *`. `oyl_schema_resolve` takes the scalar's value and
   style instead of an event:
-  `yam_schema_resolve(schema, evt->value, evt->scalar_style)`.
-- **The emitter is configured with setters.** `yam_emitter_new(arena)`
-  replaces `yam_emitter_new(opts, arena)`; use `yam_emitter_set_style` and
-  `yam_emitter_set_indent`. `yam_emit_opts` and `YAM_EMIT_OPTS_DEFAULT` are
+  `oyl_schema_resolve(schema, evt->value, evt->scalar_style)`.
+- **The emitter is configured with setters.** `oyl_emitter_new(arena)`
+  replaces `yam_emitter_new(opts, arena)`; use `oyl_emitter_set_style` and
+  `oyl_emitter_set_indent`. `yam_emit_opts` and `YAM_EMIT_OPTS_DEFAULT` are
   gone.
 - **Only the public API is exported** from the shared library, and the
   internal headers `yam_chars.h` and `yam_simd.h` are no longer installed.
@@ -46,15 +55,15 @@ Programs built against 0.x need these changes and a rebuild:
 
 ### Added
 
-- Emitter builders: `yam_emit_stream_start`/`_end`,
-  `yam_emit_document_start`/`_end`, `yam_emit_scalar`, `yam_emit_alias`,
-  `yam_emit_mapping_start`/`_end`, `yam_emit_sequence_start`/`_end`.
+- Emitter builders: `oyl_emit_stream_start`/`_end`,
+  `oyl_emit_document_start`/`_end`, `oyl_emit_scalar`, `oyl_emit_alias`,
+  `oyl_emit_mapping_start`/`_end`, `oyl_emit_sequence_start`/`_end`.
 - Safety limits against hostile input, each returning the new status
-  `YAM_ERR_LIMIT`: a nesting depth limit (`yam_parser_set_max_depth`,
+  `OYL_ERR_LIMIT`: a nesting depth limit (`oyl_parser_set_max_depth`,
   default 256, also enforced on alias and merge expansion), a budget for
   alias/merge expansion ("billion laughs"), and the existing event limit
-  (`yam_parser_set_max_events`), which now also bounds expansion.
-- `YAM_TOK_DIRECTIVE` tokens for `%YAML` and `%TAG` lines.
+  (`oyl_parser_set_max_events`), which now also bounds expansion.
+- `OYL_TOK_DIRECTIVE` tokens for `%YAML` and `%TAG` lines.
 - A leading UTF-8 byte order mark is skipped.
 - Merge keys accept inline mappings (`<<: {a: 1}`).
 - `make bench-compare`: throughput against libyaml, libfyaml and rapidyaml.
@@ -78,7 +87,7 @@ Programs built against 0.x need these changes and a rebuild:
   plain scalar case where memory grew with the input size times the
   number of such scalars.
 - The SIMD plain-scalar scan let control characters through.
-- `yam_read_file` reads until end of file, rejects directories and reports
+- `oyl_read_file` reads until end of file, rejects directories and reports
   read errors.
 - Arena allocation is hardened against size overflow and misalignment.
 
@@ -88,7 +97,7 @@ Programs built against 0.x need these changes and a rebuild:
   generated JSON benchmark), and no longer slower than block YAML.
 - Block scalars parse up to 5× faster and quoted scalars with escapes or
   line breaks up to 5.4×, copied a line or run at a time with SIMD.
-- yam parses 1.6–13× faster than libyaml and libfyaml; see the README.
+- Oyl parses 1.7–13× faster than libyaml and libfyaml; see the README.
 
 ### Conformance and testing
 
@@ -101,6 +110,6 @@ Programs built against 0.x need these changes and a rebuild:
 
 ## Earlier releases
 
-0.3.1 added Arch, Debian and RPM packaging and runtime selection of the
-SIMD scanner; 0.3.0 and earlier are in the git history
-(`git log v0.3.1`).
+Releases before 1.0 were published as yam. 0.3.1 added Arch, Debian and
+RPM packaging and runtime selection of the SIMD scanner; 0.3.0 and earlier
+are in the git history (`git log v0.3.1`).

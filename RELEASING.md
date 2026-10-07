@@ -1,6 +1,6 @@
-# Releasing yam
+# Releasing Oyl
 
-The version lives in `include/yam/yam.h` (the `YAM_VERSION_MAJOR`/`MINOR`/`PATCH`
+The version lives in `include/oyl/oyl.h` (the `OYL_VERSION_MAJOR`/`MINOR`/`PATCH`
 macros) and is the single source of truth. Everything else — the Arch
 `PKGBUILD`, the RPM spec, the Debian changelog, the dist tarball name, the
 `pkg-config` `Version:`, the SONAME — derives from it. A release is just:
@@ -28,11 +28,11 @@ just bump-version 0.4.0 "Short summary of the release"
 
 The recipe updates:
 
-- `include/yam/yam.h` — splits `0.4.0` into the three version macros.
+- `include/oyl/oyl.h` — splits `0.4.0` into the three version macros.
 - `pkg/PKGBUILD` — sets `pkgver`, resets `pkgrel=1`.
-- `pkg/yam.spec` — sets `Version:`, resets `Release:`, prepends a dated
+- `pkg/oyl.spec` — sets `Version:`, resets `Release:`, prepends a dated
   `%changelog` entry with the summary message.
-- `pkg/debian/changelog` — prepends a new `yam (X.Y.Z-1) unstable; …` stanza
+- `pkg/debian/changelog` — prepends a new `oyl (X.Y.Z-1) unstable; …` stanza
   with the summary message.
 
 The summary message is the bullet that goes into the deb and rpm changelogs.
@@ -66,7 +66,7 @@ Short paragraph or bullet list of what's in this release.
 
 Refer to debian/changelog or %changelog in the spec for the per-package
 changelog entries, which are also visible to package users via
-\`apt changelog libyam1\` and \`rpm -q --changelog yam\`.
+\`apt changelog liboyl1\` and \`rpm -q --changelog oyl\`.
 EOF
 )"
 ```
@@ -78,7 +78,7 @@ assets attached.
 
 ## Versioning
 
-Standard semver. The version macros in `yam.h` are the only place where the
+Standard semver. The version macros in `oyl.h` are the only place where the
 version is "real"; everything else is downstream.
 
 | Bump  | When | Example |
@@ -87,11 +87,11 @@ version is "real"; everything else is downstream.
 | **MINOR** | New public API or features, backward-compatible. | 0.3.1 → 0.4.0 (new emitter mode) |
 | **MAJOR** | Backward-incompatible API or ABI changes. | 0.4.x → 1.0.0 (stable API) |
 
-**ABI / SONAME.** The shared library's SONAME is `libyam.so.$(SOVERSION)`,
-where `SOVERSION` is `YAM_VERSION_MAJOR` (see the Makefile). Since 1.0 it is
-`libyam.so.1`, and the ABI is stable within a major version: any ABI break
+**ABI / SONAME.** The shared library's SONAME is `liboyl.so.$(SOVERSION)`,
+where `SOVERSION` is `OYL_VERSION_MAJOR` (see the Makefile). Since 1.0 it is
+`liboyl.so.1`, and the ABI is stable within a major version: any ABI break
 requires a MAJOR bump (and thus a SONAME bump, and a new Debian runtime
-package name, `libyamN`), and patch / minor releases must preserve ABI, so a
+package name, `liboylN`), and patch / minor releases must preserve ABI, so a
 binary built against 1.0 keeps working with every later 1.x.
 
 The `0.x` series (SONAME `libyam.so.0`, package `libyam0`) carried no ABI
@@ -114,14 +114,14 @@ published` (the auto-build path) and `workflow_dispatch` (manual dry-run path).
 
 | Job | Builder | Output |
 |-----|---------|--------|
-| **arch** | `archlinux:base-devel` container, `makepkg` | `yam-VERSION-1-x86_64.pkg.tar.zst` (+ auto-split `yam-debug-*`) |
-| **deb** | `ubuntu-latest`, `dpkg-buildpackage -b` | `libyam1_VERSION-1_amd64.deb`, `libyam-dev_VERSION-1_amd64.deb` |
-| **rpm** | `fedora:latest` container, `rpmbuild -bb` | `yam-VERSION-1.fcXX.x86_64.rpm`, `yam-devel-*.rpm` (+ `debuginfo`/`debugsource`) |
+| **arch** | `archlinux:base-devel` container, `makepkg` | `oyl-VERSION-1-x86_64.pkg.tar.zst` (+ auto-split `oyl-debug-*`) |
+| **deb** | `ubuntu-latest`, `dpkg-buildpackage -b` | `liboyl1_VERSION-1_amd64.deb`, `liboyl-dev_VERSION-1_amd64.deb` |
+| **rpm** | `fedora:latest` container, `rpmbuild -bb` | `oyl-VERSION-1.fcXX.x86_64.rpm`, `oyl-devel-*.rpm` (+ `debuginfo`/`debugsource`) |
 | **release-assets** | `ubuntu-latest` | Downloads the above and attaches them to the release |
 
 Before building, each of the three build jobs verifies that
 `github.event.release.tag_name` equals `v$(make version)`. This catches a
-mismatched tag (e.g. tagging `v0.4.0` but forgetting to bump `yam.h`) before
+mismatched tag (e.g. tagging `v0.4.0` but forgetting to bump `oyl.h`) before
 any build runs. The `release-assets` job is gated on
 `github.event_name == 'release'`, so dispatch runs skip it.
 
@@ -146,7 +146,7 @@ package as a **workflow artifact** (visible on the run page or via
 `gh run download <run-id>`), not as a release asset.
 
 This is the right way to test changes to: `PKGBUILD`, `pkg/debian/*`,
-`pkg/yam.spec`, the workflow itself, or the `Makefile`'s install / dist /
+`pkg/oyl.spec`, the workflow itself, or the `Makefile`'s install / dist /
 shared-library logic.
 
 ## Recovering from a bad release

@@ -1,5 +1,5 @@
 /*
- * yam_scanner.c — YAML 1.2 tokenizer
+ * oyl_scanner.c — YAML 1.2 tokenizer
  *
  * Hand-rolled, no recursion in the hot path.
  * SIMD-accelerated where it matters (plain scalar scanning, whitespace skip).
@@ -10,9 +10,9 @@
  *   - Flow level counter for context switching
  */
 
-#include "yam_internal.h"
-#include "yam_chars.h"
-#include "yam_simd.h"
+#include "oyl_internal.h"
+#include "oyl_chars.h"
+#include "oyl_simd.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -30,7 +30,7 @@ typedef struct {
 
 /* ── Scanner state ───────────────────────────────────────── */
 
-struct yam_scanner {
+struct oyl_scanner {
     /* input */
     const char *buf;
     size_t      len;
@@ -52,7 +52,7 @@ struct yam_scanner {
     bool         at_doc_start;
 
     /* pending tokens (block structure can require lookahead) */
-    yam_token    pending[4];
+    oyl_token    pending[4];
     int          pending_count;
 
     /* track last token's start column (0-based) for mapping indent detection */
@@ -61,10 +61,10 @@ struct yam_scanner {
     bool         last_was_quoted;
 
     /* arena for string duplication when needed */
-    yam_arena   *arena;
+    oyl_arena   *arena;
 
     /* implicit-key check (see check_implicit_key) */
-    struct { yam_mark open; bool is_map; int props_col; } *flows;
+    struct { oyl_mark open; bool is_map; int props_col; } *flows;
                                    /* open flow brackets, with the column of
                                     * props right before them (or -1) */
     int          flows_len, flows_cap;
@@ -81,10 +81,10 @@ struct yam_scanner {
 
     /* error context */
     char      error_msg[256];
-    yam_mark  error_mark;
+    oyl_mark  error_mark;
 
-    /* token handed out by the public yam_scan_next() */
-    yam_token out_tok;
+    /* token handed out by the public oyl_scan_next() */
+    oyl_token out_tok;
 };
 
 
@@ -93,7 +93,7 @@ struct yam_scanner {
 #define SCAN_ERROR(s, msg) do { \
     snprintf((s)->error_msg, sizeof((s)->error_msg), "%s", (msg)); \
     (s)->error_mark = mark(s); \
-    return YAM_ERR_SCAN; \
+    return OYL_ERR_SCAN; \
 } while(0)
 
 /* ── Helpers ─────────────────────────────────────────────── */
@@ -111,11 +111,11 @@ static uint8_t hex_digit(uint8_t c) {
     return 0;
 }
 
-static yam_mark mark(yam_scanner *s) {
-    return (yam_mark){s->pos, s->line, s->col};
+static oyl_mark mark(oyl_scanner *s) {
+    return (oyl_mark){s->pos, s->line, s->col};
 }
 
-static void advance(yam_scanner *s, size_t n) {
+static void advance(oyl_scanner *s, size_t n) {
     for (size_t i = 0; i < n && s->pos < s->len; i++) {
         if (s->buf[s->pos] == '\n') {
             s->line++;
@@ -128,12 +128,12 @@ static void advance(yam_scanner *s, size_t n) {
 }
 
 /* Advance over `n` bytes known to contain no line break. */
-static inline void advance_cols(yam_scanner *s, size_t n) {
+static inline void advance_cols(oyl_scanner *s, size_t n) {
     s->pos += n;
     s->col += n;
 }
 
-static void skip_break(yam_scanner *s) {
+static void skip_break(oyl_scanner *s) {
     if (s->pos >= s->len) return;
     if (s->buf[s->pos] == '\r') {
         s->pos++;
@@ -150,7 +150,7 @@ static void skip_break(yam_scanner *s) {
  * position just past the line's leading blanks. A line that starts with
  * the construct's closing character (quote or bracket) is allowed at any
  * indentation, as other parsers do and as is common in practice. */
-static bool continuation_indent_ok(const yam_scanner *s, char closer) {
+static bool continuation_indent_ok(const oyl_scanner *s, char closer) {
     if (s->pos >= s->len || s->buf[s->pos] == closer) return true;
     size_t line_start = s->pos - (s->col - 1);
     size_t k = line_start;
@@ -164,23 +164,23 @@ static bool continuation_indent_ok(const yam_scanner *s, char closer) {
  *    token by whitespace;
  *  - in block context a tab may not be part of a line's indentation: the
  *    spaces before it must already exceed the current block indent. */
-ALWAYS_INLINE const char *skip_blanks_and_comments(yam_scanner *s) {
+ALWAYS_INLINE const char *skip_blanks_and_comments(oyl_scanner *s) {
     size_t line_start = (s->col == 1) ? s->pos : SIZE_MAX;
     for (;;) {
         /* skip spaces and tabs */
-        size_t skip = yam_skip_blanks(BUF_AT(s), REMAINING(s));
+        size_t skip = oyl_skip_blanks(BUF_AT(s), REMAINING(s));
         advance_cols(s, skip);
 
         /* comment? skip to end of line */
         if (PEEK(s) == '#') {
-            if (s->pos > s->begin && !yam_is_blank_or_break((uint8_t)s->buf[s->pos - 1]))
+            if (s->pos > s->begin && !oyl_is_blank_or_break((uint8_t)s->buf[s->pos - 1]))
                 return "comment must be separated from other tokens by whitespace";
-            size_t to_break = yam_scan_to_break(BUF_AT(s), REMAINING(s));
+            size_t to_break = oyl_scan_to_break(BUF_AT(s), REMAINING(s));
             advance_cols(s, to_break);
         }
 
         /* line break? continue with the next line */
-        if (yam_is_break(PEEK(s))) {
+        if (oyl_is_break(PEEK(s))) {
             skip_break(s);
             line_start = s->pos;
             continue;
@@ -211,9 +211,9 @@ ALWAYS_INLINE const char *skip_blanks_and_comments(yam_scanner *s) {
 
 /* ── Flow bracket stack (for the implicit-key check) ─────── */
 
-static bool only_blanks_between(const yam_scanner *s, size_t from, size_t to);
+static bool only_blanks_between(const oyl_scanner *s, size_t from, size_t to);
 
-static bool flow_push(yam_scanner *s, bool is_map) {
+static bool flow_push(oyl_scanner *s, bool is_map) {
     if (s->flows_len >= s->flows_cap) {
         int nc = s->flows_cap ? s->flows_cap * 2 : 16;
         void *nf = realloc(s->flows, (size_t)nc * sizeof(*s->flows));
@@ -231,10 +231,10 @@ static bool flow_push(yam_scanner *s, bool is_map) {
 
 /* Close a flow collection. Returns its opening mark, and restores the
  * record of props right before it (props inside it overwrote that). */
-static yam_mark flow_pop(yam_scanner *s) {
+static oyl_mark flow_pop(oyl_scanner *s) {
     if (s->flows_len == 0) return mark(s);
     s->flows_len--;
-    yam_mark open = s->flows[s->flows_len].open;
+    oyl_mark open = s->flows[s->flows_len].open;
     if (s->flows[s->flows_len].props_col >= 0) {
         s->props_col = s->flows[s->flows_len].props_col;
         s->props_end = open.offset;
@@ -244,7 +244,7 @@ static yam_mark flow_pop(yam_scanner *s) {
 
 /* Record a token that could be an implicit key: a flow scalar, an alias
  * or a flow collection (start line of the node, end offset of the token). */
-static inline void note_node(yam_scanner *s, yam_mark start, size_t end) {
+static inline void note_node(oyl_scanner *s, oyl_mark start, size_t end) {
     s->node_line = start.line;
     s->node_start = start.offset;
     s->node_col = (int)start.col - 1;
@@ -252,7 +252,7 @@ static inline void note_node(yam_scanner *s, yam_mark start, size_t end) {
 }
 
 /* Only blanks (on one line) between offsets `from` and `to`? */
-static bool only_blanks_between(const yam_scanner *s, size_t from, size_t to) {
+static bool only_blanks_between(const oyl_scanner *s, size_t from, size_t to) {
     if (from == SIZE_MAX || from > to) return false;
     for (size_t i = from; i < to; i++)
         if (s->buf[i] != ' ' && s->buf[i] != '\t') return false;
@@ -261,7 +261,7 @@ static bool only_blanks_between(const yam_scanner *s, size_t from, size_t to) {
 
 /* Record an anchor or tag token spanning [start, end): consecutive props
  * on a line form one run, which starts at the first of them. */
-static void note_props(yam_scanner *s, yam_mark start, size_t end) {
+static void note_props(oyl_scanner *s, oyl_mark start, size_t end) {
     if (!only_blanks_between(s, s->props_end, start.offset))
         s->props_col = (int)start.col - 1;
     s->props_end = end;
@@ -270,7 +270,7 @@ static void note_props(yam_scanner *s, yam_mark start, size_t end) {
 /* Is the whitespace between the last block indicator (- ? :) and offset
  * `at` on one line and does it contain a tab? A block collection may not
  * be separated from its indicator by a tab ("-\t- a", "?\tkey: v"). */
-static bool tab_after_indicator(const yam_scanner *s, size_t at) {
+static bool tab_after_indicator(const oyl_scanner *s, size_t at) {
     if (s->indicator_end == SIZE_MAX || s->indicator_end > at) return false;
     bool tab = false;
     for (size_t i = s->indicator_end; i < at; i++) {
@@ -289,7 +289,7 @@ enum { COLON_IMPLICIT, COLON_EXPLICIT, COLON_BAD_KEY };
  * that line. In a flow sequence the ':' must also be on the key's line
  * ("[ key\n : value ]" is invalid). Flow mappings are exempt (their keys
  * may span lines). */
-static int classify_colon(yam_scanner *s) {
+static int classify_colon(oyl_scanner *s) {
     if (s->flows_len == 0) {
         /* block context: an explicit value (or empty key) ':' starts its
          * line; an implicit key's ':' never does */
@@ -320,7 +320,7 @@ static int classify_colon(yam_scanner *s) {
 
 /* ── Indent management ───────────────────────────────────── */
 
-static bool indent_push(yam_scanner *s, int col) {
+static bool indent_push(oyl_scanner *s, int col) {
     indent_stack *st = &s->indents;
     if (st->len >= st->cap) {
         int new_cap = st->cap * 2;
@@ -334,7 +334,7 @@ static bool indent_push(yam_scanner *s, int col) {
     return true;
 }
 
-static void indent_pop(yam_scanner *s) {
+static void indent_pop(oyl_scanner *s) {
     if (s->indents.len > 0) {
         s->indent = s->indents.data[--s->indents.len];
     }
@@ -342,19 +342,19 @@ static void indent_pop(yam_scanner *s) {
 
 /* ── Token constructors ──────────────────────────────────── */
 
-static yam_token tok_simple(yam_token_type type, yam_mark start, yam_mark end) {
-    return (yam_token){
+static oyl_token tok_simple(oyl_token_type type, oyl_mark start, oyl_mark end) {
+    return (oyl_token){
         .type  = type,
-        .value = YAM_STR_NULL,
+        .value = OYL_STR_NULL,
         .start = start,
         .end   = end,
     };
 }
 
-static yam_token tok_scalar(yam_str value, yam_scalar_style style,
-                            yam_mark start, yam_mark end) {
-    return (yam_token){
-        .type         = YAM_TOK_SCALAR,
+static oyl_token tok_scalar(oyl_str value, oyl_scalar_style style,
+                            oyl_mark start, oyl_mark end) {
+    return (oyl_token){
+        .type         = OYL_TOK_SCALAR,
         .value        = value,
         .scalar_style = style,
         .start        = start,
@@ -362,7 +362,7 @@ static yam_token tok_scalar(yam_str value, yam_scalar_style style,
     };
 }
 
-static bool maybe_unroll_indents(yam_scanner *s, int col) {
+static bool maybe_unroll_indents(oyl_scanner *s, int col) {
     while (s->indent > col) {
         indent_pop(s);
     }
@@ -373,8 +373,8 @@ static bool is_doc_indicator_at(const char *buf, size_t pos, size_t len);
 
 /* ── Scan specific token types ───────────────────────────── */
 
-static yam_status scan_plain_scalar(yam_scanner *s, yam_token *tok) {
-    yam_mark start = mark(s);
+static oyl_status scan_plain_scalar(oyl_scanner *s, oyl_token *tok) {
+    oyl_mark start = mark(s);
 
     /* We use a two-phase approach:
      * Phase 1: scan single-line (zero-copy, fast)
@@ -391,8 +391,8 @@ static yam_status scan_plain_scalar(yam_scanner *s, yam_token *tok) {
         if (in_buf) { \
             if (out + (len) >= buf_cap) { \
                 buf_cap = (out + (len)) * 2 + 64; \
-                char *nb = yam_arena_alloc(s->arena, buf_cap, 1); \
-                if (!nb) return YAM_ERR_MEMORY; \
+                char *nb = oyl_arena_alloc(s->arena, buf_cap, 1); \
+                if (!nb) return OYL_ERR_MEMORY; \
                 memcpy(nb, buf, out); \
                 buf = nb; \
             } \
@@ -407,8 +407,8 @@ static yam_status scan_plain_scalar(yam_scanner *s, yam_token *tok) {
         if (in_buf) { \
             if (out + 1 >= buf_cap) { \
                 buf_cap = (out + 1) * 2 + 64; \
-                char *nb = yam_arena_alloc(s->arena, buf_cap, 1); \
-                if (!nb) return YAM_ERR_MEMORY; \
+                char *nb = oyl_arena_alloc(s->arena, buf_cap, 1); \
+                if (!nb) return OYL_ERR_MEMORY; \
                 memcpy(nb, buf, out); \
                 buf = nb; \
             } \
@@ -421,8 +421,8 @@ static yam_status scan_plain_scalar(yam_scanner *s, yam_token *tok) {
     #define SWITCH_TO_BUF() do { \
         if (!in_buf) { \
             buf_cap = single_len * 2 + 256; /* APPEND_* grow it */ \
-            buf = yam_arena_alloc(s->arena, buf_cap, 1); \
-            if (!buf) return YAM_ERR_MEMORY; \
+            buf = oyl_arena_alloc(s->arena, buf_cap, 1); \
+            if (!buf) return OYL_ERR_MEMORY; \
             memcpy(buf, single_start, single_len); \
             out = single_len; \
             in_buf = true; \
@@ -439,7 +439,7 @@ static yam_status scan_plain_scalar(yam_scanner *s, yam_token *tok) {
 
     for (;;) {
         /* SIMD fast scan over "boring" bytes */
-        size_t run = yam_scan_plain_scalar(BUF_AT(s), REMAINING(s));
+        size_t run = oyl_scan_plain_scalar(BUF_AT(s), REMAINING(s));
         if (run > 0) {
             if (in_buf) {
                 APPEND_RUN(BUF_AT(s), run);
@@ -457,8 +457,8 @@ static yam_status scan_plain_scalar(yam_scanner *s, yam_token *tok) {
         /* ':' is only value indicator if followed by whitespace (or EOF in flow) */
         if (c == ':') {
             uint8_t next = PEEK_AT(s, 1);
-            if (!yam_is_blank_or_break(next) && next != 0
-                && !(s->flow_level > 0 && yam_is_flow(next))) {
+            if (!oyl_is_blank_or_break(next) && next != 0
+                && !(s->flow_level > 0 && oyl_is_flow(next))) {
                 if (in_buf) { APPEND_CHAR(':'); } else { single_len++; }
                 advance(s, 1);
                 continue;
@@ -481,17 +481,17 @@ static yam_status scan_plain_scalar(yam_scanner *s, yam_token *tok) {
         }
 
         /* flow indicators in flow context end the scalar */
-        if (s->flow_level > 0 && yam_is_flow(c)) break;
+        if (s->flow_level > 0 && oyl_is_flow(c)) break;
 
         /* whitespace — potential end or mid-line */
-        if (yam_is_blank(c)) {
-            size_t blank_run = yam_skip_blanks(BUF_AT(s), REMAINING(s));
+        if (oyl_is_blank(c)) {
+            size_t blank_run = oyl_skip_blanks(BUF_AT(s), REMAINING(s));
             const char *blank_start = BUF_AT(s);
             s->pos += blank_run;
             s->col += blank_run;
 
             if (AT_END(s)) break;
-            if (yam_is_break(PEEK(s))) {
+            if (oyl_is_break(PEEK(s))) {
                 /* trailing blanks before break — don't include them,
                  * but continue loop so break handler can check for continuation */
                 continue;
@@ -506,20 +506,20 @@ static yam_status scan_plain_scalar(yam_scanner *s, yam_token *tok) {
             continue;
         }
 
-        if (yam_is_break(c)) {
+        if (oyl_is_break(c)) {
             /* check if next line continues this scalar */
             size_t save = s->pos;
             size_t save_line = s->line;
             size_t save_col = s->col;
 
             int break_count = 0;
-            while (!AT_END(s) && yam_is_break(PEEK(s))) {
+            while (!AT_END(s) && oyl_is_break(PEEK(s))) {
                 skip_break(s);
                 break_count++;
-                size_t blanks = yam_skip_blanks(BUF_AT(s), REMAINING(s));
+                size_t blanks = oyl_skip_blanks(BUF_AT(s), REMAINING(s));
                 s->pos += blanks;
                 s->col += blanks;
-                if (!AT_END(s) && !yam_is_break(PEEK(s))) break;
+                if (!AT_END(s) && !oyl_is_break(PEEK(s))) break;
             }
 
             if (AT_END(s)) {
@@ -545,7 +545,7 @@ static yam_status scan_plain_scalar(yam_scanner *s, yam_token *tok) {
             if ((nc == '-' || nc == '?') &&
                 (s->indent < 0 || next_indent <= s->indent)) {
                 uint8_t after = PEEK_AT(s, 1);
-                if (yam_is_blank_or_break(after) || after == 0) {
+                if (oyl_is_blank_or_break(after) || after == 0) {
                     s->pos = save; s->line = save_line; s->col = save_col;
                     break;
                 }
@@ -553,7 +553,7 @@ static yam_status scan_plain_scalar(yam_scanner *s, yam_token *tok) {
             /* : followed by whitespace always ends (it introduces a mapping value) */
             if (nc == ':') {
                 uint8_t after = PEEK_AT(s, 1);
-                if (yam_is_blank_or_break(after) || after == 0) {
+                if (oyl_is_blank_or_break(after) || after == 0) {
                     s->pos = save; s->line = save_line; s->col = save_col;
                     break;
                 }
@@ -574,7 +574,7 @@ static yam_status scan_plain_scalar(yam_scanner *s, yam_token *tok) {
             if (s->col == 1 && REMAINING(s) >= 3) {
                 if ((nc == '-' && PEEK_AT(s,1) == '-' && PEEK_AT(s,2) == '-') ||
                     (nc == '.' && PEEK_AT(s,1) == '.' && PEEK_AT(s,2) == '.')) {
-                    if (REMAINING(s) == 3 || yam_is_blank_or_break(PEEK_AT(s,3))) {
+                    if (REMAINING(s) == 3 || oyl_is_blank_or_break(PEEK_AT(s,3))) {
                         s->pos = save; s->line = save_line; s->col = save_col;
                         break;
                     }
@@ -611,17 +611,17 @@ static yam_status scan_plain_scalar(yam_scanner *s, yam_token *tok) {
 
     TRIM_TRAILING();
 
-    yam_mark end = mark(s);
+    oyl_mark end = mark(s);
     s->last_token_col = (int)start.col - 1;  /* 0-based col of this scalar */
     if (in_buf) {
         buf[out] = '\0';
         note_node(s, start, end.offset);
-        *tok = tok_scalar((yam_str){buf, out}, YAM_SCALAR_PLAIN, start, end);
+        *tok = tok_scalar((oyl_str){buf, out}, OYL_SCALAR_PLAIN, start, end);
     } else {
         note_node(s, start, end.offset);
-        *tok = tok_scalar((yam_str){single_start, single_len}, YAM_SCALAR_PLAIN, start, end);
+        *tok = tok_scalar((oyl_str){single_start, single_len}, OYL_SCALAR_PLAIN, start, end);
     }
-    return YAM_OK;
+    return OYL_OK;
 
     #undef APPEND_RUN
     #undef APPEND_CHAR
@@ -629,37 +629,37 @@ static yam_status scan_plain_scalar(yam_scanner *s, yam_token *tok) {
     #undef TRIM_TRAILING
 }
 
-static yam_status scan_single_quoted(yam_scanner *s, yam_token *tok) {
-    yam_mark start = mark(s);
+static oyl_status scan_single_quoted(oyl_scanner *s, oyl_token *tok) {
+    oyl_mark start = mark(s);
     advance(s, 1); /* skip opening ' */
 
     /* fast path: no '' escapes or line breaks → zero-copy slice of the input */
     {
-        size_t j = s->pos + yam_find_any4_short(BUF_AT(s), REMAINING(s), '\'', '\n', '\r', '\'');
+        size_t j = s->pos + oyl_find_any4_short(BUF_AT(s), REMAINING(s), '\'', '\n', '\r', '\'');
         if (j < s->len && s->buf[j] == '\'' &&
             !(j + 1 < s->len && s->buf[j + 1] == '\'')) {
-            yam_str val = {s->buf + s->pos, j - s->pos};
+            oyl_str val = {s->buf + s->pos, j - s->pos};
             s->col += j + 1 - s->pos;
             s->pos = j + 1;
             s->last_token_col = (int)start.col - 1;
             s->last_was_quoted = true;
             note_node(s, start, s->pos);
-            *tok = tok_scalar(val, YAM_SCALAR_SINGLE_QUOTED, start, mark(s));
-            return YAM_OK;
+            *tok = tok_scalar(val, OYL_SCALAR_SINGLE_QUOTED, start, mark(s));
+            return OYL_OK;
         }
     }
 
     /* Allocate buffer for the result (handles escapes and line folding) */
     size_t buf_cap = 64;
-    char *buf = yam_arena_alloc(s->arena, buf_cap, 1);
-    if (!buf) return YAM_ERR_MEMORY;
+    char *buf = oyl_arena_alloc(s->arena, buf_cap, 1);
+    if (!buf) return OYL_ERR_MEMORY;
     size_t out = 0;
 
     #define SQ_ENSURE(n) do { \
         if (out + (n) >= buf_cap) { \
             buf_cap = (out + (n)) * 2 + 64; \
-            char *nb = yam_arena_alloc(s->arena, buf_cap, 1); \
-            if (!nb) return YAM_ERR_MEMORY; \
+            char *nb = oyl_arena_alloc(s->arena, buf_cap, 1); \
+            if (!nb) return OYL_ERR_MEMORY; \
             memcpy(nb, buf, out); \
             buf = nb; \
         } \
@@ -676,15 +676,15 @@ static yam_status scan_single_quoted(yam_scanner *s, yam_token *tok) {
             }
             break; /* closing quote */
         }
-        if (yam_is_break(PEEK(s))) {
+        if (oyl_is_break(PEEK(s))) {
             /* line folding: trim trailing blanks, fold breaks */
             while (out > 0 && (buf[out-1] == ' ' || buf[out-1] == '\t')) out--;
             int break_count = 0;
-            while (!AT_END(s) && yam_is_break(PEEK(s))) {
+            while (!AT_END(s) && oyl_is_break(PEEK(s))) {
                 skip_break(s);
                 break_count++;
-                while (!AT_END(s) && yam_is_blank(PEEK(s))) advance(s, 1);
-                if (!AT_END(s) && !yam_is_break(PEEK(s))) break;
+                while (!AT_END(s) && oyl_is_blank(PEEK(s))) advance(s, 1);
+                if (!AT_END(s) && !oyl_is_break(PEEK(s))) break;
             }
             /* document indicators at start of line in multi-line quoted scalar → error */
             if (s->col == 1 && is_doc_indicator_at(s->buf, s->pos, s->len))
@@ -700,7 +700,7 @@ static yam_status scan_single_quoted(yam_scanner *s, yam_token *tok) {
             }
         } else {
             /* a run of ordinary bytes, up to the next quote or break */
-            size_t n = yam_find_any4(BUF_AT(s), REMAINING(s), '\'', '\n', '\r', '\'');
+            size_t n = oyl_find_any4(BUF_AT(s), REMAINING(s), '\'', '\n', '\r', '\'');
             SQ_ENSURE(n);
             memcpy(buf + out, BUF_AT(s), n);
             out += n;
@@ -715,28 +715,28 @@ static yam_status scan_single_quoted(yam_scanner *s, yam_token *tok) {
     s->last_token_col = (int)start.col - 1;
     s->last_was_quoted = true;
     note_node(s, start, s->pos);
-    *tok = tok_scalar((yam_str){buf, out}, YAM_SCALAR_SINGLE_QUOTED, start, mark(s));
-    return YAM_OK;
+    *tok = tok_scalar((oyl_str){buf, out}, OYL_SCALAR_SINGLE_QUOTED, start, mark(s));
+    return OYL_OK;
 
     #undef SQ_ENSURE
 }
 
-static yam_status scan_double_quoted(yam_scanner *s, yam_token *tok) {
-    yam_mark start = mark(s);
+static oyl_status scan_double_quoted(oyl_scanner *s, oyl_token *tok) {
+    oyl_mark start = mark(s);
     advance(s, 1); /* skip opening " */
 
     /* fast path: no escapes or line breaks → zero-copy slice of the input */
     {
-        size_t j = s->pos + yam_find_any4_short(BUF_AT(s), REMAINING(s), '"', '\\', '\n', '\r');
+        size_t j = s->pos + oyl_find_any4_short(BUF_AT(s), REMAINING(s), '"', '\\', '\n', '\r');
         if (j < s->len && s->buf[j] == '"') {
-            yam_str val = {s->buf + s->pos, j - s->pos};
+            oyl_str val = {s->buf + s->pos, j - s->pos};
             s->col += j + 1 - s->pos;
             s->pos = j + 1;
             s->last_token_col = (int)start.col - 1;
             s->last_was_quoted = true;
             note_node(s, start, s->pos);
-            *tok = tok_scalar(val, YAM_SCALAR_DOUBLE_QUOTED, start, mark(s));
-            return YAM_OK;
+            *tok = tok_scalar(val, OYL_SCALAR_DOUBLE_QUOTED, start, mark(s));
+            return OYL_OK;
         }
     }
 
@@ -745,7 +745,7 @@ static yam_status scan_double_quoted(yam_scanner *s, yam_token *tok) {
     size_t max_len = 0;
     size_t scan = s->pos;
     while (scan < s->len) {
-        size_t n = yam_find_any4(s->buf + scan, s->len - scan, '"', '\\', '"', '"');
+        size_t n = oyl_find_any4(s->buf + scan, s->len - scan, '"', '\\', '"', '"');
         scan += n;
         max_len += n;
         if (scan >= s->len || s->buf[scan] == '"') break;
@@ -756,8 +756,8 @@ static yam_status scan_double_quoted(yam_scanner *s, yam_token *tok) {
         max_len++;
     }
 
-    char *buf = yam_arena_alloc(s->arena, max_len + 1, 1);
-    if (!buf) return YAM_ERR_MEMORY;
+    char *buf = oyl_arena_alloc(s->arena, max_len + 1, 1);
+    if (!buf) return OYL_ERR_MEMORY;
 
     size_t out = 0;
     size_t content_end = 0; /* tracks end of non-literal-whitespace content for trimming */
@@ -794,7 +794,7 @@ static yam_status scan_double_quoted(yam_scanner *s, yam_token *tok) {
                 case 'x': { /* \xNN */
                     if (REMAINING(s) < 2) SCAN_ERROR(s, "incomplete \\x escape sequence");
                     uint8_t hi = PEEK(s), lo = PEEK_AT(s, 1);
-                    if (!yam_is_hex(hi) || !yam_is_hex(lo)) SCAN_ERROR(s, "invalid hex digit in \\x escape");
+                    if (!oyl_is_hex(hi) || !oyl_is_hex(lo)) SCAN_ERROR(s, "invalid hex digit in \\x escape");
                     uint8_t byte = (hex_digit(hi) << 4) | hex_digit(lo);
                     advance(s, 2);
                     buf[out++] = (char)byte;
@@ -807,7 +807,7 @@ static yam_status scan_double_quoted(yam_scanner *s, yam_token *tok) {
                     uint32_t cp = 0;
                     for (int i = 0; i < ndigits; i++) {
                         uint8_t c = PEEK_AT(s, i);
-                        if (!yam_is_hex(c)) SCAN_ERROR(s, "invalid hex digit in unicode escape");
+                        if (!oyl_is_hex(c)) SCAN_ERROR(s, "invalid hex digit in unicode escape");
                         cp = (cp << 4) | hex_digit(c);
                     }
                     advance(s, ndigits);
@@ -835,8 +835,8 @@ static yam_status scan_double_quoted(yam_scanner *s, yam_token *tok) {
                 case '\r':
                     /* skip the break and any leading whitespace on next line */
                     if (esc == '\r' && PEEK(s) == '\n') advance(s, 1);
-                    while (!AT_END(s) && yam_is_blank(PEEK(s))) advance(s, 1);
-                    if (!AT_END(s) && !yam_is_break(PEEK(s)) &&
+                    while (!AT_END(s) && oyl_is_blank(PEEK(s))) advance(s, 1);
+                    if (!AT_END(s) && !oyl_is_break(PEEK(s)) &&
                         !continuation_indent_ok(s, '"'))
                         SCAN_ERROR(s, "continuation line of a quoted scalar must be indented");
                     content_end = out; /* escaped newline doesn't affect trim */
@@ -846,16 +846,16 @@ static yam_status scan_double_quoted(yam_scanner *s, yam_token *tok) {
             }
             /* all escape sequences produce content (not trimmable whitespace) */
             content_end = out;
-        } else if (yam_is_break(PEEK(s))) {
+        } else if (oyl_is_break(PEEK(s))) {
             /* line folding: 1 break→space, empty lines→\n each */
             /* trim trailing literal whitespace (escapes are content) */
             out = content_end;
             int break_count = 0;
-            while (!AT_END(s) && yam_is_break(PEEK(s))) {
+            while (!AT_END(s) && oyl_is_break(PEEK(s))) {
                 skip_break(s);
                 break_count++;
-                while (!AT_END(s) && yam_is_blank(PEEK(s))) advance(s, 1);
-                if (!AT_END(s) && !yam_is_break(PEEK(s))) break;
+                while (!AT_END(s) && oyl_is_blank(PEEK(s))) advance(s, 1);
+                if (!AT_END(s) && !oyl_is_break(PEEK(s))) break;
             }
             /* document indicators at start of line in multi-line quoted scalar → error */
             if (s->col == 1 && is_doc_indicator_at(s->buf, s->pos, s->len))
@@ -871,10 +871,10 @@ static yam_status scan_double_quoted(yam_scanner *s, yam_token *tok) {
         } else {
             /* a run of ordinary bytes, up to the next quote, escape or break */
             const char *run = BUF_AT(s);
-            size_t n = yam_find_any4(run, REMAINING(s), '"', '\\', '\n', '\r');
+            size_t n = oyl_find_any4(run, REMAINING(s), '"', '\\', '\n', '\r');
             memcpy(buf + out, run, n);
             size_t k = n;               /* trailing blanks don't count as content */
-            while (k > 0 && yam_is_blank((uint8_t)run[k - 1])) k--;
+            while (k > 0 && oyl_is_blank((uint8_t)run[k - 1])) k--;
             if (k > 0) content_end = out + k;
             out += n;
             advance_cols(s, n);
@@ -888,12 +888,12 @@ static yam_status scan_double_quoted(yam_scanner *s, yam_token *tok) {
     s->last_token_col = (int)start.col - 1;
     s->last_was_quoted = true;
     note_node(s, start, s->pos);
-    *tok = tok_scalar((yam_str){buf, out}, YAM_SCALAR_DOUBLE_QUOTED, start, mark(s));
-    return YAM_OK;
+    *tok = tok_scalar((oyl_str){buf, out}, OYL_SCALAR_DOUBLE_QUOTED, start, mark(s));
+    return OYL_OK;
 }
 
-static yam_status scan_tag(yam_scanner *s, yam_token *tok) {
-    yam_mark start = mark(s);
+static oyl_status scan_tag(oyl_scanner *s, oyl_token *tok) {
+    oyl_mark start = mark(s);
     const char *tag_start = BUF_AT(s);
     advance(s, 1); /* skip ! */
 
@@ -904,7 +904,7 @@ static yam_status scan_tag(yam_scanner *s, yam_token *tok) {
          * closed by '>' */
         advance(s, 1);
         size_t uri_start = s->pos;
-        while (!AT_END(s) && PEEK(s) != '>' && !yam_is_blank_or_break(PEEK(s))) {
+        while (!AT_END(s) && PEEK(s) != '>' && !oyl_is_blank_or_break(PEEK(s))) {
             if (PEEK(s) < 0x20 || PEEK(s) == 0x7F) SCAN_ERROR(s, "control character in tag");
             advance(s, 1);
         }
@@ -914,18 +914,18 @@ static yam_status scan_tag(yam_scanner *s, yam_token *tok) {
         size_t len = BUF_AT(s) - tag_start;
         s->last_token_col = (int)start.col - 1;
         note_props(s, start, s->pos);
-        *tok = (yam_token){
-            .type  = YAM_TOK_TAG,
+        *tok = (oyl_token){
+            .type  = OYL_TOK_TAG,
             .value = {tag_start, len},
             .start = start,
             .end   = mark(s),
         };
-        return YAM_OK;
+        return OYL_OK;
     }
 
     /* consume tag characters */
-    while (!AT_END(s) && !yam_is_blank_or_break(PEEK(s))
-           && !yam_is_flow(PEEK(s))) {
+    while (!AT_END(s) && !oyl_is_blank_or_break(PEEK(s))
+           && !oyl_is_flow(PEEK(s))) {
         if (PEEK(s) < 0x20 || PEEK(s) == 0x7F) SCAN_ERROR(s, "control character in tag");
         advance(s, 1);
     }
@@ -933,17 +933,17 @@ static yam_status scan_tag(yam_scanner *s, yam_token *tok) {
     size_t len = BUF_AT(s) - tag_start;
     s->last_token_col = (int)start.col - 1;
     note_props(s, start, s->pos);
-    *tok = (yam_token){
-        .type  = YAM_TOK_TAG,
+    *tok = (oyl_token){
+        .type  = OYL_TOK_TAG,
         .value = {tag_start, len},
         .start = start,
         .end   = mark(s),
     };
-    return YAM_OK;
+    return OYL_OK;
 }
 
-static yam_status scan_anchor_or_alias(yam_scanner *s, yam_token *tok) {
-    yam_mark start = mark(s);
+static oyl_status scan_anchor_or_alias(oyl_scanner *s, oyl_token *tok) {
+    oyl_mark start = mark(s);
     bool is_anchor = (PEEK(s) == '&');
     advance(s, 1); /* skip & or * */
 
@@ -951,7 +951,7 @@ static yam_status scan_anchor_or_alias(yam_scanner *s, yam_token *tok) {
     while (!AT_END(s)) {
         uint8_t ch = PEEK(s);
         /* anchor name: any non-whitespace, non-flow indicator character */
-        if (yam_is_blank_or_break(ch) || ch == 0) break;
+        if (oyl_is_blank_or_break(ch) || ch == 0) break;
         if (ch == ',' || ch == '[' || ch == ']' || ch == '{' || ch == '}') break;
         if (ch < 0x20 || ch == 0x7F)
             SCAN_ERROR(s, "control character in anchor or alias name");
@@ -963,13 +963,13 @@ static yam_status scan_anchor_or_alias(yam_scanner *s, yam_token *tok) {
     s->last_token_col = (int)start.col - 1;
     if (!is_anchor) note_node(s, start, s->pos);
     else note_props(s, start, s->pos);
-    *tok = (yam_token){
-        .type  = is_anchor ? YAM_TOK_ANCHOR : YAM_TOK_ALIAS,
+    *tok = (oyl_token){
+        .type  = is_anchor ? OYL_TOK_ANCHOR : OYL_TOK_ALIAS,
         .value = {name_start, name_len},
         .start = start,
         .end   = mark(s),
     };
-    return YAM_OK;
+    return OYL_OK;
 }
 
 /* Check for --- or ... at line start */
@@ -980,25 +980,25 @@ static bool is_doc_indicator_at(const char *buf, size_t pos, size_t len) {
     if (c != '-' && c != '.') return false;
     if (buf[pos + 1] != c || buf[pos + 2] != c) return false;
     if (pos + 3 == len) return true;
-    return yam_is_blank_or_break((uint8_t)buf[pos + 3]);
+    return oyl_is_blank_or_break((uint8_t)buf[pos + 3]);
 }
 
-static bool at_doc_indicator(yam_scanner *s, char ch) {
+static bool at_doc_indicator(oyl_scanner *s, char ch) {
     if (s->col != 1) return false;
     if (REMAINING(s) < 3) return false;
     return s->buf[s->pos]     == ch
         && s->buf[s->pos + 1] == ch
         && s->buf[s->pos + 2] == ch
-        && (REMAINING(s) == 3 || yam_is_blank_or_break(PEEK_AT(s, 3)));
+        && (REMAINING(s) == 3 || oyl_is_blank_or_break(PEEK_AT(s, 3)));
 }
 
 /* ── Main scan function ──────────────────────────────────── */
 
-yam_scanner *yam_scanner_new(const char *input, size_t len, yam_arena *a) {
-    yam_scanner *s = (yam_scanner *)malloc(sizeof(yam_scanner));
+oyl_scanner *oyl_scanner_new(const char *input, size_t len, oyl_arena *a) {
+    oyl_scanner *s = (oyl_scanner *)malloc(sizeof(oyl_scanner));
     if (!s) return NULL;
 
-    *s = (yam_scanner){
+    *s = (oyl_scanner){
         .buf   = input,
         .len   = len,
         .pos   = 0,
@@ -1036,26 +1036,26 @@ yam_scanner *yam_scanner_new(const char *input, size_t len, yam_arena *a) {
 }
 
 
-yam_status yam_scan_next(yam_scanner *s, const yam_token **tok) {
-    yam_status st = yam_scan_token(s, &s->out_tok);
-    *tok = st == YAM_OK ? &s->out_tok : NULL;
+oyl_status oyl_scan_next(oyl_scanner *s, const oyl_token **tok) {
+    oyl_status st = oyl_scan_token(s, &s->out_tok);
+    *tok = st == OYL_OK ? &s->out_tok : NULL;
     return st;
 }
 
-yam_status yam_scan_token(yam_scanner *s, yam_token *tok) {
+oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
     /* drain pending tokens first */
     if (s->pending_count > 0) {
         *tok = s->pending[0];
         memmove(&s->pending[0], &s->pending[1],
-                (--s->pending_count) * sizeof(yam_token));
-        return YAM_OK;
+                (--s->pending_count) * sizeof(oyl_token));
+        return OYL_OK;
     }
 
     /* stream start */
     if (!s->stream_started) {
         s->stream_started = true;
-        *tok = tok_simple(YAM_TOK_STREAM_START, mark(s), mark(s));
-        return YAM_OK;
+        *tok = tok_simple(OYL_TOK_STREAM_START, mark(s), mark(s));
+        return OYL_OK;
     }
 
     /* skip whitespace and comments */
@@ -1070,11 +1070,11 @@ yam_status yam_scan_token(yam_scanner *s, yam_token *tok) {
             s->stream_ended = true;
             /* unwind all indents */
             maybe_unroll_indents(s, -1);
-            *tok = tok_simple(YAM_TOK_STREAM_END, mark(s), mark(s));
-            return YAM_OK;
+            *tok = tok_simple(OYL_TOK_STREAM_END, mark(s), mark(s));
+            return OYL_OK;
         }
-        *tok = tok_simple(YAM_TOK_NONE, mark(s), mark(s));
-        return YAM_OK;
+        *tok = tok_simple(OYL_TOK_NONE, mark(s), mark(s));
+        return OYL_OK;
     }
 
     /* unroll indent stack to current column (block context only).
@@ -1085,15 +1085,15 @@ yam_status yam_scan_token(yam_scanner *s, yam_token *tok) {
         maybe_unroll_indents(s, cur_col);
     }
 
-    yam_mark start = mark(s);
+    oyl_mark start = mark(s);
     uint8_t c = PEEK(s);
 
     /* document indicators at column 1 */
     if (at_doc_indicator(s, '-')) {
         maybe_unroll_indents(s, -1);
         advance(s, 3);
-        *tok = tok_simple(YAM_TOK_DOC_START, start, mark(s));
-        return YAM_OK;
+        *tok = tok_simple(OYL_TOK_DOC_START, start, mark(s));
+        return OYL_OK;
     }
     if (at_doc_indicator(s, '.')) {
         maybe_unroll_indents(s, -1);
@@ -1101,72 +1101,72 @@ yam_status yam_scan_token(yam_scanner *s, yam_token *tok) {
         /* only a comment may follow '...' on its line */
         size_t k = s->pos;
         while (k < s->len && (s->buf[k] == ' ' || s->buf[k] == '\t')) k++;
-        if (k < s->len && s->buf[k] != '#' && !yam_is_break((uint8_t)s->buf[k]))
+        if (k < s->len && s->buf[k] != '#' && !oyl_is_break((uint8_t)s->buf[k]))
             SCAN_ERROR(s, "content after document end marker '...'");
-        *tok = tok_simple(YAM_TOK_DOC_END, start, mark(s));
-        return YAM_OK;
+        *tok = tok_simple(OYL_TOK_DOC_END, start, mark(s));
+        return OYL_OK;
     }
 
     /* directive lines: % at column 1 in block context → one token holding
      * the whole line; the parser validates it */
     if (c == '%' && s->col == 1 && s->flow_level == 0) {
         const char *line_start = BUF_AT(s);
-        size_t len = yam_scan_to_break(line_start, REMAINING(s));
+        size_t len = oyl_scan_to_break(line_start, REMAINING(s));
         advance_cols(s, len);
-        *tok = (yam_token){
-            .type  = YAM_TOK_DIRECTIVE,
+        *tok = (oyl_token){
+            .type  = OYL_TOK_DIRECTIVE,
             .value = {line_start, len},
             .start = start,
             .end   = mark(s),
         };
-        return YAM_OK;
+        return OYL_OK;
     }
 
     /* flow indicators */
     switch (c) {
     case '[':
         s->last_was_quoted = false;
-        if (!flow_push(s, false)) return YAM_ERR_MEMORY;
+        if (!flow_push(s, false)) return OYL_ERR_MEMORY;
         s->flow_level++;
         advance(s, 1);
-        *tok = tok_simple(YAM_TOK_FLOW_SEQ_START, start, mark(s));
-        return YAM_OK;
+        *tok = tok_simple(OYL_TOK_FLOW_SEQ_START, start, mark(s));
+        return OYL_OK;
     case ']': {
-        yam_mark open = flow_pop(s);
+        oyl_mark open = flow_pop(s);
         if (s->flow_level > 0) s->flow_level--;
         advance(s, 1);
         note_node(s, open, s->pos);
         s->last_was_quoted = true; /* allow ]:value like "key":value */
-        *tok = tok_simple(YAM_TOK_FLOW_SEQ_END, start, mark(s));
-        return YAM_OK;
+        *tok = tok_simple(OYL_TOK_FLOW_SEQ_END, start, mark(s));
+        return OYL_OK;
     }
     case '{':
         s->last_was_quoted = false;
-        if (!flow_push(s, true)) return YAM_ERR_MEMORY;
+        if (!flow_push(s, true)) return OYL_ERR_MEMORY;
         s->flow_level++;
         advance(s, 1);
-        *tok = tok_simple(YAM_TOK_FLOW_MAP_START, start, mark(s));
-        return YAM_OK;
+        *tok = tok_simple(OYL_TOK_FLOW_MAP_START, start, mark(s));
+        return OYL_OK;
     case '}': {
-        yam_mark open = flow_pop(s);
+        oyl_mark open = flow_pop(s);
         if (s->flow_level > 0) s->flow_level--;
         advance(s, 1);
         note_node(s, open, s->pos);
         s->last_was_quoted = true; /* allow }:value like "key":value */
-        *tok = tok_simple(YAM_TOK_FLOW_MAP_END, start, mark(s));
-        return YAM_OK;
+        *tok = tok_simple(OYL_TOK_FLOW_MAP_END, start, mark(s));
+        return OYL_OK;
     }
     case ',':
         s->last_was_quoted = false;   /* ":" after "," is not adjacent to a key */
         advance(s, 1);
-        *tok = tok_simple(YAM_TOK_FLOW_ENTRY, start, mark(s));
-        return YAM_OK;
+        *tok = tok_simple(OYL_TOK_FLOW_ENTRY, start, mark(s));
+        return OYL_OK;
     }
 
     /* block sequence entry: - followed by whitespace */
     if (c == '-' && s->flow_level == 0) {
         uint8_t next = PEEK_AT(s, 1);
-        if (yam_is_blank_or_break(next) || next == 0) {
+        if (oyl_is_blank_or_break(next) || next == 0) {
             /* "key: - a" — a block sequence can't start on a key's line */
             if (s->key_colon_line == s->line)
                 SCAN_ERROR(s, "block sequence entries are not allowed on the same line as a mapping key");
@@ -1178,15 +1178,15 @@ yam_status yam_scan_token(yam_scanner *s, yam_token *tok) {
             }
             advance(s, 1);
             s->indicator_end = s->pos;
-            *tok = tok_simple(YAM_TOK_BLOCK_SEQ_ENTRY, start, mark(s));
-            return YAM_OK;
+            *tok = tok_simple(OYL_TOK_BLOCK_SEQ_ENTRY, start, mark(s));
+            return OYL_OK;
         }
     }
 
     /* explicit mapping key: ? followed by whitespace (both block and flow) */
     if (c == '?' && s->flow_level == 0) {
         uint8_t next = PEEK_AT(s, 1);
-        if (yam_is_blank_or_break(next) || next == 0) {
+        if (oyl_is_blank_or_break(next) || next == 0) {
             /* "key: ? x" — a block mapping can't start on a key's line */
             if (s->key_colon_line == s->line)
                 SCAN_ERROR(s, "mapping values are not allowed on the same line as another key");
@@ -1200,26 +1200,26 @@ yam_status yam_scan_token(yam_scanner *s, yam_token *tok) {
             s->indicator_end = s->pos;
             s->explicit_key = true;
             s->explicit_depth = s->flows_len;
-            *tok = tok_simple(YAM_TOK_BLOCK_MAP_KEY, start, mark(s));
-            return YAM_OK;
+            *tok = tok_simple(OYL_TOK_BLOCK_MAP_KEY, start, mark(s));
+            return OYL_OK;
         }
     }
     /* ? in flow context */
     if (c == '?' && s->flow_level > 0) {
         uint8_t next = PEEK_AT(s, 1);
-        if (yam_is_blank_or_break(next) || next == 0) {
+        if (oyl_is_blank_or_break(next) || next == 0) {
             advance(s, 1);
             s->explicit_key = true;
             s->explicit_depth = s->flows_len;
-            *tok = tok_simple(YAM_TOK_BLOCK_MAP_KEY, start, mark(s));
-            return YAM_OK;
+            *tok = tok_simple(OYL_TOK_BLOCK_MAP_KEY, start, mark(s));
+            return OYL_OK;
         }
     }
 
     /* block mapping value: : followed by whitespace */
     if (c == ':') {
         uint8_t next = PEEK_AT(s, 1);
-        if (s->flow_level == 0 && (yam_is_blank_or_break(next) || next == 0)) {
+        if (s->flow_level == 0 && (oyl_is_blank_or_break(next) || next == 0)) {
             int colon_col = (int)s->col - 1;
             /* when a node (scalar, alias, or flow collection) directly
              * precedes the ':', the key starts where it does, or at props
@@ -1258,11 +1258,11 @@ yam_status yam_scan_token(yam_scanner *s, yam_token *tok) {
             }
             advance(s, 1);
             s->indicator_end = s->pos;
-            *tok = tok_simple(YAM_TOK_BLOCK_MAP_VALUE, start, mark(s));
-            return YAM_OK;
+            *tok = tok_simple(OYL_TOK_BLOCK_MAP_VALUE, start, mark(s));
+            return OYL_OK;
         }
         if (s->flow_level > 0 &&
-            (yam_is_blank_or_break(next) || next == 0 ||
+            (oyl_is_blank_or_break(next) || next == 0 ||
              next == ',' || next == ']' || next == '}' ||
              /* `:` after a JSON-like key (quoted scalar) */
              s->last_was_quoted)) {
@@ -1270,8 +1270,8 @@ yam_status yam_scan_token(yam_scanner *s, yam_token *tok) {
             if (classify_colon(s) == COLON_BAD_KEY)
                 SCAN_ERROR(s, "implicit key must be on a single line");
             advance(s, 1);
-            *tok = tok_simple(YAM_TOK_BLOCK_MAP_VALUE, start, mark(s));
-            return YAM_OK;
+            *tok = tok_simple(OYL_TOK_BLOCK_MAP_VALUE, start, mark(s));
+            return OYL_OK;
         }
     }
 
@@ -1290,14 +1290,14 @@ yam_status yam_scan_token(yam_scanner *s, yam_token *tok) {
 
     /* block scalar (literal | or folded >) */
     if ((c == '|' || c == '>') && s->flow_level == 0) {
-        yam_scalar_style style = (c == '|') ? YAM_SCALAR_LITERAL : YAM_SCALAR_FOLDED;
+        oyl_scalar_style style = (c == '|') ? OYL_SCALAR_LITERAL : OYL_SCALAR_FOLDED;
         advance(s, 1); /* skip | or > */
 
         /* parse optional chomping and indent indicators (any order) */
         int chomp = 0;  /* 0=clip, -1=strip, 1=keep */
         int explicit_indent = 0;
 
-        for (int i = 0; i < 2 && !AT_END(s) && !yam_is_break(PEEK(s)); i++) {
+        for (int i = 0; i < 2 && !AT_END(s) && !oyl_is_break(PEEK(s)); i++) {
             uint8_t ch = PEEK(s);
             if (ch == '-') { chomp = -1; advance(s, 1); }
             else if (ch == '+') { chomp = 1; advance(s, 1); }
@@ -1307,13 +1307,13 @@ yam_status yam_scan_token(yam_scanner *s, yam_token *tok) {
 
         /* skip any trailing blanks and comment on indicator line */
         size_t hdr_blanks = s->pos;
-        while (!AT_END(s) && yam_is_blank(PEEK(s))) advance(s, 1);
+        while (!AT_END(s) && oyl_is_blank(PEEK(s))) advance(s, 1);
         if (!AT_END(s) && PEEK(s) == '#') {
             if (s->pos == hdr_blanks)
                 SCAN_ERROR(s, "comment must be separated from other tokens by whitespace");
-            while (!AT_END(s) && !yam_is_break(PEEK(s))) advance(s, 1);
+            while (!AT_END(s) && !oyl_is_break(PEEK(s))) advance(s, 1);
         }
-        if (!AT_END(s) && !yam_is_break(PEEK(s))) SCAN_ERROR(s, "invalid block scalar indicator");
+        if (!AT_END(s) && !oyl_is_break(PEEK(s))) SCAN_ERROR(s, "invalid block scalar indicator");
         if (!AT_END(s)) skip_break(s);
 
         /* determine content indent level */
@@ -1335,7 +1335,7 @@ yam_status yam_scan_token(yam_scanner *s, yam_token *tok) {
                 }
                 /* document indicators terminate block scalar */
                 if (li == 0 && is_doc_indicator_at(s->buf, probe, s->len)) break;
-                if (yam_is_break((uint8_t)s->buf[probe + li])) {
+                if (oyl_is_break((uint8_t)s->buf[probe + li])) {
                     /* empty line — track longest for indent detection */
                     if (li > max_empty_indent) max_empty_indent = li;
                     probe += li;
@@ -1377,7 +1377,7 @@ yam_status yam_scan_token(yam_scanner *s, yam_token *tok) {
                 s->pos += li;
                 break;
             }
-            if (yam_is_break((uint8_t)s->buf[s->pos + li])) {
+            if (oyl_is_break((uint8_t)s->buf[s->pos + li])) {
                 if (li > base_indent) {
                     /* whitespace-only line with extra spaces beyond base indent:
                      * treat as content line (extra spaces are preserved) */
@@ -1402,7 +1402,7 @@ yam_status yam_scan_token(yam_scanner *s, yam_token *tok) {
                 size_t k = s->pos + li;
                 if (s->buf[k] == '\t') {
                     while (k < s->len && (s->buf[k] == ' ' || s->buf[k] == '\t')) k++;
-                    if (k >= s->len || yam_is_break((uint8_t)s->buf[k])) {
+                    if (k >= s->len || oyl_is_break((uint8_t)s->buf[k])) {
                         s->pos = save_pos; s->line = save_line; s->col = save_col;
                         SCAN_ERROR(s, "tabs are not allowed as indentation in a block scalar");
                     }
@@ -1410,7 +1410,7 @@ yam_status yam_scan_token(yam_scanner *s, yam_token *tok) {
                 break;
             }
             size_t line_start = s->pos + base_indent;
-            size_t rest = yam_scan_to_break(s->buf + line_start, s->len - line_start);
+            size_t rest = oyl_scan_to_break(s->buf + line_start, s->len - line_start);
             needed += rest + 1; /* content + newline */
             s->pos = line_start + rest;
             if (s->pos < s->len && s->buf[s->pos] == '\r') s->pos++;
@@ -1420,42 +1420,42 @@ yam_status yam_scan_token(yam_scanner *s, yam_token *tok) {
         /* restore and do real pass */
         s->pos = save_pos; s->line = save_line; s->col = save_col;
 
-        char *buf = yam_arena_alloc(s->arena, needed + 1, 1);
-        if (!buf) return YAM_ERR_MEMORY;
+        char *buf = oyl_arena_alloc(s->arena, needed + 1, 1);
+        if (!buf) return OYL_ERR_MEMORY;
         size_t out = 0;
 
         /* track line structure for folded mode */
         typedef struct { size_t start; size_t len; bool empty; int extra_indent; } bsline;
         bsline *lines = NULL;
         int nlines = 0, lines_cap = 0;
-        if (style == YAM_SCALAR_FOLDED) {
+        if (style == OYL_SCALAR_FOLDED) {
             /* count lines for allocation */
             size_t tp = s->pos;
             int cnt = 0;
             while (tp < end_pos) {
-                tp += yam_scan_to_break(s->buf + tp, end_pos - tp);
+                tp += oyl_scan_to_break(s->buf + tp, end_pos - tp);
                 cnt++;
                 if (tp < end_pos && s->buf[tp] == '\r') tp++;
                 if (tp < end_pos && s->buf[tp] == '\n') tp++;
             }
             lines_cap = cnt + 1;
-            lines = (bsline *)yam_arena_alloc(s->arena, lines_cap * sizeof(bsline), sizeof(void*));
-            if (!lines) return YAM_ERR_MEMORY;
+            lines = (bsline *)oyl_arena_alloc(s->arena, lines_cap * sizeof(bsline), sizeof(void*));
+            if (!lines) return OYL_ERR_MEMORY;
         }
 
         while (s->pos < end_pos) {
             int li = 0;
             while (s->pos + li < s->len && s->buf[s->pos + li] == ' ') li++;
             bool line_is_break = (s->pos + li >= end_pos) ||
-                                 (s->pos + li < s->len && yam_is_break((uint8_t)s->buf[s->pos + li]));
+                                 (s->pos + li < s->len && oyl_is_break((uint8_t)s->buf[s->pos + li]));
             if (line_is_break && li <= base_indent) {
                 /* empty line (indent at or below base, no extra content spaces) */
-                if (style == YAM_SCALAR_FOLDED && lines) {
+                if (style == OYL_SCALAR_FOLDED && lines) {
                     lines[nlines++] = (bsline){out, 0, true, 0};
                 }
                 buf[out++] = '\n';
                 advance_cols(s, (size_t)li);
-                if (!AT_END(s) && yam_is_break(PEEK(s))) skip_break(s);
+                if (!AT_END(s) && oyl_is_break(PEEK(s))) skip_break(s);
                 continue;
             }
             /* whitespace-only lines ABOVE base indent (li > base_indent)
@@ -1471,26 +1471,26 @@ yam_status yam_scan_token(yam_scanner *s, yam_token *tok) {
             advance_cols(s, (size_t)extra);
             /* check if content starts with whitespace (tab counts as more-indented) */
             bool starts_with_ws = (extra > 0) ||
-                (!AT_END(s) && !yam_is_break(PEEK(s)) && yam_is_blank(PEEK(s)));
+                (!AT_END(s) && !oyl_is_break(PEEK(s)) && oyl_is_blank(PEEK(s)));
             /* copy line content: up to the break, so no line changes */
-            size_t n = yam_scan_to_break(BUF_AT(s), REMAINING(s));
+            size_t n = oyl_scan_to_break(BUF_AT(s), REMAINING(s));
             memcpy(buf + out, BUF_AT(s), n);
             out += n;
             advance_cols(s, n);
 
-            if (style == YAM_SCALAR_FOLDED && lines) {
+            if (style == OYL_SCALAR_FOLDED && lines) {
                 lines[nlines++] = (bsline){line_content_start, out - line_content_start, false,
                                            starts_with_ws ? 1 : 0};
             }
 
             buf[out++] = '\n';
-            if (!AT_END(s) && yam_is_break(PEEK(s))) skip_break(s);
+            if (!AT_END(s) && oyl_is_break(PEEK(s))) skip_break(s);
         }
 
         /* apply folding for '>' style */
-        if (style == YAM_SCALAR_FOLDED && lines && nlines > 0) {
-            char *fbuf = yam_arena_alloc(s->arena, out + 1, 1);
-            if (!fbuf) return YAM_ERR_MEMORY;
+        if (style == OYL_SCALAR_FOLDED && lines && nlines > 0) {
+            char *fbuf = oyl_arena_alloc(s->arena, out + 1, 1);
+            if (!fbuf) return OYL_ERR_MEMORY;
             size_t fout = 0;
 
             int i = 0;
@@ -1570,15 +1570,15 @@ yam_status yam_scan_token(yam_scanner *s, yam_token *tok) {
         /* keep (chomp == 1): preserve all trailing newlines as-is */
 
         buf[out] = '\0';
-        *tok = tok_scalar((yam_str){buf, out}, style, start, mark(s));
-        return YAM_OK;
+        *tok = tok_scalar((oyl_str){buf, out}, style, start, mark(s));
+        return OYL_OK;
     }
 
     /* in flow context a plain scalar can't start with '-' unless a safe
      * character follows ('-a' is fine; '- ', '-,' and '-]' are not) */
     if (c == '-' && s->flow_level > 0) {
         uint8_t nc = PEEK_AT(s, 1);
-        if (nc == 0 || yam_is_blank_or_break(nc) || nc == ',' || nc == '[' ||
+        if (nc == 0 || oyl_is_blank_or_break(nc) || nc == ',' || nc == '[' ||
             nc == ']' || nc == '{' || nc == '}')
             SCAN_ERROR(s, "block sequence entry not allowed in flow context");
     }
@@ -1587,17 +1587,17 @@ yam_status yam_scan_token(yam_scanner *s, yam_token *tok) {
     return scan_plain_scalar(s, tok);
 }
 
-const char *yam_scanner_error(yam_scanner *s) {
+const char *oyl_scanner_error(oyl_scanner *s) {
     if (!s || s->error_msg[0] == '\0') return NULL;
     return s->error_msg;
 }
 
-yam_mark yam_scanner_error_mark(yam_scanner *s) {
-    if (!s) return (yam_mark){0, 0, 0};
+oyl_mark oyl_scanner_error_mark(oyl_scanner *s) {
+    if (!s) return (oyl_mark){0, 0, 0};
     return s->error_mark;
 }
 
-void yam_scanner_free(yam_scanner *s) {
+void oyl_scanner_free(oyl_scanner *s) {
     if (!s) return;
     free(s->indents.data);
     free(s->flows);
@@ -1606,56 +1606,56 @@ void yam_scanner_free(yam_scanner *s) {
 
 /* ── String utilities ────────────────────────────────────── */
 
-const char *yam_status_str(yam_status s) {
+const char *oyl_status_str(oyl_status s) {
     switch (s) {
-        case YAM_OK:         return "ok";
-        case YAM_ERR_MEMORY: return "memory error";
-        case YAM_ERR_INPUT:  return "input error";
-        case YAM_ERR_SCAN:   return "scan error";
-        case YAM_ERR_PARSE:  return "parse error";
-        case YAM_ERR_EMIT:   return "emit error";
-        case YAM_ERR_LIMIT:  return "limit exceeded";
+        case OYL_OK:         return "ok";
+        case OYL_ERR_MEMORY: return "memory error";
+        case OYL_ERR_INPUT:  return "input error";
+        case OYL_ERR_SCAN:   return "scan error";
+        case OYL_ERR_PARSE:  return "parse error";
+        case OYL_ERR_EMIT:   return "emit error";
+        case OYL_ERR_LIMIT:  return "limit exceeded";
     }
     return "unknown";
 }
 
-const char *yam_token_type_str(yam_token_type t) {
+const char *oyl_token_type_str(oyl_token_type t) {
     switch (t) {
-        case YAM_TOK_NONE:            return "NONE";
-        case YAM_TOK_STREAM_START:    return "STREAM_START";
-        case YAM_TOK_STREAM_END:      return "STREAM_END";
-        case YAM_TOK_DOC_START:       return "DOC_START";
-        case YAM_TOK_DOC_END:         return "DOC_END";
-        case YAM_TOK_BLOCK_SEQ_ENTRY: return "BLOCK_SEQ_ENTRY";
-        case YAM_TOK_BLOCK_MAP_KEY:   return "BLOCK_MAP_KEY";
-        case YAM_TOK_BLOCK_MAP_VALUE: return "BLOCK_MAP_VALUE";
-        case YAM_TOK_FLOW_SEQ_START:  return "FLOW_SEQ_START";
-        case YAM_TOK_FLOW_SEQ_END:    return "FLOW_SEQ_END";
-        case YAM_TOK_FLOW_MAP_START:  return "FLOW_MAP_START";
-        case YAM_TOK_FLOW_MAP_END:    return "FLOW_MAP_END";
-        case YAM_TOK_FLOW_ENTRY:      return "FLOW_ENTRY";
-        case YAM_TOK_SCALAR:          return "SCALAR";
-        case YAM_TOK_TAG:             return "TAG";
-        case YAM_TOK_ANCHOR:          return "ANCHOR";
-        case YAM_TOK_ALIAS:           return "ALIAS";
-        case YAM_TOK_DIRECTIVE:       return "DIRECTIVE";
+        case OYL_TOK_NONE:            return "NONE";
+        case OYL_TOK_STREAM_START:    return "STREAM_START";
+        case OYL_TOK_STREAM_END:      return "STREAM_END";
+        case OYL_TOK_DOC_START:       return "DOC_START";
+        case OYL_TOK_DOC_END:         return "DOC_END";
+        case OYL_TOK_BLOCK_SEQ_ENTRY: return "BLOCK_SEQ_ENTRY";
+        case OYL_TOK_BLOCK_MAP_KEY:   return "BLOCK_MAP_KEY";
+        case OYL_TOK_BLOCK_MAP_VALUE: return "BLOCK_MAP_VALUE";
+        case OYL_TOK_FLOW_SEQ_START:  return "FLOW_SEQ_START";
+        case OYL_TOK_FLOW_SEQ_END:    return "FLOW_SEQ_END";
+        case OYL_TOK_FLOW_MAP_START:  return "FLOW_MAP_START";
+        case OYL_TOK_FLOW_MAP_END:    return "FLOW_MAP_END";
+        case OYL_TOK_FLOW_ENTRY:      return "FLOW_ENTRY";
+        case OYL_TOK_SCALAR:          return "SCALAR";
+        case OYL_TOK_TAG:             return "TAG";
+        case OYL_TOK_ANCHOR:          return "ANCHOR";
+        case OYL_TOK_ALIAS:           return "ALIAS";
+        case OYL_TOK_DIRECTIVE:       return "DIRECTIVE";
     }
     return "UNKNOWN";
 }
 
-const char *yam_event_type_str(yam_event_type t) {
+const char *oyl_event_type_str(oyl_event_type t) {
     switch (t) {
-        case YAM_EVT_NONE:           return "NONE";
-        case YAM_EVT_STREAM_START:   return "STREAM_START";
-        case YAM_EVT_STREAM_END:     return "STREAM_END";
-        case YAM_EVT_DOC_START:      return "DOC_START";
-        case YAM_EVT_DOC_END:        return "DOC_END";
-        case YAM_EVT_MAPPING_START:  return "MAPPING_START";
-        case YAM_EVT_MAPPING_END:    return "MAPPING_END";
-        case YAM_EVT_SEQUENCE_START: return "SEQUENCE_START";
-        case YAM_EVT_SEQUENCE_END:   return "SEQUENCE_END";
-        case YAM_EVT_SCALAR:         return "SCALAR";
-        case YAM_EVT_ALIAS:          return "ALIAS";
+        case OYL_EVT_NONE:           return "NONE";
+        case OYL_EVT_STREAM_START:   return "STREAM_START";
+        case OYL_EVT_STREAM_END:     return "STREAM_END";
+        case OYL_EVT_DOC_START:      return "DOC_START";
+        case OYL_EVT_DOC_END:        return "DOC_END";
+        case OYL_EVT_MAPPING_START:  return "MAPPING_START";
+        case OYL_EVT_MAPPING_END:    return "MAPPING_END";
+        case OYL_EVT_SEQUENCE_START: return "SEQUENCE_START";
+        case OYL_EVT_SEQUENCE_END:   return "SEQUENCE_END";
+        case OYL_EVT_SCALAR:         return "SCALAR";
+        case OYL_EVT_ALIAS:          return "ALIAS";
     }
     return "UNKNOWN";
 }

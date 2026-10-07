@@ -1,5 +1,5 @@
 /*
- * yam_chars.h — Character classification for YAML 1.2
+ * oyl_chars.h — Character classification for YAML 1.2
  *
  * Single 256-byte lookup table. Each byte is a bitfield of character classes.
  * One table load, one AND, one branch — replaces libyaml's cascade of ifs.
@@ -7,8 +7,8 @@
  * Reference: YAML 1.2.2 spec, Chapter 5 "Character Productions"
  */
 
-#ifndef YAM_CHARS_H
-#define YAM_CHARS_H
+#ifndef OYL_CHARS_H
+#define OYL_CHARS_H
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -27,7 +27,7 @@
 
 /* ── Lookup table ────────────────────────────────────────── */
 
-static const uint8_t yam_char_table[256] = {
+static const uint8_t oyl_char_table[256] = {
     /*       0     1     2     3     4     5     6     7     8     9     A     B     C     D     E     F */
     /* 0x */ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x41, 0x02, 0x00, 0x00, 0x02, 0x00, 0x00,
     /* 1x */ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -46,23 +46,23 @@ static const uint8_t yam_char_table[256] = {
 
 /* ── Inline classification functions ─────────────────────── */
 
-static inline bool yam_is_space(uint8_t c)     { return (yam_char_table[c] & YC_SPACE) != 0; }
-static inline bool yam_is_break(uint8_t c)     { return (yam_char_table[c] & YC_BREAK) != 0; }
-static inline bool yam_is_white(uint8_t c)     { return (yam_char_table[c] & YC_WHITE) != 0; }
-static inline bool yam_is_flow(uint8_t c)      { return (yam_char_table[c] & YC_INDICATOR) != 0; }
-static inline bool yam_is_digit(uint8_t c)     { return (yam_char_table[c] & YC_DIGIT) != 0; }
-static inline bool yam_is_alpha(uint8_t c)     { return (yam_char_table[c] & YC_ALPHA) != 0; }
-static inline bool yam_is_hex(uint8_t c)       { return (yam_char_table[c] & YC_HEX) != 0; }
-static inline bool yam_is_printable(uint8_t c) { return (yam_char_table[c] & YC_PRINTABLE) != 0; }
-static inline bool yam_is_indicator(uint8_t c) { return (yam_char_table[c] & YC_INDICATOR2) != 0; }
+static inline bool oyl_is_space(uint8_t c)     { return (oyl_char_table[c] & YC_SPACE) != 0; }
+static inline bool oyl_is_break(uint8_t c)     { return (oyl_char_table[c] & YC_BREAK) != 0; }
+static inline bool oyl_is_white(uint8_t c)     { return (oyl_char_table[c] & YC_WHITE) != 0; }
+static inline bool oyl_is_flow(uint8_t c)      { return (oyl_char_table[c] & YC_INDICATOR) != 0; }
+static inline bool oyl_is_digit(uint8_t c)     { return (oyl_char_table[c] & YC_DIGIT) != 0; }
+static inline bool oyl_is_alpha(uint8_t c)     { return (oyl_char_table[c] & YC_ALPHA) != 0; }
+static inline bool oyl_is_hex(uint8_t c)       { return (oyl_char_table[c] & YC_HEX) != 0; }
+static inline bool oyl_is_printable(uint8_t c) { return (oyl_char_table[c] & YC_PRINTABLE) != 0; }
+static inline bool oyl_is_indicator(uint8_t c) { return (oyl_char_table[c] & YC_INDICATOR2) != 0; }
 
-static inline bool yam_is_blank(uint8_t c) { return c == ' ' || c == '\t'; }
-static inline bool yam_is_blank_or_break(uint8_t c) { return yam_char_table[c] & YC_WHITE; }
-static inline bool yam_is_alnum(uint8_t c) { return (yam_char_table[c] & (YC_DIGIT | YC_ALPHA)) != 0; }
+static inline bool oyl_is_blank(uint8_t c) { return c == ' ' || c == '\t'; }
+static inline bool oyl_is_blank_or_break(uint8_t c) { return oyl_char_table[c] & YC_WHITE; }
+static inline bool oyl_is_alnum(uint8_t c) { return (oyl_char_table[c] & (YC_DIGIT | YC_ALPHA)) != 0; }
 
 /* Characters that terminate a plain scalar in flow context */
-static inline bool yam_is_flow_scalar_end(uint8_t c) {
-    return (yam_char_table[c] & (YC_INDICATOR | YC_WHITE)) != 0 || c == ':';
+static inline bool oyl_is_flow_scalar_end(uint8_t c) {
+    return (oyl_char_table[c] & (YC_INDICATOR | YC_WHITE)) != 0 || c == ':';
 }
 
 /* ── SIMD character set for scanner fast paths ───────────── */
@@ -77,7 +77,7 @@ static inline bool yam_is_flow_scalar_end(uint8_t c) {
  */
 
 /* Byte ranges for SSE4.2 PCMPISTRI — pairs of [lo, hi] */
-static const char yam_simd_struct_ranges[16] = {
+static const char oyl_simd_struct_ranges[16] = {
     '\0', ' ',   /* NUL through space: all control characters and blanks */
     '#',  '#',    /* comment */
     ',',  ',',    /* flow entry */
@@ -87,6 +87,6 @@ static const char yam_simd_struct_ranges[16] = {
     '\x7f', '\x7f', /* DEL */
 };
 
-#define YAM_SIMD_STRUCT_RANGES_LEN 14
+#define OYL_SIMD_STRUCT_RANGES_LEN 14
 
-#endif /* YAM_CHARS_H */
+#endif /* OYL_CHARS_H */
