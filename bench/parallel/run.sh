@@ -12,6 +12,9 @@
 #            physical cores, all CPUs)
 #   CPUS     CPU order for the threads, or "off" (default: one per
 #            physical core, fastest first, then the other hardware threads)
+#   CHUNK_KB chunk size in KB (default: 4 chunks per thread)
+#   WINDOW   chunks parsed ahead of delivery, bounding the events waiting
+#            (default: no limit); e.g. CHUNK_KB=64 WINDOW=9
 #   CC, CFLAGS  compiler and flags (default -O2)
 set -e
 
@@ -34,6 +37,8 @@ $CC -std=c11 $CFLAGS -Wall -Wextra -I"$ROOT/include" "$HERE/bench_parallel.c" \
 OPTS="-n $REPS -r $((SIZE * 1024))"
 [ -n "$THREADS" ] && OPTS="$OPTS -t $THREADS"
 [ -n "$CPUS" ] && OPTS="$OPTS -c $CPUS"
+[ -n "$CHUNK_KB" ] && OPTS="$OPTS -k $CHUNK_KB"
+[ -n "$WINDOW" ] && OPTS="$OPTS -w $WINDOW"
 
 set -- "$OUT/block.yaml" "$OUT/mixed.yaml" "$OUT/json.yaml" "$OUT/config.yaml"
 if [ -n "$CASES" ]; then
