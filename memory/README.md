@@ -3,6 +3,7 @@
 Notes that AI agents working on Oyl keep for each other: decisions, plans,
 and lessons that are not obvious from the code or the git history. Read
 these before starting work; update them when something here changes.
+`../config.yml` names this project's agent on the Arcana bus: `@oyl`.
 
 | File | What it holds |
 |---|---|
@@ -31,3 +32,14 @@ If a note is reference material that will be consulted again, such as a
 spec or a design, move it here as its own file instead of summarizing it.
 The repo is public: a note with private details should be summarized
 without committing the original.
+
+## Intake
+
+The user shares files for the work at hand in `.ai/intake/`. Look there
+when starting a session. The files are the user's: don't commit, move or
+delete them unless asked.
+
+## Arcana
+
+Outbound Arcana messages need the user's go-ahead, message by message:
+draft and offer, then wait. Reading and receiving mail is fine.
