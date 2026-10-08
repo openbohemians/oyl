@@ -131,9 +131,22 @@ table's protocol) and update all of them from that run.
 3. Follow `RELEASING.md`: commit, push, watch CI, tag `v1.0.0`, push the
    tag, publish the GitHub release. The Package workflow attaches the
    Arch, Debian and RPM builds.
-4. Re-vendor the Crystal binding at the tag (see below) and push it.
+4. Re-vendor both bindings at the tag (see below) and push them.
 
-## The Crystal binding
+## The bindings
+
+**Rust**, done 2026-10-08: **openbohemians/oyl.rs** (local
+`~/Projects/oyl.rs`), one repo with two crates in a Cargo workspace:
+`oyl-sys` (raw FFI mirroring oyl.h; compiles the C sources vendored in
+`oyl-sys/oyl`, with `COMMIT`; a test checks struct sizes and offsets
+against C) and `oyl` (the safe API: Parser, events iterator, Error with
+position, Schema presets, Emitter). Kept as two crates at the user's
+choice. After a library change: `scripts/sync-oyl.sh ~/Projects/oyl`,
+`cargo test -j1`, commit. Not on crates.io yet (both names free); the
+plan is to publish after the tag, vendoring v1.0.0. Currently vendored:
+`4b7bf26`.
+
+### Crystal
 
 Done 2026-10-07: **openbohemians/oyl.cr** (transferred from trans/yam.cr,
 which redirects; local folder `~/Projects/oyl.cr`), shard `oyl`, module
