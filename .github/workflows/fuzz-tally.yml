@@ -2,6 +2,8 @@
 # total on the fuzz-stats branch (fuzz-stats.json), which the docs page's
 # counter reads. A separate branch keeps these updates out of main's
 # history. Pushes made with GITHUB_TOKEN don't trigger other workflows.
+# Publishing a release reruns it, so the page's count since the latest
+# release starts over at once.
 name: Fuzz tally
 on:
   workflow_run:
@@ -9,6 +11,8 @@ on:
       - "ClusterFuzzLite batch fuzzing (address)"
       - "ClusterFuzzLite batch fuzzing (undefined)"
     types: [completed]
+  release:
+    types: [published]
   workflow_dispatch:
 permissions:
   contents: write   # push fuzz-stats

@@ -5,7 +5,9 @@
 # (created if missing) to its running total of fuzz inputs executed. A
 # run's count is the sum of libFuzzer's "stat::number_of_executed_units"
 # lines across its job logs. Runs are recorded by id, so running this again
-# never counts a run twice. The docs page shows the total.
+# never counts a run twice. It also totals the runs since the latest
+# published release (release_executions), which the docs page shows, so
+# its counter starts over at each release; total_executions keeps counting.
 #
 # Needs GH_TOKEN (actions: read) and GITHUB_REPOSITORY; uses curl and jq.
 set -euo pipefail
@@ -49,15 +51,28 @@ while :; do
     page=$((page + 1))
 done
 
-if [ "$runs" = "$counted" ]; then
+# The latest published release (drafts and prereleases aren't "latest"),
+# or null before the first
+release=$(curl -fsSL "${auth[@]}" "$api/releases/latest" 2>/dev/null \
+    | jq -c '{tag: .tag_name, published: .published_at}') || release=null
+
+if [ "$runs" = "$counted" ] && [ "$release" = "$(jq -c '.release // null' "$out")" ]; then
     echo "no new runs"
     exit 0
 fi
-jq -n --argjson runs "$runs" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{
-    total_executions: ([$runs[].executions] | add // 0),
-    runs_counted: ($runs | length),
-    first_run: ([$runs[].created] | min),
-    updated: $now,
-    runs: $runs
-}' > "$out"
-jq -r '"total: \(.total_executions) executions over \(.runs_counted) runs"' "$out"
+# ISO 8601 UTC times compare as strings
+jq -n --argjson runs "$runs" --argjson release "$release" \
+      --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+    [$runs[] | select(.created >= ($release.published // ""))] as $since |
+    {
+        total_executions: ([$runs[].executions] | add // 0),
+        runs_counted: ($runs | length),
+        first_run: ([$runs[].created] | min),
+        release: $release,
+        release_executions: ([$since[].executions] | add // 0),
+        release_runs: ($since | length),
+        updated: $now,
+        runs: $runs
+    }' > "$out"
+jq -r '"total: \(.total_executions) executions over \(.runs_counted) runs;" +
+       " since \(.release.tag // "the first run"): \(.release_executions)"' "$out"

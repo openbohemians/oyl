@@ -744,7 +744,8 @@
              aria-label="4,187,798,713 fuzz inputs parsed"></div>
         <p class="tally-label">Fuzzies parsed</p>
         <p class="tally-note">
-          Random inputs ClusterFuzzLite has thrown at Oyl since September 24, 2026,
+          Random inputs ClusterFuzzLite has thrown at Oyl
+          <span id="tally-since">since September 24, 2026</span>,
           under AddressSanitizer and UndefinedBehaviorSanitizer, each checked for
           crashes, memory errors and round-trip mistakes. Counted from the
           <a href="https://github.com/openbohemians/oyl/actions">fuzzing logs</a> after every run.
@@ -873,9 +874,12 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
     document.querySelectorAll('.reveal').forEach((el) => observer.observe(el));
 
     /* ── Fuzz counter ───────────────────────────────────────────────
-     * The total comes from fuzz-stats.json on the fuzz-stats branch, which a
-     * workflow updates after every ClusterFuzzLite run; the data-total
-     * attribute is the fallback if it can't be fetched. */
+     * The count comes from fuzz-stats.json on the fuzz-stats branch, which a
+     * workflow updates after every ClusterFuzzLite run and when a release
+     * is published: the inputs since the latest release, so the counter
+     * starts over at each one. If it can't be fetched, the data-total
+     * attribute (an all-time count, which the note's built-in wording
+     * describes) stands in. */
     const STATS_URL = 'https://raw.githubusercontent.com/openbohemians/oyl/fuzz-stats/fuzz-stats.json';
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const tally = document.getElementById('tally');
@@ -920,13 +924,20 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
       roll();
     }
 
-    showTotal(Number(tally.dataset.total));
+    showTotal(0);
     fetch(STATS_URL)
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then((stats) => {
-        if (stats.total_executions > Number(tally.dataset.total)) showTotal(stats.total_executions);
+        const release = stats.release;
+        showTotal(release ? stats.release_executions : stats.total_executions);
+        if (release) {
+          const date = new Date(release.published).toLocaleDateString('en-US',
+            { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' });
+          document.getElementById('tally-since').textContent =
+            'since ' + release.tag + ', released ' + date;
+        }
       })
-      .catch(() => { /* keep the built-in total */ });
+      .catch(() => showTotal(Number(tally.dataset.total)));
 
     /* ── Benchmarks: small multiples, rendered from one data block ─── */
     const BENCH = {
