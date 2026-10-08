@@ -7,7 +7,8 @@ Fast, minimal, zero-copy. (Formerly *yam*; see the
 **[Website](https://openbohemians.github.io/oyl/)** ·
 [API reference](docs/api/index.md) ·
 [Benchmarks](#performance) ·
-[Changelog](CHANGELOG.md)
+[Changelog](CHANGELOG.md) ·
+[Crystal binding (oyl.cr)](https://github.com/openbohemians/oyl.cr)
 
 Features a SIMD-accelerated scanner (SSE4.2 with scalar fallback),
 an event-based parser, an emitter with block/flow/minimal output styles,
