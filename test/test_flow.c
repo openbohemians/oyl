@@ -173,6 +173,12 @@ static void test_flow_keys(void) {
     /* an empty explicit key's ':' must be at the mapping's indent */
     check(":\n   ?\n  : x\n", "{ ~ { ~ ~ } ERR");
     check("?\n: x\n", "{ ~ x }");
+    /* a ':' starting its line isn't an implicit key's, so a flow key may
+     * follow it, wherever it sits (as the scanner decides); the first is
+     * malformed (the key "0" ends on the line before) but both parse paths
+     * must agree on it */
+    check(":\n0\n : []:", "{ ~ ~ 0 { [ ] ~ } }");
+    check("\xEF\xBB\xBF: [g]: x\n", "{ ~ { [ g ] x } }");   /* after a byte order mark */
 }
 
 /* Plain scalars containing quote or comment characters must not confuse

@@ -103,6 +103,9 @@ Programs built against 0.x need these changes and a rebuild:
   key is a flow collection was rejected by the incremental parser.
 - After an empty explicit key (`?` alone on its line), the incremental
   parser accepted a `:` indented differently from its mapping.
+- After a `:` that starts its line away from its mapping's indentation, a
+  flow collection followed by `:` was a key to the eager parser and a value
+  to the incremental one, which then failed.
 - An explicit key whose node is itself a block mapping, followed by the
   outer `:` (`?\n  ? x\n: y`), was rejected. A `:` left of a mapping now
   ends it, giving its last key an empty value.
