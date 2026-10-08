@@ -26,11 +26,16 @@ often the quickest way to get it.
 
 ## The "fuzzies parsed" counter
 
-The website shows a running total of fuzz inputs. `fuzz-tally.yml` runs
-after each batch run. `.github/scripts/fuzz-tally.sh` sums libFuzzer's
-`stat::number_of_executed_units` from the job logs, records it per run id
-in `fuzz-stats.json` on the separate `fuzz-stats` branch, and the page
-fetches that file from raw.githubusercontent.com.
+The website shows the fuzz inputs run **since the latest published release**,
+so it starts over at each release (the user's choice, 2026-10-08).
+`fuzz-tally.yml` runs after each batch run, and when a release is published.
+`.github/scripts/fuzz-tally.sh` sums libFuzzer's
+`stat::number_of_executed_units` from the job logs, records each run's count
+and time in `fuzz-stats.json` on the separate `fuzz-stats` branch, and totals
+both all runs (`total_executions`) and those since the latest release
+(`release`, `release_executions`). The page fetches that file from
+raw.githubusercontent.com; if it can't, it shows the built-in all-time
+`data-total` with the note's original wording.
 
 ## Where bugs have come from
 
