@@ -104,7 +104,10 @@ tagging or publishing a release.**
    Oyl parses are structurally malformed to PyYAML (with bad bytes
    replaced); PyYAML is YAML 1.1, so each needs a 1.2 check: the planned
    libfyaml differential check (fuzzing.md, "Blind spots") would do it.
-   Not yet investigated; the user decides.
+   A clear-cut one, found 2026-10-07: `handle: @oyl` parses, but YAML 1.2
+   reserves `@` and `` ` ``, which can't start a plain scalar (production
+   126); libyaml (Crystal) and PyYAML both reject it. Not yet
+   investigated; the user decides.
 
 ## Benchmark claims to update (held by the user, 2026-10-07)
 
