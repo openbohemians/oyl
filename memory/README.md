@@ -11,7 +11,7 @@ these before starting work; update them when something here changes.
 | [fuzzing.md](fuzzing.md) | ClusterFuzzLite, the "fuzzies parsed" tally, finding and fixing crashes, CI habits |
 | [performance.md](performance.md) | How to measure, where Oyl stands, and the post-1.0 performance plan |
 | [naming.md](naming.md) | The yam → Oyl rename and the move to openbohemians |
-| [ideas.md](ideas.md) | Larger features agreed in principle but not started |
+| [ideas.md](ideas.md) | Larger features agreed in principle but not started: tree API, 1.1 → 1.2 converter |
 | [outreach.md](outreach.md) | GitHub Sponsors, and the plan to reach heavy YAML users after the parallel release |
 | [perdoc-fallback-prototype.patch](perdoc-fallback-prototype.patch) | Prototype of per-document eager fallback (release.md issue 3), against `d6b8afb` |
 
