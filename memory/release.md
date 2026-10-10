@@ -1,18 +1,18 @@
 # Release 1.0
 
-*Updated 2026-10-07*
+*Updated 2026-10-10*
 
 ## Status
 
-- The version is bumped to 1.0.0 (`liboyl.so.1`, Debian `liboyl1`), but
-  **v1.0.0 is not tagged or released**.
-- The library code is frozen until the tag except for bug fixes. Any
-  library change restarts the clean-fuzz clock (below), so performance work
-  waits for 1.1. Exceptions the user made on 2026-10-07: the quadratic
-  merge/resolve fix (issue 5), and the memory problem (issue 3: "there is
-  no longer a freeze -- not with a memory problem").
-- The clean-fuzz clock last restarted on **2026-10-07**, after the eager
-  parser went to a document at a time (`66eab45`). Earlier restarts:
+- **v1.0.0 is released** (2026-10-10, tag on `c5e72e0`, the user's
+  go-ahead): github.com/openbohemians/oyl/releases/tag/v1.0.0, with the
+  Arch, Debian and RPM packages attached. The website's fuzz counter now
+  counts from it. What comes next is in [roadmap.md](roadmap.md).
+- Tagged after 8 clean hour-long batch runs (4 ASan, 4 UBSan) following
+  the last fix, `7736423` (2026-10-10: a flow `?` entry's explicit-key
+  flag outlived the entry). Earlier clock restarts: 2026-10-08 (`e32eed4`,
+  flow keys after a line-start `:`), 2026-10-07 (`66eab45`, the eager
+  parser a document at a time),
   2026-10-07 (`a1f0fed`, merge and resolve made linear; `48773f8`, nested explicit keys and dropped limit errors; `d5fa6ee`,
   parse-path agreement; `94239d8`, verbatim tags), 2026-09-28 (`8e1d455`, flow-key lookahead
   redesign).
@@ -142,9 +142,9 @@ table's protocol) and update all of them from that run.
 against C) and `oyl` (the safe API: Parser, events iterator, Error with
 position, Schema presets, Emitter). Kept as two crates at the user's
 choice. After a library change: `scripts/sync-oyl.sh ~/Projects/oyl`,
-`cargo test -j1`, commit. Not on crates.io yet (both names free); the
-plan is to publish after the tag, vendoring v1.0.0. Currently vendored:
-`4b7bf26`.
+`cargo test -j1`, commit. Vendors v1.0.0 (`6a01076` in oyl.rs). **Open:**
+not on crates.io yet (both names were free); publishing waits for the
+user's go-ahead.
 
 ### Crystal
 
@@ -154,13 +154,14 @@ which redirects; local folder `~/Projects/oyl.cr`), shard `oyl`, module
 (`ext/oyl/COMMIT` names the commit), because shards doesn't fetch git
 submodules: the old submodule setup never installed. After any library
 change, run `make -C ext sync OYL=~/Projects/oyl`, then `make -C ext &&
-crystal spec`, and commit. Currently vendored: `bf27b20` (today's main).
+crystal spec`, and commit. Vendors v1.0.0 (`e78a6a6` in oyl.cr).
 Open: `Oyl.parse` resolves scalars like Crystal's YAML module (YAML 1.1
 yes/no/on/off booleans), not YAML 1.2's core schema; the user may decide.
 
 ## After the tag
 
-- The 1.1 work in [performance.md](performance.md) and [ideas.md](ideas.md).
+See [roadmap.md](roadmap.md). The checklist above holds for later releases
+too, with the next version's dates.
 
 ## Decisions behind 1.0
 
