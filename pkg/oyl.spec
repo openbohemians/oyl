@@ -57,7 +57,7 @@ make test test-schema test-emitter test-merge test-resolve test-errors \
 %{_libdir}/pkgconfig/oyl.pc
 
 %changelog
-* Thu Sep 24 2026 Thomas Sawyer <transfire@gmail.com> - 1.0.0-1
+* Sat Oct 10 2026 Thomas Sawyer <transfire@gmail.com> - 1.0.0-1
 - Renamed from yam to oyl: the oyl_/OYL_ API prefix, <oyl/oyl.h>,
   liboyl, and the oyl package.
 - First stable release. The ABI is now stable within 1.x; the runtime

@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0 (2026-09-24)
+## 1.0.0 (2026-10-10)
 
 The first stable release, and the first under a new name: **yam is now
 Oyl**, the optimized YAML library. The ABI is now stable within 1.x: the
