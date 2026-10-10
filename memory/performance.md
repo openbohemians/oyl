@@ -79,9 +79,8 @@ event parser, built from source.
 5. **Flow fast path.** Inside `[...]`/`{...}`, read common JSON-like content
    directly and emit events without token structs; fall back to the normal
    path for anything unusual. Estimated 1.3–1.5× on JSON. Prototype first.
-6. **Parallel parsing: a priority track.** The user wants it solid and
-   released before reaching out to heavy YAML users (2026-10-10; see
-   [outreach.md](outreach.md)). The experiment below splits within a
+6. **Parallel parsing in the library**, after the tree API and the Go
+   binding ([roadmap.md](roadmap.md), agreed 2026-10-10). The experiment below splits within a
    document too, not only at `---`; what a library version still needs is
    listed at its end.
 

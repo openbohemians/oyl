@@ -17,10 +17,10 @@ companies who use it.
 
 ## The plan (the user's, 2026-10-10)
 
-**Open.** Once the parallel parsing track is solid and released (see
-[performance.md](performance.md), "Parallel parsing experiment", for what a
-library version still needs), contact companies and organizations that
-use a lot of YAML, such as heavy Kubernetes users.
+**Open.** Contact companies and organizations that use a lot of YAML,
+such as heavy Kubernetes users, once the tree API and the Go binding are
+out (the user first said after parallel parsing; changed 2026-10-10, see
+[roadmap.md](roadmap.md)).
 
 Contacting people reaches beyond the agent network: draft, and send nothing
 without the user's go-ahead.

@@ -6,6 +6,9 @@ Larger features agreed in principle. None blocks 1.0, and none is started.
 
 ## Tree API (1.x)
 
+**Next after the tag** ([roadmap.md](roadmap.md), agreed 2026-10-10), and
+the base the Go binding builds on.
+
 Oyl has no document tree: only the scanner, the event parser, the emitter,
 schemas, and merge and alias expansion. Every competitor has one
 (`ryml::Tree`, libfyaml's `fy_document`, libyaml's `yaml_document_t`), and
