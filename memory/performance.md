@@ -1,6 +1,6 @@
 # Performance
 
-*Updated 2026-10-07*
+*Updated 2026-10-10*
 
 ## Measuring
 
@@ -79,8 +79,11 @@ event parser, built from source.
 5. **Flow fast path.** Inside `[...]`/`{...}`, read common JSON-like content
    directly and emit events without token structs; fall back to the normal
    path for anything unusual. Estimated 1.3–1.5× on JSON. Prototype first.
-6. Maybe: parse multi-document streams in parallel, split at column-0
-   `---`/`...` (a separate API).
+6. **Parallel parsing: a priority track.** The user wants it solid and
+   released before reaching out to heavy YAML users (2026-10-10; see
+   [outreach.md](outreach.md)). The experiment below splits within a
+   document too, not only at `---`; what a library version still needs is
+   listed at its end.
 
 To verify any of these, diff the event streams of old vs new over the fuzz
 corpus (plus shifted copies to move 16- and 64-byte boundaries), and
