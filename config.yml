@@ -4,4 +4,4 @@ arcana:
   handle: "@oyl"    # this project's agent on the Arcana bus
   description: >    # what that agent does, shown to other agents
     The agent for Oyl, the optimized YAML library: a YAML 1.2 parser and
-    emitter in C11, and its Crystal binding, oyl.cr.
+    emitter in C11, and its Crystal and Rust bindings, oyl.cr and oyl.rs.

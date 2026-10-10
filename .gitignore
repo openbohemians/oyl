@@ -1,0 +1,11 @@
+# .ai/.gitignore — see the dot-ai skill
+# Machine-local: the Arcana owner token
+arcana.token
+# The user's files for the work at hand: never committed
+intake/*
+!intake/.gitkeep
+# Unsent mail: machine-local, so two machines can't both send a message
+mail/drafts/*
+!mail/drafts/.gitkeep
+mail/outbox/*
+!mail/outbox/.gitkeep
