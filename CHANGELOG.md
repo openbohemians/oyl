@@ -106,6 +106,10 @@ Programs built against 0.x need these changes and a rebuild:
 - After a `:` that starts its line away from its mapping's indentation, a
   flow collection followed by `:` was a key to the eager parser and a value
   to the incremental one, which then failed.
+- After an explicit key's entry in a flow collection ended (`[? a, [b`
+  then `]: c]`), a later flow collection spanning lines and followed by `:`
+  was a key to the eager parser and an error to the incremental one. Both
+  now reject it: an implicit key must be on a single line.
 - An explicit key whose node is itself a block mapping, followed by the
   outer `:` (`?\n  ? x\n: y`), was rejected. A `:` left of a mapping now
   ends it, giving its last key an empty value.

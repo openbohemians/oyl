@@ -179,6 +179,14 @@ static void test_flow_keys(void) {
      * must agree on it */
     check(":\n0\n : []:", "{ ~ ~ 0 { [ ] ~ } }");
     check("\xEF\xBB\xBF: [g]: x\n", "{ ~ { [ g ] x } }");   /* after a byte order mark */
+    /* a '?' entry ends at ',' or its collection's close: a later ':' at the
+     * same depth belongs to an implicit key, which must be on one line */
+    check("[? a, [b\n]: c]", "[ { a ~ } [ b ] ERR");
+    check("[[? a], [[b\n]: c]]", "[ [ { a ~ } ] [ [ b ] ERR");
+    check("[{? a}, [[b\n]: c]]", "[ { a ~ } [ [ b ] ERR");
+    check("[? a, [b]: c]", "[ { a ~ } { [ b ] c } ]");
+    check("{? a, [b\n]: c}", "{ a ~ [ b ] c }");   /* a flow mapping's keys may span lines */
+    check("[? [b\n] : c]", "[ { [ b ] c } ]");
 }
 
 /* Plain scalars containing quote or comment characters must not confuse
