@@ -52,11 +52,17 @@ branch):
   is a float (PyYAML says string); no base 60 (PyYAML has it)
 - timestamps stay strings when decoded into `interface{}`
 
-Oyl's schema builder covers the word lists today. Gaps: its built-in
-number matchers are YAML 1.2's (no underscores, `0b` or 0-octal), so they
-need options (additive in 1.x); and a schema only picks the type, so the
-JSON writer must also convert the text (`0777` → 511, `yes` → true,
-non-string keys to strings, an error on `.inf` as Go's JSON gives). "YAML
-1.1" is a family of dialects: with number options, go-yaml v2 (for
-YAMLToJSON) and PyYAML (for the converter, ideas.md) become two schema
-configurations rather than two pieces of code.
+The user's schema design covers this (2026-10-10): a schema resolves text
+to tags, custom or redefined built-in ones, and each tag is bound to a
+parser, so a schema decides both type and value. A dialect such as
+go-yaml v2 or PyYAML (for the converter, ideas.md) is then a schema, not
+new code. What exists today is the first half: in C a rule maps a pattern
+(exact, case-insensitive, or the YAML 1.2 int/float matchers) to a tag
+name, with nothing binding a tag to a parser; oyl.cr has a fixed Core
+schema. To finish it, both additive in 1.x:
+- **matching:** number options (underscores, `0b`, 0-octal) or a match
+  type that calls a function
+- **tag → parser:** in C for YAMLToJSON (it returns JSON text: `0777` →
+  511, `yes` → true, non-string keys to strings, an error on `.inf` as
+  Go's JSON gives); in the binding's language for native values, with the
+  C core only naming the tag
