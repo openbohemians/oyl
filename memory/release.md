@@ -142,9 +142,16 @@ table's protocol) and update all of them from that run.
 against C) and `oyl` (the safe API: Parser, events iterator, Error with
 position, Schema presets, Emitter). Kept as two crates at the user's
 choice. After a library change: `scripts/sync-oyl.sh ~/Projects/oyl`,
-`cargo test -j1`, commit. Vendors v1.0.0 (`6a01076` in oyl.rs). **Open:**
-not on crates.io yet (both names were free); publishing waits for the
-user's go-ahead.
+`cargo test -j1`, commit (the script takes a ref: `... ~/Projects/oyl
+v1.1.0`). Vendors v1.0.0. **Published on crates.io 2026-10-10** with the
+user's go-ahead: `oyl-sys` 0.1.0+1.0.0 and `oyl` 0.1.0 (`cargo publish
+--workspace`, which uploads oyl-sys first). Versions follow the Rust API,
+not the C library; the part after `+` in oyl-sys's version is the vendored
+Oyl version, which the script sets. crates.io refuses versions differing
+only after the `+`, so re-vendoring for a release needs a bump before it.
+Both go to 1.0 once the Rust API holds through the tree work (agreed
+2026-10-10). The crates.io README of 0.1.0 still shows the git install
+line; the repo's says `oyl = "0.1"`.
 
 ### Crystal
 
