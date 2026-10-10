@@ -437,6 +437,12 @@
       color: var(--text-secondary);
     }
 
+    .tally-total {
+      margin: 0.35rem auto 0;
+      font-size: 0.74rem;
+      color: var(--text-muted);
+    }
+
     /* ── Benchmarks: small multiples, oyl emphasized ── */
 
     .bench-lede {
@@ -740,8 +746,8 @@
         support, and dependable error reporting.
       </p>
       <div class="tally">
-        <div class="tally-housing" id="tally" role="img" data-total="4187798713"
-             aria-label="4,187,798,713 fuzz inputs parsed"></div>
+        <div class="tally-housing" id="tally" role="img" data-total="8445956031"
+             aria-label="8,445,956,031 fuzz inputs parsed"></div>
         <p class="tally-label">Fuzzies parsed</p>
         <p class="tally-note">
           Random inputs ClusterFuzzLite has thrown at Oyl
@@ -750,6 +756,7 @@
           crashes, memory errors and round-trip mistakes. Counted from the
           <a href="https://github.com/openbohemians/oyl/actions">fuzzing logs</a> after every run.
         </p>
+        <p class="tally-total" id="tally-total" hidden></p>
       </div>
       <div class="stats">
         <div class="stat"><strong>308/308</strong><span>Valid suite cases</span></div>
@@ -877,9 +884,9 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
      * The count comes from fuzz-stats.json on the fuzz-stats branch, which a
      * workflow updates after every ClusterFuzzLite run and when a release
      * is published: the inputs since the latest release, so the counter
-     * starts over at each one. If it can't be fetched, the data-total
-     * attribute (an all-time count, which the note's built-in wording
-     * describes) stands in. */
+     * starts over at each one, with the all-time count in small print
+     * below. If it can't be fetched, the data-total attribute (an all-time
+     * count, which the note's built-in wording describes) stands in. */
     const STATS_URL = 'https://raw.githubusercontent.com/openbohemians/oyl/fuzz-stats/fuzz-stats.json';
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const tally = document.getElementById('tally');
@@ -929,12 +936,16 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then((stats) => {
         const release = stats.release;
+        const day = (iso) => new Date(iso).toLocaleDateString('en-US',
+          { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' });
         showTotal(release ? stats.release_executions : stats.total_executions);
         if (release) {
-          const date = new Date(release.published).toLocaleDateString('en-US',
-            { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' });
           document.getElementById('tally-since').textContent =
-            'since ' + release.tag + ', released ' + date;
+            'since ' + release.tag + ', released ' + day(release.published);
+          const all = document.getElementById('tally-total');
+          all.textContent = stats.total_executions.toLocaleString('en-US') +
+            ' in all since fuzzing began on ' + day(stats.first_run) + '.';
+          all.hidden = false;
         }
       })
       .catch(() => showTotal(Number(tally.dataset.total)));
