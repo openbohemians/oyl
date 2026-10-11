@@ -153,6 +153,22 @@ Both go to 1.0 once the Rust API holds through the tree work (agreed
 2026-10-10). The crates.io README of 0.1.0 still shows the git install
 line; the repo's says `oyl = "0.1"`.
 
+### Go
+
+Created 2026-10-11 with the user's go-ahead: **openbohemians/oyl.go**
+(local `~/Projects/oyl.go`), module `github.com/openbohemians/oyl.go`,
+package `oyl`. `YAMLToJSON` and `YAMLToJSONStrict`, byte for byte
+`sigs.k8s.io/yaml`'s, through the go-yaml v2 dialect, one cgo call per
+document. Vendors Oyl's C in `c/` with one including `.c` per source in
+the package root (cgo compiles only that directory); `scripts/sync-oyl.sh
+~/Projects/oyl [ref]` re-vendors. Currently vendors the `schema-parsers`
+branch (`bbde00e`); **no tags until Oyl 1.1** (README says so). Tests
+compare `testdata/` with `sigs.k8s.io/yaml` (`OYL_COMPARE=dir` adds more;
+866 Kubernetes documents all match), fuzz for valid JSON; CI on Linux and
+macOS green. `MaxDepth` 256 (go-yaml v2 allows 10,000; cgo thread stacks
+may be small). 5-6x `sigs.k8s.io/yaml` through Go. Not yet linked from
+Oyl's README (it documents 1.0).
+
 ### Crystal
 
 Done 2026-10-07: **openbohemians/oyl.cr** (transferred from trans/yam.cr,

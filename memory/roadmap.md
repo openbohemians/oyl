@@ -13,7 +13,8 @@ tree came first; YAMLToJSON needs no tree, so it moved ahead):
    dialects-design.md), 2026-10-11. **Next:** merge `schema-parsers` after
    1.0.1 is tagged.
 4. **A thin Go wrapper:** just YAMLToJSON over cgo, with benchmarks against
-   what Kubernetes uses now.
+   what Kubernetes uses now. Built 2026-10-11: openbohemians/oyl.go
+   (release.md, "Go"); tagged once Oyl 1.1 is.
 5. **Tree API in C** (ideas.md), designed to cross into other languages
    cheaply: one call builds a flat node array in one arena, and a binding
    reads it with one copy or in place. A design goes to the user first.
