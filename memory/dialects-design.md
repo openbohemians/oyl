@@ -2,9 +2,9 @@
 
 *Updated 2026-10-11*
 
-**Proposal, awaiting the user's review.** Replaces the bare libyaml
-compatibility switch planned in yamltojson-design.md, and builds on
-schema-design.md.
+**Agreed with the user, 2026-10-11** (decisions at the end); not yet
+built. Replaces the bare libyaml compatibility switch planned in
+yamltojson-design.md, and builds on schema-design.md.
 
 ## The principle (the user's, 2026-10-11)
 
@@ -113,13 +113,22 @@ Any dialect to standard: read each document with its dialect, write YAML
 changes, comment out keys a go-yaml v2 merge overrides, and warn. The
 document's directives already say what to convert from.
 
-## Open questions for the user
+## Decisions (the user, 2026-10-11)
 
-1. The prefix for Oyl's dialects: a domain you control, as tag URIs need
-   (`tag:openbohemians.org,2026:...`?).
-2. With a schema in use, a `%YAML 1.1` document would get YAML 1.1's types
-   (`yes` becomes true) where today it gets Core's. A behavior change
-   within 1.x, but what the document asks for: acceptable, or opt-in?
-3. The YAML 1.1 dialect: the 1.1 type repository as written, or PyYAML's
-   reading of it (no y/n booleans, a float needs a dot)? The repository is
-   the standard; PyYAML is the most used.
+1. **Prefix:** `tag:openbohemians.org,2026:` for Oyl's dialects. The user
+   is buying openbohemians.org (a tag URI needs the domain owned on its
+   date). **Open:** confirm the purchase before the prefix ships.
+2. **`%YAML` is the version of the default `!!` schema**
+   (`tag:yaml.org,2002:`) and is honored, by default: a `%YAML 1.1`
+   document gets YAML 1.1's types as the 1.1 spec defines them. A
+   behavior change within 1.x for documents that say 1.1, to note in the
+   CHANGELOG. Syntax stays YAML 1.2, as the spec asks of a 1.2 parser,
+   with a warning where 1.1 reads differently (NEL, LS and PS as line
+   breaks).
+3. **The YAML 1.1 dialect is the 1.1 type repository as written**
+   (yaml.org/type: y/n among the booleans, base 60, a float needs a dot
+   and a signed exponent). PyYAML gets its own dialect, as go-yaml v2 has.
+
+Building the 1.1 schema needs more parser flags (additive): base 60 for
+ints and floats, a float that needs a dot, an exponent that needs a sign,
+and 1.1's timestamp forms.
