@@ -44,6 +44,8 @@
   raw byte, which is not UTF-8. It is the code point U+0080 to U+00FF and
   now gives its UTF-8 encoding: `"\xB5"` is `µ`. Found by comparing with
   go-yaml.
+- `%YAML 2.0` and other versions not 1.x are rejected, as the spec asks
+  (for 0.x, as libyaml does). Any 1.x version is still accepted.
 
 ### Documentation
 

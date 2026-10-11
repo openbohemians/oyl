@@ -476,6 +476,38 @@ static void test_bom(void) {
     }
 }
 
+/* ── %YAML versions ──────────────────────────────────────── */
+
+/* Any 1.x version is accepted (a newer minor one should only warn);
+ * another major version is an error, in both parse paths */
+static void test_yaml_versions(void) {
+    printf("test_yaml_versions:\n");
+    static const struct { const char *version; oyl_status want; } cases[] = {
+        { "1.1", OYL_OK }, { "1.2", OYL_OK }, { "1.3", OYL_OK }, { "01.2", OYL_OK },
+        { "2.0", OYL_ERR_PARSE }, { "0.9", OYL_ERR_PARSE }, { "10.0", OYL_ERR_PARSE },
+        { "11.0", OYL_ERR_PARSE },
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        for (int eager = 0; eager <= 1; eager++) {
+            char yaml[64];
+            snprintf(yaml, sizeof yaml, "%%YAML %s\n---\na: b\n", cases[i].version);
+            oyl_arena *a = oyl_arena_new(4096);
+            oyl_parser *p = oyl_parser_new(yaml, strlen(yaml), a);
+            if (eager) oyl_parser_set_merge(p, true);
+            const oyl_event *evt;
+            oyl_status st;
+            while ((st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_STREAM_END)
+                ;
+            char msg[96];
+            snprintf(msg, sizeof msg, "%%YAML %s (%s): status %d", cases[i].version,
+                     eager ? "eager" : "incremental", st);
+            ASSERT(st == cases[i].want, msg);
+            oyl_parser_free(p);
+            oyl_arena_free(a);
+        }
+    }
+}
+
 /* ── Arena limits ──────────────────────────────────────────── */
 
 #include <stdint.h>
@@ -626,6 +658,7 @@ int main(void) {
     /* fuzzer regressions */
     test_block_scalar_trailing_spaces();
     test_bom();
+    test_yaml_versions();
     test_arena_limits();
     test_owned_pointers();
     test_read_file_edges();
