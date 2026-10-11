@@ -45,6 +45,9 @@ struct oyl_schema {
     oyl_str                default_quoted_tag;  /* all quoted scalars */
     oyl_str                default_seq_tag;     /* untagged sequences */
     oyl_str                default_map_tag;     /* untagged mappings */
+    /* the first bytes any rule could accept: a plain scalar starting with
+     * another byte is the default at once (NULL: no shortcut) */
+    const bool            *first;
 };
 
 /* ── Dialects and warnings ───────────────────────────────── */
@@ -63,6 +66,10 @@ typedef struct {
     size_t      last[8];   /* per code: the offset of the last one reported */
     bool        seen[8];
 } oyl_warn_state;
+
+/* oyl_schema_value from a scalar's parts (for oyl_json.c) */
+oyl_status oyl_schema_value_of(const oyl_schema *schema, oyl_str text, oyl_scalar_style style,
+                               oyl_str tag, oyl_value *out);
 
 /* Report a warning from parsing, once (see oyl_warn_state) */
 void oyl_warn(oyl_warn_state *w, oyl_warning code, oyl_mark mark, const char *msg);

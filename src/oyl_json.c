@@ -55,6 +55,19 @@ static bool buf_put(buffer *b, const void *s, size_t n) {
 static bool buf_putc(buffer *b, char c) { return buf_put(b, &c, 1); }
 static bool buf_puts(buffer *b, const char *s) { return buf_put(b, s, strlen(s)); }
 
+/* An integer in decimal, without snprintf */
+static bool buf_uint(buffer *b, uint64_t u, bool neg) {
+    char digits[24];
+    int n = sizeof digits;
+    do digits[--n] = (char)('0' + u % 10); while ((u /= 10) != 0);
+    if (neg) digits[--n] = '-';
+    return buf_put(b, digits + n, sizeof digits - (size_t)n);
+}
+
+static bool buf_int(buffer *b, int64_t i) {
+    return buf_uint(b, i < 0 ? (uint64_t)0 - (uint64_t)i : (uint64_t)i, i < 0);
+}
+
 /* ── The document ────────────────────────────────────────── */
 
 typedef enum { N_SCALAR, N_SEQ, N_MAP, N_ALIAS } node_kind;
@@ -97,6 +110,8 @@ typedef struct {
     buffer            bin;       /* a decoded !!binary */
     entry            *entries;   /* a stack: each mapping settles its own range */
     size_t            elen, ecap;
+    entry            *sort_tmp;  /* merge sort's buffer, reused */
+    size_t            tmp_cap;
     size_t            decodes, aliased;   /* go-yaml v2's aliasing count */
     int               alias_depth, depth, max_depth;
     oyl_status        status;    /* the first error */
@@ -440,6 +455,22 @@ static int utf8_seq(const unsigned char *s, size_t n, uint32_t *cp) {
     return len;
 }
 
+/* The ASCII bytes a JSON string writes as they are */
+static const bool json_plain[128] = {
+    [' '] = 1, ['!'] = 1, ['#'] = 1, ['$'] = 1, ['%'] = 1, ['\''] = 1, ['('] = 1, [')'] = 1,
+    ['*'] = 1, ['+'] = 1, [','] = 1, ['-'] = 1, ['.'] = 1, ['/'] = 1, ['0'] = 1, ['1'] = 1,
+    ['2'] = 1, ['3'] = 1, ['4'] = 1, ['5'] = 1, ['6'] = 1, ['7'] = 1, ['8'] = 1, ['9'] = 1,
+    [':'] = 1, [';'] = 1, ['='] = 1, ['?'] = 1, ['@'] = 1, ['A'] = 1, ['B'] = 1, ['C'] = 1,
+    ['D'] = 1, ['E'] = 1, ['F'] = 1, ['G'] = 1, ['H'] = 1, ['I'] = 1, ['J'] = 1, ['K'] = 1,
+    ['L'] = 1, ['M'] = 1, ['N'] = 1, ['O'] = 1, ['P'] = 1, ['Q'] = 1, ['R'] = 1, ['S'] = 1,
+    ['T'] = 1, ['U'] = 1, ['V'] = 1, ['W'] = 1, ['X'] = 1, ['Y'] = 1, ['Z'] = 1, ['['] = 1,
+    [']'] = 1, ['^'] = 1, ['_'] = 1, ['`'] = 1, ['a'] = 1, ['b'] = 1, ['c'] = 1, ['d'] = 1,
+    ['e'] = 1, ['f'] = 1, ['g'] = 1, ['h'] = 1, ['i'] = 1, ['j'] = 1, ['k'] = 1, ['l'] = 1,
+    ['m'] = 1, ['n'] = 1, ['o'] = 1, ['p'] = 1, ['q'] = 1, ['r'] = 1, ['s'] = 1, ['t'] = 1,
+    ['u'] = 1, ['v'] = 1, ['w'] = 1, ['x'] = 1, ['y'] = 1, ['z'] = 1, ['{'] = 1, ['|'] = 1,
+    ['}'] = 1, ['~'] = 1, [127] = 1,
+};
+
 /* A string as encoding/json writes it, HTML-safe: <, > and & escaped,
  * U+2028 and U+2029 too, and each invalid UTF-8 byte as U+FFFD. Go 1.27
  * writes that character itself; older versions wrote the escape \ufffd. */
@@ -450,9 +481,7 @@ static bool put_json_string(buffer *b, const char *str, size_t n) {
     size_t i = 0;
     while (i < n) {
         size_t run = i;
-        while (run < n && s[run] >= 0x20 && s[run] < 0x80 && s[run] != '"' && s[run] != '\\' &&
-               s[run] != '<' && s[run] != '>' && s[run] != '&')
-            run++;
+        while (run < n && s[run] < 0x80 && json_plain[s[run]]) run++;
         if (run > i && !buf_put(b, s + i, run - i)) return false;
         i = run;
         if (i >= n) break;
@@ -539,9 +568,7 @@ static bool scalar_value(doc *d, uint32_t i, oyl_value *v) {
         *v = (oyl_value){ .kind = OYL_VALUE_STR, .as = { .s = { d->bin.data, d->bin.len } } };
         return true;
     }
-    oyl_event e = { .type = OYL_EVT_SCALAR, .value = n->text, .tag = n->tag,
-                    .scalar_style = n->style };
-    oyl_status st = oyl_schema_value(d->schema, &e, v);
+    oyl_status st = oyl_schema_value_of(d->schema, n->text, n->style, n->tag, v);
     if (st == OYL_ERR_PARSE) {
         int tl;
         const char *t = short_tag(n->tag, &tl);
@@ -556,7 +583,6 @@ static bool write_scalar(doc *d, uint32_t i) {
     oyl_value v;
     if (!scalar_value(d, i, &v)) return false;
     buffer *b = &d->out;
-    char num[32];
     bool ok;
     switch (v.kind) {
     case OYL_VALUE_NULL:
@@ -566,12 +592,10 @@ static bool write_scalar(doc *d, uint32_t i) {
         ok = buf_puts(b, v.as.b ? "true" : "false");
         break;
     case OYL_VALUE_INT:
-        snprintf(num, sizeof num, "%lld", (long long)v.as.i);
-        ok = buf_puts(b, num);
+        ok = buf_int(b, v.as.i);
         break;
     case OYL_VALUE_UINT:
-        snprintf(num, sizeof num, "%llu", (unsigned long long)v.as.u);
-        ok = buf_puts(b, num);
+        ok = buf_uint(b, v.as.u, false);
         break;
     case OYL_VALUE_FLOAT:
         if (isnan(v.as.f) || isinf(v.as.f))
@@ -633,7 +657,6 @@ static bool key_string(doc *d, uint32_t k, size_t *off, size_t *len) {
     if (!scalar_value(d, i, &v)) return false;
     buffer *b = &d->keys;
     size_t start = b->len;
-    char num[32];
     bool ok;
     switch (v.kind) {
     case OYL_VALUE_NULL:
@@ -644,8 +667,7 @@ static bool key_string(doc *d, uint32_t k, size_t *off, size_t *len) {
         ok = buf_puts(b, v.as.b ? "true" : "false");
         break;
     case OYL_VALUE_INT:
-        snprintf(num, sizeof num, "%lld", (long long)v.as.i);
-        ok = buf_puts(b, num);
+        ok = buf_int(b, v.as.i);
         break;
     case OYL_VALUE_FLOAT:
         ok = put_float_key(b, v.as.f);
@@ -834,11 +856,14 @@ static bool settle(doc *d, size_t base, size_t *count) {
     size_t n = d->elen - base;
     *count = 0;
     if (n == 0) return true;
-    entry *tmp = malloc((n ? n : 1) * sizeof *tmp);
-    if (!tmp) return out_of_memory(d);
+    if (n > 16 && n > d->tmp_cap) {   /* insertion sort needs no buffer */
+        entry *tmp = realloc(d->sort_tmp, n * sizeof *tmp);
+        if (!tmp) return out_of_memory(d);
+        d->sort_tmp = tmp;
+        d->tmp_cap = n;
+    }
     entry *e = d->entries + base;
-    sort_entries(d, e, tmp, n);
-    free(tmp);
+    sort_entries(d, e, d->sort_tmp, n);
     bool strict = (d->flags & OYL_JSON_STRICT) != 0;
     bool any_counts = (d->flags & OYL_JSON_MERGE_ORDER) != 0;
     size_t out = 0;
@@ -965,5 +990,6 @@ oyl_status oyl_parse_json(oyl_parser *p, const oyl_schema *schema, unsigned flag
     free(d.keys.data);
     free(d.bin.data);
     free(d.entries);
+    free(d.sort_tmp);
     return st;
 }

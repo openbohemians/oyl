@@ -512,6 +512,8 @@ oyl_str oyl_schema_resolve(const oyl_schema *schema, oyl_str value,
     /* quoted scalars always resolve to default_quoted_tag (str) */
     if (style != OYL_SCALAR_PLAIN)
         return schema->default_quoted_tag;
+    if (value.len && schema->first && !schema->first[(unsigned char)value.data[0]])
+        return schema->default_plain_tag;
     for (int i = 0; i < schema->rule_count; i++) {
         const oyl_schema_rule *r = &schema->rules[i];
         /* resolution never needs memory: a float is only copied when its
@@ -529,9 +531,14 @@ static void text_value(oyl_value *out, oyl_str text) {
 oyl_status oyl_schema_value(const oyl_schema *schema, const oyl_event *scalar,
                             oyl_value *out) {
     if (!schema || !scalar || !out || scalar->type != OYL_EVT_SCALAR) return OYL_ERR_INPUT;
-    oyl_str text = scalar->value;
-    if (scalar->tag.len == 0) {
-        if (scalar->scalar_style == OYL_SCALAR_PLAIN) {
+    return oyl_schema_value_of(schema, scalar->value, scalar->scalar_style, scalar->tag, out);
+}
+
+oyl_status oyl_schema_value_of(const oyl_schema *schema, oyl_str text, oyl_scalar_style style,
+                               oyl_str tag, oyl_value *out) {
+    if (tag.len == 0) {
+        if (style == OYL_SCALAR_PLAIN &&
+            !(text.len && schema->first && !schema->first[(unsigned char)text.data[0]])) {
             for (int i = 0; i < schema->rule_count; i++) {
                 if (word_misses(&schema->rules[i], text)) continue;
                 int r = rule_parse(&schema->rules[i], text, out);
@@ -544,7 +551,7 @@ oyl_status oyl_schema_value(const oyl_schema *schema, const oyl_event *scalar,
     }
     bool bound = false;
     for (int i = 0; i < schema->rule_count; i++) {
-        if (!str_eq(schema->rules[i].tag, scalar->tag)) continue;
+        if (!str_eq(schema->rules[i].tag, tag)) continue;
         bound = true;
         int r = rule_parse(&schema->rules[i], text, out);
         if (r < 0) return OYL_ERR_MEMORY;
@@ -577,7 +584,21 @@ oyl_status oyl_schema_value(const oyl_schema *schema, const oyl_event *scalar,
     .default_seq_tag    = TAG(SEQ), \
     .default_map_tag    = TAG(MAP)
 
-#define PRESET(r) { .rules = r, .rule_count = sizeof(r) / sizeof(r[0]), DEFAULT_TAGS }
+#define PRESET(r, f) { .rules = r, .rule_count = sizeof(r) / sizeof(r[0]), DEFAULT_TAGS, .first = f }
+
+/* The first bytes the presets' rules accept, for the shortcut in
+ * resolution: numbers start with a digit, sign or dot, the rest are words */
+#define FIRST_NUMBER ['0'] = 1, ['1'] = 1, ['2'] = 1, ['3'] = 1, ['4'] = 1, ['5'] = 1, \
+                     ['6'] = 1, ['7'] = 1, ['8'] = 1, ['9'] = 1, ['+'] = 1, ['-'] = 1, ['.'] = 1
+static const bool json_first[256] = { FIRST_NUMBER, ['n'] = 1, ['t'] = 1, ['f'] = 1 };
+static const bool core_first[256] = { FIRST_NUMBER, ['n'] = 1, ['N'] = 1, ['~'] = 1, ['t'] = 1,
+                                      ['T'] = 1, ['f'] = 1, ['F'] = 1 };
+static const bool goyaml2_first[256] = { FIRST_NUMBER, ['~'] = 1, ['n'] = 1, ['N'] = 1, ['y'] = 1,
+                                         ['Y'] = 1, ['t'] = 1, ['T'] = 1, ['o'] = 1, ['O'] = 1,
+                                         ['f'] = 1, ['F'] = 1 };
+static const bool yaml11_first[256] = { FIRST_NUMBER, ['~'] = 1, ['n'] = 1, ['N'] = 1, ['y'] = 1,
+                                        ['Y'] = 1, ['t'] = 1, ['T'] = 1, ['o'] = 1, ['O'] = 1,
+                                        ['f'] = 1, ['F'] = 1, ['<'] = 1, ['='] = 1 };
 
 static const oyl_schema failsafe_schema = { .rules = NULL, .rule_count = 0, DEFAULT_TAGS };
 
@@ -594,7 +615,7 @@ static const oyl_schema_rule json_rules[] = {
     FLOAT_RULE(OYL_FLOAT_CORE),
 };
 
-static const oyl_schema json_schema = PRESET(json_rules);
+static const oyl_schema json_schema = PRESET(json_rules, json_first);
 
 const oyl_schema *oyl_schema_json(void) {
     return &json_schema;
@@ -608,7 +629,7 @@ static const oyl_schema_rule core_rules[] = {
     FLOAT_RULE(OYL_FLOAT_CORE),
 };
 
-static const oyl_schema core_schema = PRESET(core_rules);
+static const oyl_schema core_schema = PRESET(core_rules, core_first);
 
 const oyl_schema *oyl_schema_core(void) {
     return &core_schema;
@@ -633,7 +654,7 @@ static const oyl_schema_rule yaml11_rules[] = {
     TIMESTAMP11_RULE,
 };
 
-static const oyl_schema yaml11_schema = PRESET(yaml11_rules);
+static const oyl_schema yaml11_schema = PRESET(yaml11_rules, yaml11_first);
 
 const oyl_schema *oyl_schema_yaml11(void) {
     return &yaml11_schema;
@@ -662,7 +683,7 @@ static const oyl_schema_rule goyaml2_rules[] = {
     FLOAT_RULE(GOYAML2_FLOAT),
 };
 
-static const oyl_schema goyaml2_schema = PRESET(goyaml2_rules);
+static const oyl_schema goyaml2_schema = PRESET(goyaml2_rules, goyaml2_first);
 
 const oyl_schema *oyl_schema_goyaml2(void) {
     return &goyaml2_schema;
@@ -811,7 +832,36 @@ const oyl_schema *oyl_schema_builder_finish(oyl_schema_builder *b) {
         }
         stable[i] = r;
     }
-    *schema = (oyl_schema){ .rules = stable, .rule_count = b->len, DEFAULT_TAGS };
+    /* the first bytes its rules can accept; a custom parser could take any */
+    bool *first = oyl_arena_alloc(b->arena, 256 * sizeof *first, _Alignof(bool));
+    if (!first) return NULL;
+    memset(first, 0, 256 * sizeof *first);
+    for (int i = 0; i < b->len; i++) {
+        const oyl_schema_rule *r = &stable[i];
+        switch (r->kind) {
+        case RULE_WORD:
+        case RULE_WORD_ICASE:
+            if (r->plen == 0) break;   /* the empty word needs no first byte */
+            first[(unsigned char)r->pattern[0]] = true;
+            if (r->kind == RULE_WORD_ICASE) {
+                first[(unsigned char)tolower((unsigned char)r->pattern[0])] = true;
+                first[(unsigned char)toupper((unsigned char)r->pattern[0])] = true;
+            }
+            break;
+        case RULE_INT:
+        case RULE_FLOAT:
+        case RULE_TIMESTAMP:
+            for (int c = '0'; c <= '9'; c++) first[c] = true;
+            first['+'] = first['-'] = first['.'] = true;
+            break;
+        case RULE_CUSTOM:
+            memset(first, 1, 256 * sizeof *first);
+            break;
+        case RULE_NONE:
+            break;
+        }
+    }
+    *schema = (oyl_schema){ .rules = stable, .rule_count = b->len, DEFAULT_TAGS, .first = first };
     return schema;
 }
 
