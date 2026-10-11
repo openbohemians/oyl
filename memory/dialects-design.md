@@ -129,6 +129,16 @@ document's directives already say what to convert from.
    (yaml.org/type: y/n among the booleans, base 60, a float needs a dot
    and a signed exponent). PyYAML gets its own dialect, as go-yaml v2 has.
 
+4. **Where the spec is ambiguous, follow libyaml** (the user,
+   2026-10-11). Applied to the YAML 1.1 dialect: libyaml's syntax choices,
+   and for types the repository where it is explicit, else libyaml's
+   family (PyYAML's resolver, by libyaml's author). For YAML 1.2, the
+   default, the YAML Test Suite already settles ambiguities and Oyl passes
+   all of it; libyaml disagrees with the suite in places (a block scalar
+   ending the input: libyaml adds no line feed, L24T and JEF9 require
+   one). **Open:** the user to confirm the rule stops at the suite for 1.2
+   (proposed); the go-yaml v2 dialect takes libyaml's choices anyway.
+
 Building the 1.1 schema needs more parser flags (additive): base 60 for
 ints and floats, a float that needs a dot, an exponent that needs a sign,
 and 1.1's timestamp forms.
