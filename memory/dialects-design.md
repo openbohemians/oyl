@@ -17,9 +17,20 @@ A document says what it is, and Oyl listens:
   everything -- a dialect... That was the whole point."
 
 The spec (6.8.2.2, example 6.19) allows redefining `!!` but applies it only
-to explicit tags; it leaves typing untagged values to the program. Using
-the `!!` prefix for untagged values is Oyl's interpretation, documented as
-such. Other parsers read such a file with their own defaults, and explicit
+to explicit tags; it leaves typing untagged values to the program. The
+user took part in the YAML 1.2 discussions of `!` and `!!` and recalls the
+intent (2026-10-11): `!` for the application's explicit types, `!!` for
+the underlying schema's types, implicit ones included; named handles
+(`!name!`) for further vocabularies. The published text kept only the
+mechanics of `!!` as shorthand for explicit tags. So Oyl applying the `!!`
+prefix to untagged values follows that intent, and the docs should say
+the spec text doesn't spell it out.
+
+The three handles in Oyl, then: `!!` chooses the dialect (the schema for
+explicit `!!` tags and untagged values); `!` tags are the program's own
+types, bound to its parsers with `oyl_schema_builder_add_type` (and
+`%TAG ! <prefix>` can move them into its namespace); `!name!` handles are
+other vocabularies, bound the same way. Other parsers read such a file with their own defaults, and explicit
 `!!` tags there expand to the custom prefix, which they may not know; the
 converter (any dialect to standard) makes such documents portable.
 
