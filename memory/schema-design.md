@@ -3,8 +3,28 @@
 *Updated 2026-10-11*
 
 **Agreed 2026-10-11**: the user took every recommendation below. Step 2
-of [roadmap.md](roadmap.md). New public API, additive within 1.x, built on
-the branch `schema-parsers` and merged after 1.0.1 is tagged.
+of [roadmap.md](roadmap.md). New public API, additive within 1.x.
+
+**Built 2026-10-11 on the branch `schema-parsers` (`2966ee2`), not yet
+merged:** it waits for 1.0.1 to be tagged from main, then merges as 1.1.0
+(the CHANGELOG has a 1.1.0 section above 1.0.1). Checks:
+- go-yaml v2.4.4's resolve against `oyl_schema_goyaml2()`: 0 differences
+  in tag, kind or value (float bits) on 4 generated sets of ~380,000
+  scalars and 55,339 real ones ([goyaml2-oracle/](goyaml2-oracle/README.md))
+- Core and JSON resolution identical to 1.0 on the same 435,549 inputs
+- Core resolution 40.5 → 23.5 ns per scalar (the word rules' length check
+  comes first; 1.0 ran strlen on every pattern)
+- 236 schema tests; the fuzzer checks each scalar's value kind against
+  its resolved tag (coverage 3,211 → 3,371 edges; 5 minutes clean)
+
+What building found, beyond the design: go-yaml v2 reads `08` and `09`
+as floats (not octal, so the int parser declines), a signed value beyond
+int64 as a float (ParseUint takes no sign), `1e400` as a string, `<<` as
+a string (its merge check reads the text), underscores even inside a
+prefix (`0_x1F`), and for text starting with `.` only between digits
+(Go's ParseFloat); time.Parse takes a run of spaces for the space.
+Also: Core's int accepts a sign before `0x`/`0o` (the spec doesn't),
+kept from 1.0, so `OYL_INT_CORE` includes `OYL_INT_SIGN_PREFIX`.
 
 ## Goal
 
