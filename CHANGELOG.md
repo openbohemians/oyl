@@ -65,6 +65,10 @@
   go-yaml.
 - `%YAML 2.0` and other versions not 1.x are rejected, as the spec asks
   (for 0.x, as libyaml does). Any 1.x version is still accepted.
+- A flow collection used as a key, with a quoted key inside it followed by
+  blanks before its `:` and a quoted value ending in a comma
+  (`['' :',']: v`), was a key to the eager parser and a value to the
+  incremental one, which then failed. Found by fuzzing.
 
 ### Documentation
 
