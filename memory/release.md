@@ -1,6 +1,6 @@
 # Release 1.0
 
-*Updated 2026-10-10*
+*Updated 2026-10-11*
 
 ## Status
 
@@ -16,6 +16,16 @@
   2026-10-07 (`a1f0fed`, merge and resolve made linear; `48773f8`, nested explicit keys and dropped limit errors; `d5fa6ee`,
   parse-path agreement; `94239d8`, verbatim tags), 2026-09-28 (`8e1d455`, flow-key lookahead
   redesign).
+
+## 1.0.1 (on main, not tagged)
+
+Fixes: Core's `.Inf`/`.NaN` spellings (`707aa94`), `\x80`-`\xFF` escapes
+as UTF-8 (`fba460b`), `%YAML` other than 1.x rejected (`7cc131b`), and the
+flow-key lookahead with blanks before a quoted key's ':' (`e1fedf2`,
+found 2026-10-11 by the ASan batch run on `7cc131b`: `['' :',']:`). The
+clean-fuzz clock restarted at `e1fedf2`; batch runs dispatched
+2026-10-11 23:20 UTC. **Tag only after clean batch runs on `e1fedf2` or
+later, with the user's go-ahead.** `schema-parsers` has the fix merged.
 
 ## The rule
 
