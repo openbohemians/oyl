@@ -15,6 +15,13 @@ tree came first; YAMLToJSON needs no tree, so it moved ahead):
 4. **A thin Go wrapper:** just YAMLToJSON over cgo, with benchmarks against
    what Kubernetes uses now. Built 2026-10-11: openbohemians/oyl.go
    (release.md, "Go"); tagged once Oyl 1.1 is.
+4b. **A faster JSON writer** (the user, 2026-10-11: next on the list).
+   Today YAMLToJSON is 5-6x `sigs.k8s.io/yaml` (94 against 18 MB/s through
+   Go on a 1 MB CRD); Oyl parses that document at 300 MB/s but converts
+   it at 127, so the writer is the limit. Target about 8-10x: type
+   scalars while reading, don't copy each key, a leaner node array
+   (yamltojson-design.md, "Speed"). Publish the speedup numbers from a
+   release.
 5. **Tree API in C** (ideas.md), designed to cross into other languages
    cheaply: one call builds a flat node array in one arena, and a binding
    reads it with one copy or in place. A design goes to the user first.
