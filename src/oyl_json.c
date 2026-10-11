@@ -828,6 +828,8 @@ static void sort_entries(const doc *d, entry *e, entry *tmp, size_t n) {
  * mapping, or, in go-yaml v2's merge order, by a merge too. */
 static bool settle(doc *d, size_t base, size_t *count) {
     size_t n = d->elen - base;
+    *count = 0;
+    if (n == 0) return true;
     entry *tmp = malloc((n ? n : 1) * sizeof *tmp);
     if (!tmp) return out_of_memory(d);
     entry *e = d->entries + base;
@@ -914,7 +916,10 @@ oyl_status oyl_parse_json(oyl_parser *p, const oyl_schema *schema, unsigned flag
               .max_depth = oyl_parser_depth_limit(p) };
     /* both buffers exist even when nothing is written to them, so that
      * offsets into them are never taken from NULL */
-    if (!buf_reserve(&d.out, 256) || !buf_reserve(&d.keys, 256)) {
+    d.entries = malloc(64 * sizeof *d.entries);
+    d.ecap = d.entries ? 64 : 0;
+    if (!d.entries || !buf_reserve(&d.out, 256) || !buf_reserve(&d.keys, 256)) {
+        free(d.entries);
         free(d.out.data);
         free(d.keys.data);
         return OYL_ERR_MEMORY;

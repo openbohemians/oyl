@@ -60,6 +60,9 @@ static void test_kubernetes(void) {
           "{\"d\":\"2001-12-14\",\"t\":\"2001-12-14t21:59:43.10-05:00\"}");
     check("- 1\n- x\n", "[1,\"x\"]");
     check("hello\n", "\"hello\"");
+    check("{}\n", "{}");
+    check("[]\n", "[]");
+    check("a: {}\nb: []\n", "{\"a\":{},\"b\":[]}");
     check("", "END");
     check("a: 1\n---\nb: 2\n", "{\"a\":1}");
     check("b: !!binary aGVsbG8=\n", "{\"b\":\"hello\"}");
