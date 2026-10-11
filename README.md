@@ -385,6 +385,33 @@ dialect flags (`oyl_schema_builder_add_int_flags`, `..._float_flags`), and
 `oyl_schema_builder_add_type` binds any tag, a built-in one included, to
 your own parser. See [docs/api](docs/api/index.md#tag-schemas).
 
+## YAML to JSON
+
+`oyl_parse_json` reads a document and writes it as JSON, typing scalars
+with a schema. With the go-yaml v2 schema and `OYL_JSON_KUBERNETES`, the
+output is byte for byte what Kubernetes gets from `sigs.k8s.io/yaml`'s
+`YAMLToJSON`, about six times faster on real manifests:
+
+```c
+oyl_parser *p = oyl_parser_new(yaml, len, arena);
+oyl_str json;
+if (oyl_parse_json(p, oyl_schema_goyaml2(), OYL_JSON_KUBERNETES, &json) == OYL_OK && json.data)
+    puts(json.data);          /* {"apiVersion":"v1","kind":"Pod",...} */
+```
+
+Keys are sorted, numbers and strings are written as Go's `encoding/json`
+writes them, aliases are expanded, and `<<` merges follow go-yaml v2's
+order (a merge overrides the keys before it). For standard JSON use the
+Core schema and `OYL_JSON_MERGE`, YAML's merge, where keys written in the
+mapping win. Each call reads one document; at the end of the stream the
+result is empty.
+
+Where go-yaml v2 reads YAML differently from YAML 1.2, it inherits that
+from libyaml: `?x` as an explicit key, anchor names cut at `:`, `\'`
+accepted in double quotes, no line break added to a block scalar that ends
+the input, and everything after the first document's root node ignored.
+Oyl follows YAML 1.2 there, so those inputs convert differently or fail.
+
 ## Architecture
 
 ```

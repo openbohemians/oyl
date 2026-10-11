@@ -393,6 +393,9 @@ OYL_API const oyl_schema *oyl_schema_goyaml2(void);
 /** The tag YAML gives timestamps. */
 OYL_API extern const oyl_str OYL_TAG_TIMESTAMP;   /**< tag:yaml.org,2002:timestamp */
 
+/** The tag of base64 data, which oyl_parse_json decodes. */
+OYL_API extern const oyl_str OYL_TAG_BINARY;      /**< tag:yaml.org,2002:binary */
+
 /* ── Parser ──────────────────────────────────────────────── */
 
 /** Opaque event parser. Consumes tokens from the scanner and produces
@@ -456,6 +459,38 @@ OYL_API oyl_mark    oyl_parser_error_mark(oyl_parser *p);
 
 /** Free the parser (does not free the arena). */
 OYL_API void        oyl_parser_free(oyl_parser *p);
+
+/* ── JSON ────────────────────────────────────────────────── */
+
+/** Options for oyl_parse_json. */
+enum {
+    OYL_JSON_MERGE       = 1 << 0,  /**< expand << merge keys; keys written in the mapping win */
+    OYL_JSON_MERGE_ORDER = 1 << 1,  /**< with MERGE, as go-yaml v2: a merge overrides the
+                                         keys before it, and keys after it override it */
+    OYL_JSON_STRICT      = 1 << 2,  /**< a key set twice is an error */
+    /** As Kubernetes reads YAML (sigs.k8s.io/yaml's YAMLToJSON), with
+     *  oyl_schema_goyaml2() */
+    OYL_JSON_KUBERNETES  = OYL_JSON_MERGE | OYL_JSON_MERGE_ORDER,
+};
+
+/** Read the parser's next document and write it as JSON, typing scalars
+ *  with @p schema. The output lives in the parser's arena. At the end of
+ *  the stream, returns OYL_OK with an empty @p json.
+ *
+ *  Keys are sorted by their bytes, and a key set twice keeps its last
+ *  value (an error under OYL_JSON_STRICT); aliases are expanded, within
+ *  go-yaml v2's limit on aliasing; numbers and strings are written as Go's
+ *  encoding/json writes them. With oyl_schema_goyaml2() and
+ *  OYL_JSON_KUBERNETES, the output is byte for byte that of
+ *  sigs.k8s.io/yaml's YAMLToJSON for the first document.
+ *
+ *  Leave the parser's own merge and alias resolution off: this function
+ *  does both. Errors it finds (a null or collection key, inf or NaN, an
+ *  unknown anchor, a scalar its explicit tag rejects) are reported like
+ *  parse errors, with oyl_parser_error() and oyl_parser_error_mark(): as
+ *  OYL_ERR_PARSE, or OYL_ERR_LIMIT for too much aliasing or nesting. */
+OYL_API oyl_status oyl_parse_json(oyl_parser *p, const oyl_schema *schema,
+                                  unsigned flags, oyl_str *json);
 
 /* ── Emitter ─────────────────────────────────────────────── */
 

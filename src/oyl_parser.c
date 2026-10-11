@@ -4737,6 +4737,15 @@ void oyl_parser_set_max_depth(oyl_parser *p, int max) {
     if (p) p->max_depth = max;
 }
 
+void oyl_parser_fail(oyl_parser *p, oyl_mark mark, const char *msg) {
+    snprintf(p->error_msg, sizeof(p->error_msg), "%s", msg);
+    p->error_mark = mark;
+}
+
+oyl_arena *oyl_parser_arena(const oyl_parser *p) { return p->arena; }
+int oyl_parser_depth_limit(const oyl_parser *p) { return p->max_depth > 0 ? p->max_depth : 0; }
+const oyl_schema *oyl_parser_schema(const oyl_parser *p) { return p->schema; }
+
 const char *oyl_parser_error(oyl_parser *p) {
     if (!p || p->error_msg[0] == '\0') return NULL;
     return p->error_msg;

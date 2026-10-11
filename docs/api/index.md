@@ -388,6 +388,38 @@ oyl_schema_builder_add_float_flags(b, OYL_FLOAT_CORE);
 
 ---
 
+## JSON
+
+```c
+oyl_str json;
+oyl_status st = oyl_parse_json(parser, oyl_schema_goyaml2(), OYL_JSON_KUBERNETES, &json);
+```
+
+`oyl_parse_json(p, schema, flags, &json)` reads the parser's next document
+and writes it as JSON in the parser's arena, scalars typed by `schema`. At
+the end of the stream it returns `OYL_OK` with an empty `json`. Errors are
+reported like parse errors (`oyl_parser_error`, `oyl_parser_error_mark`):
+`OYL_ERR_PARSE` for what JSON can't hold or the schema rejects (a null,
+collection or uint64 key; inf or NaN; an unknown anchor; `!!int "abc"`),
+`OYL_ERR_LIMIT` for too much aliasing (go-yaml v2's ratio) or nesting (the
+parser's depth limit, counted through aliases). Leave the parser's own
+merge and alias resolution off.
+
+| Flag | Effect |
+|------|--------|
+| `OYL_JSON_MERGE` | expand `<<` merge keys; keys written in the mapping win (YAML's merge) |
+| `OYL_JSON_MERGE_ORDER` | with `MERGE`, go-yaml v2's order: a merge overrides the keys before it |
+| `OYL_JSON_STRICT` | a key set twice is an error (`YAMLToJSONStrict`) |
+| `OYL_JSON_KUBERNETES` | `MERGE \| MERGE_ORDER`: with `oyl_schema_goyaml2()`, `sigs.k8s.io/yaml`'s `YAMLToJSON` |
+
+Output: keys sorted by their bytes, the last of a repeated key winning;
+`<`, `>`, `&`, U+2028 and U+2029 escaped, invalid UTF-8 as U+FFFD; floats
+in their shortest form, plain from 1e-6 to 1e21 and e notation outside;
+float keys in go-yaml's 32-bit form (`1e+06`); `!!binary` decoded;
+timestamps as strings.
+
+---
+
 ## Scanner
 
 Low-level tokenizer. Most users should use the parser instead.

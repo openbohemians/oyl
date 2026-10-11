@@ -50,10 +50,11 @@ TEST_MERGE := $(OBJDIR)/test_merge
 TEST_RESOLVE := $(OBJDIR)/test_resolve
 TEST_ERRORS := $(OBJDIR)/test_errors
 TEST_FLOW := $(OBJDIR)/test_flow
+TEST_JSON := $(OBJDIR)/test_json
 
 .PHONY: all static shared pkgconfig install uninstall dist version \
         clean test test-suite test-schema test-emitter test-merge \
-        test-resolve test-errors test-flow test-all bench bench-parser bench-cmp bench-parser-cmp bench-compare bench-classify bench-oracle bench-parallel
+        test-resolve test-errors test-flow test-json test-all bench bench-parser bench-cmp bench-parser-cmp bench-compare bench-classify bench-oracle bench-parallel
 
 all: $(LIB) $(TEST)
 
@@ -163,6 +164,9 @@ $(TEST_ERRORS): $(TESTDIR)/test_errors.c $(LIB)
 $(TEST_FLOW): $(TESTDIR)/test_flow.c $(LIB)
 	$(CC) $(OYL_CFLAGS) $< $(LIB) -o $@
 
+$(TEST_JSON): $(TESTDIR)/test_json.c $(LIB)
+	$(CC) $(OYL_CFLAGS) $< $(LIB) -lm -o $@
+
 test: $(TEST)
 	@echo "─── Running scanner tests ───"
 	@./$(TEST)
@@ -195,7 +199,11 @@ test-flow: $(TEST_FLOW)
 	@echo "─── Running flow tests ───"
 	@./$(TEST_FLOW)
 
-test-all: test test-suite test-schema test-emitter test-merge test-resolve test-errors test-flow
+test-json: $(TEST_JSON)
+	@echo "─── Running JSON tests ───"
+	@./$(TEST_JSON)
+
+test-all: test test-suite test-schema test-emitter test-merge test-resolve test-errors test-flow test-json
 
 bench: $(OBJDIR)/bench_scanner $(OBJDIR)/bench_parser
 	@./$(OBJDIR)/bench_scanner $(SIZE)

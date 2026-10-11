@@ -20,6 +20,13 @@
   against go-yaml v2 itself on about 1.5 million generated and 55,000
   real-world scalars, with no difference in tag or value.
 - `OYL_TAG_TIMESTAMP`.
+- **`oyl_parse_json`**: YAML documents as JSON. With the go-yaml v2 schema
+  and `OYL_JSON_KUBERNETES`, byte for byte `sigs.k8s.io/yaml`'s
+  `YAMLToJSON`, as Kubernetes reads manifests: go-yaml v2's merge order,
+  sorted keys, Go's number and string formatting. Of 866 documents from
+  public Kubernetes manifests, 857 convert identically and 5 fail alike;
+  the other 4 are where libyaml's syntax differs from YAML 1.2. About six
+  times as fast. With the Core schema and `OYL_JSON_MERGE`, standard JSON.
 
 ### Performance
 

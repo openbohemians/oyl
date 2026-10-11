@@ -179,6 +179,55 @@ static bool has_merge_key(const char *s, size_t n) {
     return false;
 }
 
+/* The first document as JSON, or false; json in arena `a` */
+static bool to_json(const char *yaml, size_t len, const oyl_schema *schema, unsigned flags,
+                    oyl_arena *a, oyl_str *json, oyl_status *st) {
+    oyl_parser *p = oyl_parser_new(yaml, len, a);
+    if (!p) return false;
+    oyl_parser_set_max_events(p, MAX_EVENTS);
+    *st = oyl_parse_json(p, schema, flags, json);
+    oyl_parser_free(p);
+    return *st == OYL_OK;
+}
+
+/* Does the JSON have a -0 number (it reads back as the int 0), or U+FFFD
+ * (from invalid UTF-8, which sorts as the raw bytes, as Go sorts it, but
+ * reads back as U+FFFD)? Then converting it again may differ. */
+static bool unstable(oyl_str j) {
+    for (size_t i = 0; i + 2 < j.len; i++)
+        if ((unsigned char)j.data[i] == 0xEF && (unsigned char)j.data[i + 1] == 0xBF &&
+            (unsigned char)j.data[i + 2] == 0xBD)
+            return true;
+    for (size_t i = 0; i + 1 < j.len; i++)
+        if (j.data[i] == '-' && j.data[i + 1] == '0' &&
+            (i + 2 == j.len || j.data[i + 2] == ',' || j.data[i + 2] == ']' || j.data[i + 2] == '}'))
+            return true;
+    return false;
+}
+
+/* oyl_parse_json, as Kubernetes reads YAML and as standard JSON. Its
+ * output is canonical (sorted keys, Go's number and string forms), so
+ * converting it again must give the same bytes. */
+static void check_json(const char *yaml, size_t len) {
+    static const unsigned modes[] = { OYL_JSON_KUBERNETES, OYL_JSON_MERGE | OYL_JSON_STRICT };
+    for (size_t m = 0; m < sizeof modes / sizeof modes[0]; m++) {
+        oyl_arena *a = oyl_arena_new(4096);
+        if (!a) return;
+        const oyl_schema *schema = m == 0 ? oyl_schema_goyaml2() : oyl_schema_core();
+        oyl_str j1, j2;
+        oyl_status st;
+        if (to_json(yaml, len, schema, modes[m], a, &j1, &st) && j1.data && !unstable(j1)) {
+            if (!to_json(j1.data, j1.len, oyl_schema_goyaml2(), OYL_JSON_KUBERNETES, a, &j2, &st)) {
+                if (st == OYL_ERR_PARSE || st == OYL_ERR_SCAN)
+                    __builtin_trap();   /* the JSON doesn't read back */
+            } else if (j1.len != j2.len || memcmp(j1.data, j2.data, j1.len) != 0) {
+                __builtin_trap();       /* converting it again changed it */
+            }
+        }
+        oyl_arena_free(a);
+    }
+}
+
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (size < 1) return 0;
     uint8_t flags = data[0];
@@ -223,6 +272,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         if (oi != oe || (oi && hi != he))
             __builtin_trap(); /* the parse paths disagree */
     }
+
+    check_json(buf, size);
 
     free(before);
     free(after);

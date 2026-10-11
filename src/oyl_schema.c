@@ -32,6 +32,7 @@ static const char TAG_SEQ[]       = "tag:yaml.org,2002:seq";
 static const char TAG_MAP[]       = "tag:yaml.org,2002:map";
 static const char TAG_MERGE[]     = "tag:yaml.org,2002:merge";
 static const char TAG_TIMESTAMP[] = "tag:yaml.org,2002:timestamp";
+static const char TAG_BINARY[]    = "tag:yaml.org,2002:binary";
 
 #define TAG(name) { TAG_##name, sizeof(TAG_##name) - 1 }
 
@@ -44,6 +45,7 @@ const oyl_str OYL_TAG_SEQ       = TAG(SEQ);
 const oyl_str OYL_TAG_MAP       = TAG(MAP);
 const oyl_str OYL_TAG_MERGE     = TAG(MERGE);
 const oyl_str OYL_TAG_TIMESTAMP = TAG(TIMESTAMP);
+const oyl_str OYL_TAG_BINARY    = TAG(BINARY);
 
 static bool str_eq(oyl_str a, oyl_str b) {
     return a.len == b.len && (a.len == 0 || memcmp(a.data, b.data, a.len) == 0);

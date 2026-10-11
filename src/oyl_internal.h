@@ -56,6 +56,15 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok);
  * checkpoint at a document start). */
 bool oyl_scanner_copy(oyl_scanner *dst, const oyl_scanner *src);
 
+/* ── Parser, for oyl_json.c ──────────────────────────────── */
+
+/* Report an error found after parsing (a converter's), as parse errors
+ * are: oyl_parser_error() and oyl_parser_error_mark() return it. */
+void oyl_parser_fail(oyl_parser *p, oyl_mark mark, const char *msg);
+oyl_arena        *oyl_parser_arena(const oyl_parser *p);
+int               oyl_parser_depth_limit(const oyl_parser *p);   /* 0: none */
+const oyl_schema *oyl_parser_schema(const oyl_parser *p);       /* NULL: none */
+
 /* For small helpers on the per-token path that GCC may otherwise decline
  * to inline once they grow a little. */
 #if defined(__GNUC__) || defined(__clang__)
