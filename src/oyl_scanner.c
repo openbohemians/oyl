@@ -800,7 +800,13 @@ static oyl_status scan_double_quoted(oyl_scanner *s, oyl_token *tok) {
                     if (!oyl_is_hex(hi) || !oyl_is_hex(lo)) SCAN_ERROR(s, "invalid hex digit in \\x escape");
                     uint8_t byte = (hex_digit(hi) << 4) | hex_digit(lo);
                     advance(s, 2);
-                    buf[out++] = (char)byte;
+                    /* the code point U+00NN, in UTF-8: \xB5 is µ (C2 B5) */
+                    if (byte < 0x80) {
+                        buf[out++] = (char)byte;
+                    } else {
+                        buf[out++] = (char)(0xC0 | (byte >> 6));
+                        buf[out++] = (char)(0x80 | (byte & 0x3F));
+                    }
                     break;
                 }
                 case 'u': /* \uNNNN */
