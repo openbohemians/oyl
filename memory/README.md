@@ -24,7 +24,7 @@ was split from that history. Older citations such as
 | [performance.md](performance.md) | How to measure, where Oyl stands, and the post-1.0 performance plan |
 | [naming.md](naming.md) | The yam → Oyl rename and the move to openbohemians |
 | [ideas.md](ideas.md) | Larger features agreed in principle but not started: tree API, 1.1 → 1.2 converter |
-| [roadmap.md](roadmap.md) | The agreed order after 1.0 (tree, Go binding, parallel), and the Go plan |
+| [roadmap.md](roadmap.md) | The agreed order after 1.0 (schemas, YAMLToJSON, Go, tree, parallel), and the Go plan |
 | [outreach.md](outreach.md) | GitHub Sponsors, and the plan to reach heavy YAML users |
 | [perdoc-fallback-prototype.patch](perdoc-fallback-prototype.patch) | Prototype of per-document eager fallback (release.md issue 3), against `d6b8afb` |
 

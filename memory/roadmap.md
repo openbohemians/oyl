@@ -1,22 +1,30 @@
 # Roadmap after 1.0
 
-*Updated 2026-10-10*
+*Updated 2026-10-11*
 
-The order the user agreed on 2026-10-10:
+The order the user agreed on 2026-10-11 (revised from 2026-10-10, when the
+tree came first; YAMLToJSON needs no tree, so it moved ahead):
 
-1. **Tag 1.0** once the batch fuzzers are clean (release.md).
-2. **Tree API in C** (ideas.md), designed to cross into other languages
+1. **Tag 1.0.** Done 2026-10-10 (release.md).
+2. **Schema design:** flexible matching and tags bound to parsers, in C
+   (below). New public API for all of 1.x, so a design goes to the user
+   first. Goal, in the user's words: the YAML 1.2 standard and go-yaml v2
+   schemas from the same parser.
+3. **YAMLToJSON in C** with a go-yaml v2 schema, checked against
+   `sigs.k8s.io/yaml` on real manifests and the fuzz corpus (Go is
+   installed locally).
+4. **A thin Go wrapper:** just YAMLToJSON over cgo, with benchmarks against
+   what Kubernetes uses now.
+5. **Tree API in C** (ideas.md), designed to cross into other languages
    cheaply: one call builds a flat node array in one arena, and a binding
    reads it with one copy or in place. A design goes to the user first.
-3. **oyl.go**, a Go binding, because the Go world (Kubernetes, Helm,
-   Kustomize, Compose, Prometheus) holds the most YAML. First deliverable:
-   `YAMLToJSON`, below. Then decoding into Go values on top of the tree.
-4. **Parallel parsing in the library** (performance.md). Kubernetes streams
+6. **The full Go library** (decoding into Go values, on the tree).
+7. **Parallel parsing in the library** (performance.md). Kubernetes streams
    are many small documents that Go callers can already parse on separate
    goroutines, so this mostly serves single huge files.
 
-Outreach (outreach.md) waits on the tree and the Go binding, not on
-parallel parsing.
+Outreach (outreach.md) waits on YAMLToJSON with its Go wrapper and the
+tree with the full Go library, not on parallel parsing.
 
 ## oyl.go
 
