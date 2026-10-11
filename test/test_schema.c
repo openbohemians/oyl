@@ -3,6 +3,7 @@
  */
 
 #include "oyl/oyl.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -407,6 +408,259 @@ static void test_icase(void) {
     oyl_arena_free(a);
 }
 
+/* ── Values ──────────────────────────────────────────────── */
+
+static oyl_status value_of(const oyl_schema *s, const char *text, oyl_scalar_style style,
+                           oyl_str tag, oyl_value *v) {
+    oyl_event e = { .type = OYL_EVT_SCALAR, .value = { text, strlen(text) },
+                    .scalar_style = style, .tag = tag };
+    return oyl_schema_value(s, &e, v);
+}
+
+/* The value of a plain, untagged scalar; kind -1 on an error */
+static oyl_value plain_value(const oyl_schema *s, const char *text) {
+    oyl_value v;
+    if (value_of(s, text, OYL_SCALAR_PLAIN, (oyl_str){ NULL, 0 }, &v) != OYL_OK)
+        v.kind = (oyl_value_kind)-1;
+    return v;
+}
+
+static bool is_int(oyl_value v, int64_t n)    { return v.kind == OYL_VALUE_INT && v.as.i == n; }
+static bool is_uint(oyl_value v, uint64_t n)  { return v.kind == OYL_VALUE_UINT && v.as.u == n; }
+static bool is_float(oyl_value v, double f)   { return v.kind == OYL_VALUE_FLOAT && v.as.f == f; }
+static bool is_bool(oyl_value v, bool b)      { return v.kind == OYL_VALUE_BOOL && v.as.b == b; }
+static bool is_text(oyl_value v, const char *t) {
+    return v.kind == OYL_VALUE_STR && str_eq(v.as.s, (oyl_str){ t, strlen(t) });
+}
+
+static oyl_str tag_of(const char *t) { return (oyl_str){ t, strlen(t) }; }
+
+static void test_values_core(void) {
+    printf("test_values_core:\n");
+    const oyl_schema *s = oyl_schema_core();
+    oyl_value v;
+
+    ASSERT(is_int(plain_value(s, "42"), 42), "42");
+    ASSERT(is_int(plain_value(s, "-42"), -42), "-42");
+    ASSERT(is_int(plain_value(s, "+42"), 42), "+42");
+    ASSERT(is_int(plain_value(s, "0x1F"), 31), "0x1F");
+    ASSERT(is_int(plain_value(s, "0o17"), 15), "0o17");
+    ASSERT(is_int(plain_value(s, "-0x10"), -16), "-0x10 (a sign before 0x, as 1.0 allowed)");
+    ASSERT(is_int(plain_value(s, "007"), 7), "007 is decimal in Core");
+    ASSERT(is_int(plain_value(s, "9223372036854775807"), INT64_MAX), "INT64_MAX");
+    ASSERT(is_int(plain_value(s, "-9223372036854775808"), INT64_MIN), "INT64_MIN");
+    ASSERT(is_uint(plain_value(s, "9223372036854775808"), (uint64_t)INT64_MAX + 1), "INT64_MAX + 1");
+    ASSERT(is_uint(plain_value(s, "18446744073709551615"), UINT64_MAX), "UINT64_MAX");
+    ASSERT(is_text(plain_value(s, "18446744073709551616"), "18446744073709551616"),
+           "an int beyond 64 bits is its text");
+    ASSERT(str_eq(resolve_plain(s, "18446744073709551616"), OYL_TAG_INT), "... and keeps !!int");
+    ASSERT(is_text(plain_value(s, "-9223372036854775809"), "-9223372036854775809"),
+           "below INT64_MIN is text");
+
+    ASSERT(is_float(plain_value(s, "1.5"), 1.5), "1.5");
+    ASSERT(is_float(plain_value(s, "-1e3"), -1000.0), "-1e3");
+    ASSERT(is_float(plain_value(s, ".5"), 0.5), ".5");
+    ASSERT(is_float(plain_value(s, ".inf"), INFINITY), ".inf");
+    ASSERT(is_float(plain_value(s, "-.Inf"), -INFINITY), "-.Inf");
+    v = plain_value(s, ".NaN");
+    ASSERT(v.kind == OYL_VALUE_FLOAT && isnan(v.as.f), ".NaN");
+    ASSERT(is_float(plain_value(s, "1e400"), INFINITY), "1e400 overflows to inf in Core");
+    char longf[100];
+    memset(longf, '0', sizeof longf);
+    longf[0] = '1';
+    memcpy(longf + 71, ".5", 3);
+    ASSERT(is_float(plain_value(s, longf), 1e70), "a float longer than the copy buffer");
+
+    ASSERT(is_bool(plain_value(s, "true"), true), "true");
+    ASSERT(is_bool(plain_value(s, "FALSE"), false), "FALSE");
+    ASSERT(plain_value(s, "~").kind == OYL_VALUE_NULL, "~");
+    ASSERT(plain_value(s, "").kind == OYL_VALUE_NULL, "empty");
+    ASSERT(is_text(plain_value(s, "hello"), "hello"), "hello");
+    ASSERT(is_text(plain_value(s, "yes"), "yes"), "yes is a string in Core");
+
+    /* quoted scalars are strings */
+    ASSERT(value_of(s, "42", OYL_SCALAR_DOUBLE_QUOTED, (oyl_str){ NULL, 0 }, &v) == OYL_OK &&
+           is_text(v, "42"), "\"42\"");
+
+    /* explicit tags pick the rules */
+    ASSERT(value_of(s, "0x1F", OYL_SCALAR_DOUBLE_QUOTED, OYL_TAG_INT, &v) == OYL_OK &&
+           is_int(v, 31), "!!int \"0x1F\"");
+    ASSERT(value_of(s, "1", OYL_SCALAR_PLAIN, OYL_TAG_FLOAT, &v) == OYL_OK && is_float(v, 1.0),
+           "!!float 1");
+    ASSERT(value_of(s, "", OYL_SCALAR_PLAIN, OYL_TAG_NULL, &v) == OYL_OK &&
+           v.kind == OYL_VALUE_NULL, "!!null empty");
+    ASSERT(value_of(s, "abc", OYL_SCALAR_PLAIN, OYL_TAG_INT, &v) == OYL_ERR_PARSE, "!!int abc");
+    ASSERT(value_of(s, "yes", OYL_SCALAR_PLAIN, OYL_TAG_BOOL, &v) == OYL_ERR_PARSE,
+           "!!bool yes in Core");
+    ASSERT(value_of(s, "42", OYL_SCALAR_PLAIN, OYL_TAG_STR, &v) == OYL_OK && is_text(v, "42"),
+           "!!str 42");
+    ASSERT(value_of(s, "x", OYL_SCALAR_PLAIN, tag_of("!foo"), &v) == OYL_OK && is_text(v, "x"),
+           "!foo x");
+
+    oyl_event seq = { .type = OYL_EVT_SEQUENCE_START };
+    ASSERT(oyl_schema_value(s, &seq, &v) == OYL_ERR_INPUT, "not a scalar");
+    ASSERT(oyl_schema_value(NULL, &seq, &v) == OYL_ERR_INPUT, "no schema");
+}
+
+static void test_values_goyaml2(void) {
+    printf("test_values_goyaml2:\n");
+    const oyl_schema *s = oyl_schema_goyaml2();
+
+    ASSERT(is_bool(plain_value(s, "yes"), true), "yes");
+    ASSERT(is_bool(plain_value(s, "On"), true), "On");
+    ASSERT(is_bool(plain_value(s, "y"), true), "y");
+    ASSERT(is_bool(plain_value(s, "n"), false), "n");
+    ASSERT(is_bool(plain_value(s, "OFF"), false), "OFF");
+    ASSERT(is_text(plain_value(s, "yEs"), "yEs"), "yEs is a string");
+    ASSERT(plain_value(s, "").kind == OYL_VALUE_NULL, "empty");
+
+    ASSERT(is_int(plain_value(s, "0777"), 511), "0777 is octal");
+    ASSERT(is_int(plain_value(s, "0b101"), 5), "0b101");
+    ASSERT(is_int(plain_value(s, "-0b101"), -5), "-0b101");
+    ASSERT(is_int(plain_value(s, "0X1F"), 31), "0X1F");
+    ASSERT(is_int(plain_value(s, "0o17"), 15), "0o17");
+    ASSERT(is_int(plain_value(s, "1_000"), 1000), "1_000");
+    ASSERT(is_int(plain_value(s, "0_x1F"), 31), "underscores even inside a prefix");
+    ASSERT(is_text(plain_value(s, "_1"), "_1"), "a leading underscore is a string");
+    ASSERT(is_float(plain_value(s, "08"), 8.0), "08 is a float (not octal)");
+    ASSERT(is_float(plain_value(s, "99999999999999999999"), 1e20), "beyond 64 bits is a float");
+    ASSERT(is_uint(plain_value(s, "18446744073709551615"), UINT64_MAX), "UINT64_MAX");
+    ASSERT(is_float(plain_value(s, "+18446744073709551615"), 18446744073709551615.0),
+           "a signed value beyond int64 is a float");
+    ASSERT(is_float(plain_value(s, "1e3"), 1000.0), "1e3");
+    ASSERT(is_float(plain_value(s, "1_000.5"), 1000.5), "1_000.5");
+    ASSERT(is_float(plain_value(s, ".0_8"), 0.08), ".0_8 (between digits)");
+    ASSERT(is_text(plain_value(s, "._8"), "._8"), "._8");
+    ASSERT(is_text(plain_value(s, "1e400"), "1e400"), "1e400 is a string");
+    ASSERT(str_eq(resolve_plain(s, "1e400"), OYL_TAG_STR), "... tagged !!str");
+
+    ASSERT(str_eq(resolve_plain(s, "2001-12-14"), OYL_TAG_TIMESTAMP), "a date");
+    ASSERT(is_text(plain_value(s, "2001-12-14"), "2001-12-14"), "... its value is the text");
+    ASSERT(str_eq(resolve_plain(s, "2001-12-14t21:59:43.10-05:00"), OYL_TAG_TIMESTAMP),
+           "a time with a zone");
+    ASSERT(str_eq(resolve_plain(s, "2001-12-14  21:59:43"), OYL_TAG_TIMESTAMP), "spaces before the time");
+    ASSERT(str_eq(resolve_plain(s, "2000-02-29"), OYL_TAG_TIMESTAMP), "a leap day");
+    ASSERT(str_eq(resolve_plain(s, "2001-02-29"), OYL_TAG_STR), "not a leap year");
+    ASSERT(str_eq(resolve_plain(s, "2001-12-14T21:59:43"), OYL_TAG_STR), "a T needs a zone");
+    ASSERT(str_eq(resolve_plain(s, "<<"), OYL_TAG_STR), "<< has no merge tag, as in go-yaml v2");
+}
+
+/* !!int redefined: Roman numerals made of I, V and X */
+static bool parse_roman(oyl_str text, oyl_value *out, void *user) {
+    int *calls = user;
+    (*calls)++;
+    int64_t n = 0, prev = 0;
+    if (text.len == 0) return false;
+    for (size_t i = text.len; i-- > 0;) {
+        int d = text.data[i] == 'I' ? 1 : text.data[i] == 'V' ? 5 : text.data[i] == 'X' ? 10 : 0;
+        if (!d) return false;
+        n += d < prev ? -d : d;
+        if (d > prev) prev = d;
+    }
+    *out = (oyl_value){ .kind = OYL_VALUE_INT, .as = { .i = n } };
+    return true;
+}
+
+/* A custom tag for three dot-separated numbers */
+static bool parse_semver(oyl_str text, oyl_value *out, void *user) {
+    (void)user;
+    int dots = 0;
+    bool digit = false;
+    for (size_t i = 0; i < text.len; i++) {
+        if (text.data[i] == '.') {
+            if (!digit) return false;
+            dots++;
+            digit = false;
+        } else if (text.data[i] >= '0' && text.data[i] <= '9') {
+            digit = true;
+        } else {
+            return false;
+        }
+    }
+    if (dots != 2 || !digit) return false;
+    *out = (oyl_value){ .kind = OYL_VALUE_STR, .as = { .s = text } };
+    return true;
+}
+
+static void test_custom_types(void) {
+    printf("test_custom_types:\n");
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_schema_builder *b = oyl_schema_builder_new(a);
+    int calls = 0;
+    oyl_schema_builder_add_type(b, tag_of("!semver"), parse_semver, NULL);
+    oyl_schema_builder_add_type(b, OYL_TAG_INT, parse_roman, &calls);
+    oyl_schema_builder_add_int_flags(b, OYL_INT_SIGN | OYL_INT_UNDERSCORE | OYL_INT_RANGE);
+    oyl_schema_builder_add_float_flags(b, OYL_FLOAT_CORE);
+    const oyl_schema *s = oyl_schema_builder_finish(b);
+    oyl_schema_builder_free(b);
+    ASSERT(s != NULL, "finish");
+
+    ASSERT(str_eq(resolve_plain(s, "1.2.3"), tag_of("!semver")), "1.2.3 → !semver");
+    ASSERT(is_text(plain_value(s, "1.2.3"), "1.2.3"), "... its value");
+    ASSERT(str_eq(resolve_plain(s, "XIV"), OYL_TAG_INT), "XIV → !!int");
+    ASSERT(is_int(plain_value(s, "XIV"), 14), "... is 14");
+    ASSERT(calls > 0, "the user pointer reaches the parser");
+    ASSERT(is_int(plain_value(s, "1_000"), 1000), "the built-in int after it: 1_000");
+    ASSERT(is_text(plain_value(s, "0x1F"), "0x1F"), "no OYL_INT_HEX: 0x1F is a string");
+    ASSERT(is_float(plain_value(s, "1.5"), 1.5), "1.5");
+    ASSERT(is_text(plain_value(s, "1.2.x"), "1.2.x"), "1.2.x → str");
+
+    oyl_value v;
+    ASSERT(value_of(s, "VI", OYL_SCALAR_SINGLE_QUOTED, OYL_TAG_INT, &v) == OYL_OK && is_int(v, 6),
+           "!!int 'VI'");
+
+    /* words added one by one get bool and null values */
+    b = oyl_schema_builder_new(a);
+    oyl_schema_builder_add(b, OYL_MATCH_EXACT, "si", OYL_TAG_BOOL);
+    oyl_schema_builder_add(b, OYL_MATCH_ICASE, "off", OYL_TAG_BOOL);
+    oyl_schema_builder_add(b, OYL_MATCH_EXACT, "nil", OYL_TAG_NULL);
+    oyl_schema_builder_add(b, OYL_MATCH_EXACT, "pi", OYL_TAG_FLOAT);
+    s = oyl_schema_builder_finish(b);
+    oyl_schema_builder_free(b);
+    ASSERT(is_bool(plain_value(s, "si"), true), "si → true");
+    ASSERT(is_bool(plain_value(s, "OFF"), false), "OFF → false");
+    ASSERT(plain_value(s, "nil").kind == OYL_VALUE_NULL, "nil → null");
+    ASSERT(is_text(plain_value(s, "pi"), "pi"), "a word with another tag gives its text");
+    oyl_arena_free(a);
+}
+
+/* Values of a real parse, with and without a schema on the parser */
+static void test_values_from_parser(void) {
+    printf("test_values_from_parser:\n");
+    const char *y = "a: 0x1F\nb: !!float 1\nc: '42'\nd: yes\ne: !!int nope\n";
+    for (int on_parser = 0; on_parser <= 1; on_parser++) {
+        oyl_arena *a = oyl_arena_new(4096);
+        oyl_parser *p = oyl_parser_new(y, strlen(y), a);
+        if (on_parser) oyl_parser_set_schema(p, oyl_schema_goyaml2());
+        const oyl_event *e;
+        oyl_value core[5], go[5];
+        oyl_status core_st[5], go_st[5];
+        int n = 0, i = 0;
+        while (oyl_parse_next(p, &e) == OYL_OK && e->type != OYL_EVT_STREAM_END) {
+            if (e->type != OYL_EVT_SCALAR || i++ % 2 == 0) continue;   /* values only */
+            if (n < 5) {
+                go_st[n] = oyl_schema_value(oyl_schema_goyaml2(), e, &go[n]);
+                core_st[n] = oyl_schema_value(oyl_schema_core(), e, &core[n]);
+                n++;
+            }
+        }
+        const char *when = on_parser ? " (go-yaml v2 schema on the parser)" : " (no schema on the parser)";
+        printf("  checking%s\n", when);
+        ASSERT(n == 5, "five values");
+        ASSERT(go_st[0] == OYL_OK && is_int(go[0], 31), "0x1F");
+        ASSERT(go_st[1] == OYL_OK && is_float(go[1], 1.0), "!!float 1");
+        ASSERT(go_st[2] == OYL_OK && is_text(go[2], "42"), "'42'");
+        ASSERT(go_st[3] == OYL_OK && is_bool(go[3], true), "yes is true to go-yaml v2");
+        ASSERT(go_st[4] == OYL_ERR_PARSE, "!!int nope");
+        if (!on_parser) {   /* with a schema on the parser, yes is already tagged !!bool */
+            ASSERT(core_st[3] == OYL_OK && is_text(core[3], "yes"), "yes is text to Core");
+            ASSERT(core_st[0] == OYL_OK && is_int(core[0], 31), "Core: 0x1F");
+        }
+        oyl_parser_free(p);
+        oyl_arena_free(a);
+    }
+}
+
 /* ── Main ────────────────────────────────────────────────── */
 
 int main(void) {
@@ -420,6 +674,10 @@ int main(void) {
     test_no_schema();
     test_explicit_tag();
     test_icase();
+    test_values_core();
+    test_values_goyaml2();
+    test_custom_types();
+    test_values_from_parser();
 
     printf("\n─── Schema tests: %d / %d passed ───\n", tests_passed, tests_run);
     return (tests_passed == tests_run) ? 0 : 1;

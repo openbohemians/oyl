@@ -77,6 +77,31 @@ static void canon(const oyl_event *e, char **buf, size_t *len, size_t *cap) {
     *len = (size_t)(o - *buf);
 }
 
+static bool tag_is(oyl_str a, oyl_str b) {
+    return a.len == b.len && (a.len == 0 || memcmp(a.data, b.data, a.len) == 0);
+}
+
+/* The value API on every scalar: an untagged plain scalar always has a
+ * value, of the kind its resolved tag says (an int beyond 64 bits is
+ * text) */
+static void check_values(const oyl_event *e) {
+    const oyl_schema *schemas[] = { oyl_schema_core(), oyl_schema_goyaml2() };
+    for (size_t i = 0; i < sizeof schemas / sizeof schemas[0]; i++) {
+        oyl_value v;
+        oyl_status st = oyl_schema_value(schemas[i], e, &v);
+        if (e->tag.len || e->scalar_style != OYL_SCALAR_PLAIN) continue;
+        if (st != OYL_OK) __builtin_trap();   /* an untagged scalar has a value */
+        oyl_str t = oyl_schema_resolve(schemas[i], e->value, OYL_SCALAR_PLAIN);
+        bool ok = tag_is(t, OYL_TAG_NULL)  ? v.kind == OYL_VALUE_NULL
+                : tag_is(t, OYL_TAG_BOOL)  ? v.kind == OYL_VALUE_BOOL
+                : tag_is(t, OYL_TAG_FLOAT) ? v.kind == OYL_VALUE_FLOAT
+                : tag_is(t, OYL_TAG_INT)   ? v.kind == OYL_VALUE_INT || v.kind == OYL_VALUE_UINT ||
+                                             v.kind == OYL_VALUE_STR
+                : v.kind == OYL_VALUE_STR;
+        if (!ok) __builtin_trap();   /* the value disagrees with the tag */
+    }
+}
+
 /* Parse `yaml` into a canonical string, optionally feeding an emitter.
  * Returns false if parsing fails. */
 static bool parse_canon(const char *yaml, size_t len, uint8_t flags, oyl_emitter *em,
@@ -98,6 +123,7 @@ static bool parse_canon(const char *yaml, size_t len, uint8_t flags, oyl_emitter
         if (evt->type == OYL_EVT_NONE) __builtin_trap(); /* no STREAM_END */
         if (++events > MAX_EVENTS) __builtin_trap(); /* limit bypassed */
         if (em) oyl_emit(em, evt);
+        if (evt->type == OYL_EVT_SCALAR) check_values(evt);
         canon(evt, out, out_len, &cap);
         if (evt->type == OYL_EVT_STREAM_END) break;
     }

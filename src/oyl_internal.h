@@ -14,12 +14,28 @@
 
 /* ── Schema ──────────────────────────────────────────────── */
 
-/* A single tag resolution rule: if a plain scalar matches `pattern`
- * according to `match`, it resolves to `tag`. */
+/* How a rule parses a scalar */
+typedef enum {
+    RULE_WORD,         /* the text is `pattern`; the value is `value` */
+    RULE_WORD_ICASE,   /* the same, ignoring ASCII case */
+    RULE_INT,          /* the built-in int parser, with OYL_INT_ `flags` */
+    RULE_FLOAT,        /* the built-in float parser, with OYL_FLOAT_ `flags` */
+    RULE_TIMESTAMP,    /* go-yaml v2's timestamps; the value is the text */
+    RULE_CUSTOM,       /* `parse(text, out, user)` */
+    RULE_NONE,         /* never accepts (an unknown builtin name) */
+} oyl_rule_kind;
+
+/* A single tag resolution rule: a plain scalar the rule's parser accepts
+ * resolves to `tag`, and the parser gives its value. */
 typedef struct {
-    oyl_match_type  match;
-    const char     *pattern;   /* string for EXACT/ICASE, name for BUILTIN */
-    oyl_str         tag;
+    oyl_rule_kind     kind;
+    const char       *pattern;   /* the word, for RULE_WORD and RULE_WORD_ICASE */
+    size_t            plen;      /* its length */
+    oyl_str           tag;
+    unsigned          flags;
+    oyl_value         value;     /* a word's value (STR means the text) */
+    oyl_scalar_parser parse;
+    void             *user;
 } oyl_schema_rule;
 
 struct oyl_schema {

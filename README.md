@@ -326,6 +326,7 @@ built-in schemas ship as presets:
 | **Failsafe** | Everything is `!!str` / `!!seq` / `!!map` |
 | **JSON** | `null`, `true`/`false`, integers, floats |
 | **Core** | JSON + `Null`/`NULL`/`~`, `True`/`TRUE`/`False`/`FALSE`, `0x`/`0o` ints |
+| **go-yaml v2** | As Kubernetes reads YAML: `yes`/`no`/`on`/`off` booleans, `0777` octal, `0b` binary, `1_000`, timestamps |
 
 The JSON preset shares Core's number rules, so it is looser than the YAML
 1.2 JSON schema (section 10.2): `+1`, `01`, `0x1F`, `0o17`, `.inf` and `.nan`
@@ -344,6 +345,13 @@ oyl_parser_set_schema(parser, oyl_schema_core());
  *   "null"  -> tag:yaml.org,2002:null
  * quoted scalars always resolve to !!str
  * explicit tags (!!str, !foo) are never overwritten */
+```
+
+A schema also gives a scalar's value, parsed by the rule that typed it:
+
+```c
+oyl_value v;
+oyl_schema_value(oyl_schema_goyaml2(), evt, &v);   /* "0777" -> OYL_VALUE_INT, 511 */
 ```
 
 ### Custom Schemas
@@ -372,6 +380,10 @@ oyl_parser_set_schema(parser, schema);
 
 Rules are matched in order (first match wins). Match types: `OYL_MATCH_EXACT`,
 `OYL_MATCH_ICASE`, and `OYL_MATCH_BUILTIN` (procedural int/float matchers).
+Each rule is a tag bound to a parser: the int and float parsers take
+dialect flags (`oyl_schema_builder_add_int_flags`, `..._float_flags`), and
+`oyl_schema_builder_add_type` binds any tag, a built-in one included, to
+your own parser. See [docs/api](docs/api/index.md#tag-schemas).
 
 ## Architecture
 

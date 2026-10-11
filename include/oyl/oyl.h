@@ -302,6 +302,97 @@ OYL_API const oyl_schema *oyl_schema_builder_finish(oyl_schema_builder *b);
 /** Free the schema builder. */
 OYL_API void    oyl_schema_builder_free(oyl_schema_builder *b);
 
+/* ── Scalar values ───────────────────────────────────────── */
+
+/* A schema binds each tag to a parser. A plain scalar takes the tag of the
+ * first rule whose parser accepts it, and that parser gives its value. */
+
+/** The kind of a scalar's value. Kinds may be added at the end; treat one
+ *  you don't know as text. */
+typedef enum {
+    OYL_VALUE_NULL,
+    OYL_VALUE_BOOL,
+    OYL_VALUE_INT,       /**< fits int64_t */
+    OYL_VALUE_UINT,      /**< above INT64_MAX, fits uint64_t */
+    OYL_VALUE_FLOAT,
+    OYL_VALUE_STR,       /**< text: strings, timestamps, an int beyond 64 bits */
+} oyl_value_kind;
+
+/** A scalar's value. @c as.s points into the scalar's text or the
+ *  parser's memory, valid as long as the event's value. */
+typedef struct {
+    oyl_value_kind kind;
+    union {
+        bool     b;
+        int64_t  i;
+        uint64_t u;
+        double   f;
+        oyl_str  s;
+    } as;
+} oyl_value;
+
+/** A custom scalar parser: accept @p text by filling @p out and returning
+ *  true, or decline by returning false. */
+typedef bool (*oyl_scalar_parser)(oyl_str text, oyl_value *out, void *user);
+
+/** Options for the built-in int parser. Decimal digits are always
+ *  accepted. */
+enum {
+    OYL_INT_SIGN         = 1 << 0,  /**< + or - before decimal digits */
+    OYL_INT_HEX          = 1 << 1,  /**< 0x1F */
+    OYL_INT_OCT          = 1 << 2,  /**< 0o17 */
+    OYL_INT_OCT_ZERO     = 1 << 3,  /**< 017: a leading zero means octal */
+    OYL_INT_BIN          = 1 << 4,  /**< 0b101 */
+    OYL_INT_PREFIX_CASE  = 1 << 5,  /**< 0X, 0O and 0B as well */
+    OYL_INT_SIGN_PREFIX  = 1 << 6,  /**< a sign before a prefix: -0x1F */
+    OYL_INT_UNDERSCORE   = 1 << 7,  /**< underscores anywhere but first are ignored: 1_000 */
+    OYL_INT_RANGE        = 1 << 8,  /**< decline a value beyond 64 bits (else it is text) */
+    /** The Core schema's ints (with a sign also allowed before 0x or 0o) */
+    OYL_INT_CORE = OYL_INT_SIGN | OYL_INT_HEX | OYL_INT_OCT | OYL_INT_SIGN_PREFIX,
+};
+
+/** Options for the built-in float parser, which always accepts
+ *  [-+]?(.D+|D+(.D*)?)([eE][-+]?D+)? with a dot or an exponent. */
+enum {
+    OYL_FLOAT_SPECIALS   = 1 << 0,  /**< [-+]?.inf, .Inf, .INF; .nan, .NaN, .NAN */
+    OYL_FLOAT_DIGITS     = 1 << 1,  /**< digits alone, as when an int is too big */
+    OYL_FLOAT_UNDERSCORE = 1 << 2,  /**< underscores, as go-yaml v2: anywhere after a leading
+                                         digit or sign, else only between digits */
+    OYL_FLOAT_RANGE      = 1 << 3,  /**< decline a value too large for a double */
+    /** The Core schema's floats. Digits alone count for an explicit
+     *  !!float; untagged, the int rule takes them first. */
+    OYL_FLOAT_CORE = OYL_FLOAT_SPECIALS | OYL_FLOAT_DIGITS,
+};
+
+/** Add the built-in int parser with the given OYL_INT_ options. */
+OYL_API void    oyl_schema_builder_add_int_flags(oyl_schema_builder *b, unsigned flags);
+
+/** Add the built-in float parser with the given OYL_FLOAT_ options. */
+OYL_API void    oyl_schema_builder_add_float_flags(oyl_schema_builder *b, unsigned flags);
+
+/** Bind @p tag to a custom parser. @p user is passed to it; it must
+ *  outlive the schema. */
+OYL_API void    oyl_schema_builder_add_type(oyl_schema_builder *b, oyl_str tag,
+                                    oyl_scalar_parser parse, void *user);
+
+/** The value of a scalar event. An untagged scalar (no schema on the
+ *  parser) is resolved first; a tagged one is parsed by its tag's rules.
+ *  Returns OYL_ERR_PARSE when none of them accepts it, as for
+ *  @c !!int "abc", OYL_ERR_MEMORY if a long float can't be copied, and
+ *  OYL_ERR_INPUT if @p scalar isn't a scalar event. A tag with no rules
+ *  (!!str, !foo) gives the text. */
+OYL_API oyl_status oyl_schema_value(const oyl_schema *schema, const oyl_event *scalar,
+                                    oyl_value *out);
+
+/** go-yaml v2's types, as Kubernetes reads YAML: yes/no/on/off and y/n
+ *  booleans, 0777 octal, 0b binary, underscores in numbers, an int beyond
+ *  64 bits as a float, timestamps. Like go-yaml v2 it gives << no merge
+ *  tag; merge keys are the parser's option (oyl_parser_set_merge). */
+OYL_API const oyl_schema *oyl_schema_goyaml2(void);
+
+/** The tag YAML gives timestamps. */
+OYL_API extern const oyl_str OYL_TAG_TIMESTAMP;   /**< tag:yaml.org,2002:timestamp */
+
 /* ── Parser ──────────────────────────────────────────────── */
 
 /** Opaque event parser. Consumes tokens from the scanner and produces

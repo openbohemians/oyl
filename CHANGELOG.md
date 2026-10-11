@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.1.0 (unreleased)
+
+### Added
+
+- **Scalar values.** `oyl_schema_value` gives a scalar event's value as an
+  `oyl_value`: null, bool, int, uint, float, or text. A schema is now an
+  ordered list of tags bound to parsers, and the parser that types a
+  scalar also gives its value. It needs no schema on the parser, so the
+  faster incremental parser can stay on.
+- **Dialect flags** for the built-in int and float parsers
+  (`oyl_schema_builder_add_int_flags`, `oyl_schema_builder_add_float_flags`):
+  `0x`/`0o`/`0b` prefixes, leading-zero octal, underscores, range limits.
+- **Custom types:** `oyl_schema_builder_add_type` binds a tag to your own
+  parser. Binding a built-in tag such as `!!int` redefines it.
+- **`oyl_schema_goyaml2()`**, go-yaml v2's types as Kubernetes reads YAML:
+  `yes`/`no`/`on`/`off`/`y`/`n` booleans, `0777` octal, `0b` binary,
+  underscores, timestamps, and an int beyond 64 bits as a float. Checked
+  against go-yaml v2 itself on about 1.5 million generated and 55,000
+  real-world scalars, with no difference in tag or value.
+- `OYL_TAG_TIMESTAMP`.
+
+### Performance
+
+- Tag resolution is about 40% faster with the Core schema: a word rule
+  checks the length before anything else.
+
 ## 1.0.1 (unreleased)
 
 ### Fixed

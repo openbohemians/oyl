@@ -257,9 +257,12 @@ written as `!!str`) or local tags (`!foo`).
 
 ## Tag Schemas
 
-Schemas resolve plain scalars to typed tags per YAML 1.2 Chapter 10.
-Schema is opt-in -- without one, scalars have no tag. `oyl_schema` is
-opaque; presets are static, built schemas live in the builder's arena.
+Schemas resolve plain scalars to typed tags per YAML 1.2 Chapter 10, and
+give their values. A schema is an ordered list of rules, each a tag bound
+to a parser: a plain scalar takes the tag of the first rule whose parser
+accepts it, and that parser gives its value. Schema is opt-in -- without
+one, scalars have no tag. `oyl_schema` is opaque; presets are static,
+built schemas live in the builder's arena.
 
 ```c
 oyl_str tag = oyl_schema_resolve(oyl_schema_core(), OYL_STR_LIT("42"),
@@ -273,6 +276,36 @@ oyl_str tag = oyl_schema_resolve(oyl_schema_core(), OYL_STR_LIT("42"),
 | `oyl_schema_failsafe()` | Everything is `!!str` / `!!seq` / `!!map`. |
 | `oyl_schema_json()` | `null`, `true`/`false`, integers, floats. |
 | `oyl_schema_core()` | JSON + `Null`/`NULL`/`~`, `True`/`TRUE`, `0x`/`0o` ints. |
+| `oyl_schema_goyaml2()` | go-yaml v2's types, as Kubernetes reads YAML: `yes`/`no`/`on`/`off`/`y`/`n` booleans, `0777` octal, `0b` binary, underscores in numbers, an int beyond 64 bits as a float, timestamps. |
+
+The JSON preset shares Core's number rules, so it accepts more than YAML
+1.2's JSON schema (`+1`, `01`, `0x1F`, `.inf`), and other plain scalars
+resolve to `!!str` rather than being an error.
+
+### Values
+
+```c
+oyl_value v;
+if (oyl_schema_value(oyl_schema_goyaml2(), evt, &v) == OYL_OK && v.kind == OYL_VALUE_INT)
+    printf("%lld\n", (long long)v.as.i);   // 0777 -> 511
+```
+
+`oyl_schema_value(schema, scalar, &v)` parses a scalar event. An untagged
+scalar (no schema on the parser, which keeps the faster incremental
+parser) is resolved first; a tagged one, resolved or explicit, is parsed
+by its tag's rules, and `OYL_ERR_PARSE` means none accepts it
+(`!!int "abc"`). A tag with no rules (`!!str`, `!foo`) gives the text.
+
+| Kind | Field | Holds |
+|------|-------|-------|
+| `OYL_VALUE_NULL` | | |
+| `OYL_VALUE_BOOL` | `as.b` | |
+| `OYL_VALUE_INT` | `as.i` | an `int64_t` |
+| `OYL_VALUE_UINT` | `as.u` | above `INT64_MAX`, up to `UINT64_MAX` |
+| `OYL_VALUE_FLOAT` | `as.f` | a `double`, including inf and NaN |
+| `OYL_VALUE_STR` | `as.s` | text: strings, timestamps, and in Core an int beyond 64 bits |
+
+Kinds may be added at the end; treat one you don't know as text.
 
 ### Tag Constants
 
@@ -285,6 +318,7 @@ OYL_TAG_STR     // "tag:yaml.org,2002:str"
 OYL_TAG_SEQ     // "tag:yaml.org,2002:seq"
 OYL_TAG_MAP     // "tag:yaml.org,2002:map"
 OYL_TAG_MERGE   // "tag:yaml.org,2002:merge"
+OYL_TAG_TIMESTAMP // "tag:yaml.org,2002:timestamp"
 ```
 
 ### Custom Schemas
@@ -305,6 +339,39 @@ oyl_schema_builder_free(b);
 oyl_parser_set_schema(parser, schema);
 ```
 
+The built-in int and float parsers take dialect flags, and any tag can be
+bound to your own parser, including a built-in one, which redefines it:
+
+```c
+static bool parse_semver(oyl_str text, oyl_value *out, void *user) {
+    /* accept "1.2.3": fill *out and return true; otherwise return false */
+}
+
+oyl_schema_builder_add_type(b, OYL_STR_LIT("!semver"), parse_semver, NULL);
+oyl_schema_builder_add_int_flags(b, OYL_INT_SIGN | OYL_INT_HEX | OYL_INT_UNDERSCORE);
+oyl_schema_builder_add_float_flags(b, OYL_FLOAT_CORE);
+```
+
+| Int flag | Accepts |
+|----------|---------|
+| `OYL_INT_SIGN` | `+` or `-` before decimal digits |
+| `OYL_INT_HEX`, `OYL_INT_OCT`, `OYL_INT_BIN` | `0x1F`, `0o17`, `0b101` |
+| `OYL_INT_OCT_ZERO` | `017`: a leading zero means octal |
+| `OYL_INT_PREFIX_CASE` | `0X`, `0O` and `0B` as well |
+| `OYL_INT_SIGN_PREFIX` | a sign before a prefix: `-0x1F` |
+| `OYL_INT_UNDERSCORE` | underscores anywhere but first: `1_000` |
+| `OYL_INT_RANGE` | declines a value beyond 64 bits (otherwise it is text) |
+| `OYL_INT_CORE` | the Core schema's ints |
+
+| Float flag | Accepts |
+|------------|---------|
+| (always) | `[-+]?(.D+\|D+(.D*)?)([eE][-+]?D+)?` with a dot or an exponent |
+| `OYL_FLOAT_SPECIALS` | `.inf`, `.Inf`, `.INF` (signed), `.nan`, `.NaN`, `.NAN` |
+| `OYL_FLOAT_DIGITS` | digits alone |
+| `OYL_FLOAT_UNDERSCORE` | underscores as go-yaml v2 allows them |
+| `OYL_FLOAT_RANGE` | declines a value too large for a double |
+| `OYL_FLOAT_CORE` | the Core schema's floats |
+
 | Function | Description |
 |----------|-------------|
 | `oyl_schema_builder_new(arena)` | Create builder. |
@@ -313,6 +380,9 @@ oyl_parser_set_schema(parser, schema);
 | `oyl_schema_builder_add_nulls(b, terms, n)` | Add null rules. |
 | `oyl_schema_builder_add_int(b)` | Add built-in integer matcher. |
 | `oyl_schema_builder_add_float(b)` | Add built-in float matcher. |
+| `oyl_schema_builder_add_int_flags(b, flags)` | Add the int parser with `OYL_INT_` flags. |
+| `oyl_schema_builder_add_float_flags(b, flags)` | Add the float parser with `OYL_FLOAT_` flags. |
+| `oyl_schema_builder_add_type(b, tag, parse, user)` | Bind a tag to a custom parser. |
 | `oyl_schema_builder_finish(b)` | Finalize schema (copied into the arena; NULL on allocation failure). |
 | `oyl_schema_builder_free(b)` | Free builder. |
 
