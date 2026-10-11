@@ -320,6 +320,16 @@ static void test_yaml12_bool(void) {
     if (ok) PASS(); else FAIL("scanner should preserve 'yes' as plain scalar");
 }
 
+/* \xNN is the code point U+00NN, written in UTF-8 */
+static void test_hex_escape(void) {
+    TEST("\\x escapes are code points, in UTF-8");
+    oyl_token toks[8];
+    int n = scan_all_debug("\"\\x41\\xB5\\xff\"", toks, 8);
+    bool ok = n >= 3 && toks[1].type == OYL_TOK_SCALAR && toks[1].value.len == 5 &&
+              memcmp(toks[1].value.data, "A\xC2\xB5\xC3\xBF", 5) == 0;
+    if (ok) PASS(); else FAIL("expected A, then U+00B5 and U+00FF in UTF-8");
+}
+
 static void test_long_double_escape(void) {
     TEST("long double-quoted \n escapes");
     const int esc_count = 512; /* keeps test quick while stressing growth */
@@ -480,6 +490,7 @@ int main(void) {
     test_comment();
     test_yaml12_bool();
     test_long_double_escape();
+    test_hex_escape();
     test_event_marks_scalar();
     test_event_marks_mapping();
     test_event_marks_sequence();

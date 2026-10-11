@@ -7,6 +7,10 @@
 - The Core schema resolves `.Inf`, `.INF`, `.NaN` and `.NAN` to `!!float`,
   as YAML 1.2 specifies; only the lowercase spellings did. The JSON preset,
   which shares Core's number rules, does too.
+- A `\x` escape from `\x80` to `\xFF` in a double-quoted scalar gave that
+  raw byte, which is not UTF-8. It is the code point U+0080 to U+00FF and
+  now gives its UTF-8 encoding: `"\xB5"` is `µ`. Found by comparing with
+  go-yaml.
 
 ### Documentation
 
