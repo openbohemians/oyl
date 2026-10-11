@@ -2,8 +2,56 @@
 
 *Updated 2026-10-11*
 
-**Proposal, awaiting the user's review.** Step 3 of [roadmap.md](roadmap.md),
-on top of [schema-design.md](schema-design.md).
+**Built 2026-10-11 on the branch `schema-parsers` (`ed22e56`)**, with the
+user's go-ahead on the recommendations below (parser-based
+`oyl_parse_json`, both merge orders as flags, last duplicate wins with
+`OYL_JSON_STRICT`). Step 3 of [roadmap.md](roadmap.md), on top of
+[schema-design.md](schema-design.md).
+
+## Results (2026-10-11)
+
+Against `sigs.k8s.io/yaml` v1.6.0, byte for byte ([goyaml2-oracle/](goyaml2-oracle/README.md)):
+- 9,739 local YAML files: all identical or failing alike, but one (a `\'`
+  escape, which YAML 1.2 forbids and libyaml accepts)
+- 200,000 random floats as values and as keys: identical
+- 866 documents of public Kubernetes manifests: 857 identical, 5 failing
+  alike, 4 different: 3 Secrets or rules ending in a block scalar with no
+  final line break (go-yaml adds no line feed, Oyl and the suite do), 1
+  `\'` in an official kubernetes.io example
+- suite valid cases: 231 identical, 28 failing alike, 44 rejected only by
+  go-yaml, 8 libyaml syntax differences
+- speed: 296 against 49 MB/s on those manifests (2.8 MB of CRDs: 312
+  against 49), not counting the cgo call per document
+
+Comparing found one Oyl bug, fixed for 1.0.1 on main (`fba460b`): `\x80`
+to `\xFF` escapes gave raw bytes instead of UTF-8. And a converter bug the
+fuzzer caught (memcmp on a NULL key buffer), fixed before the commit.
+
+## libyaml syntax differences (where identical can't hold)
+
+go-yaml v2 is a port of libyaml, which reads some YAML differently from
+YAML 1.2 (the suite's libyaml results agree):
+- **a block scalar ending the input without a line break** gets no line
+  feed (`a: |` then `  x` at EOF is `"x"`; Oyl and the suite give
+  `"x\n"`, and for a trailing line of spaces the suite requires it, L24T,
+  JEF9). Real: 3 of 866 manifests.
+- **`\'` in double quotes** is accepted as `'`. Real: 1 of 866.
+- `?x` is an explicit key; anchors stop at `:` (`&an:chor`);
+  `omitted value:,` in flow is one key; zero-indented top-level block
+  scalars come out empty (libyaml bugs)
+- everything after the first document's root node is ignored, even
+  malformed text; Oyl reports it
+- invalid UTF-8 input is an error (Oyl doesn't validate UTF-8)
+
+**Open, for the user:** the first two occur in real manifests. Matching
+them needs an opt-in parser option (new API), for example
+`oyl_parser_set_compat(p, OYL_COMPAT_LIBYAML_EOF | OYL_COMPAT_SQUOTE_ESCAPE)`,
+set by the Kubernetes wrapper. The scanner changes are small (the block
+scalar change was written and reverted on 2026-10-11 when the suite showed
+YAML 1.2 requires the line feed).
+
+Also: Go 1.27's encoding/json writes invalid UTF-8 as the character U+FFFD;
+older Go wrote the escape `\ufffd`. Oyl matches 1.27.
 
 ## Goal
 

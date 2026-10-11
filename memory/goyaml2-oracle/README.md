@@ -22,3 +22,20 @@ paste scalars.txt go.out oyl.out | awk -F'\t' '$2!=$5 || $3!=$6 || $4!=$7'
 
 Each output line is `tag \t kind \t value`, floats as their IEEE bits.
 `oylvalues core|json` prints the other presets the same way.
+
+## YAMLToJSON (2026-10-11)
+
+`k8sjson.go` prints `sigs.k8s.io/yaml` (v1.6.0) `YAMLToJSON` for each file
+named, `oyljson.c` prints `oyl_parse_json` in Kubernetes mode the same way
+(an empty stream as `null`); `jsondiff.sh LIST [DIR]` runs both on the
+files in LIST and tallies same / both error / only one errors / different,
+with examples in DIR/examples.txt (edit its S= path first). Build the Go
+side in its own module: `go mod init k8sjson && go get sigs.k8s.io/yaml@v1.6.0
+&& go build`. `k8sbench.go` and `oylbench.c` time the two over the files
+named on stdin.
+
+The Kubernetes corpus: `git clone --depth 1` kubernetes/examples, a sparse
+clone of kubernetes/website (`content/en/examples`), and the install
+bundles of Argo CD (stable), cert-manager v1.16.2 and Prometheus Operator
+v0.79.2, split into documents at `---` lines as kubectl's YAMLReader does
+(866 documents, 7.3 MB).

@@ -25,7 +25,7 @@ was split from that history. Older citations such as
 | [naming.md](naming.md) | The yam → Oyl rename and the move to openbohemians |
 | [ideas.md](ideas.md) | Larger features agreed in principle but not started: tree API, 1.1 → 1.2 converter |
 | [schema-design.md](schema-design.md) | Schemas as tags bound to parsers (for YAMLToJSON and go-yaml v2): design, decisions, built on `schema-parsers` |
-| [yamltojson-design.md](yamltojson-design.md) | Proposal: JSON identical to sigs.k8s.io/yaml, the behaviors to match, the API |
+| [yamltojson-design.md](yamltojson-design.md) | oyl_parse_json: identical to sigs.k8s.io/yaml, results, libyaml syntax gaps (decision open) |
 | [goyaml2-oracle/](goyaml2-oracle/README.md) | Tools comparing the go-yaml v2 preset with go-yaml v2 itself |
 | [roadmap.md](roadmap.md) | The agreed order after 1.0 (schemas, YAMLToJSON, Go, tree, parallel), and the Go plan |
 | [outreach.md](outreach.md) | GitHub Sponsors, and the plan to reach heavy YAML users |
