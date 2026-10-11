@@ -25,10 +25,9 @@ tree came first; YAMLToJSON needs no tree, so it moved ahead):
    `e90ac2a`), the user chose to start before the 1.1 merge: on the 866
    real Kubernetes documents 296 to 376 MB/s in C (sigs.k8s.io/yaml 49:
    7.7x) and 347 against 47 MB/s through Go (7.3x, oyl.go's README). A
-   synthetic key-heavy CRD stays at about 5x. Writing JSON now costs about
-   as much as parsing (Oyl parses those documents at 650 MB/s), so 10x
-   needs both: the parser speedups in performance.md (structural index,
-   flow fast path) and typing scalars while reading.
+   synthetic key-heavy CRD stays at about 5x. **Done: the user, 2026-10-11:
+   "7x is good enough."** The path further is noted in performance.md
+   ("YAMLToJSON toward 10x"), not planned.
 5. **Tree API in C** (ideas.md), designed to cross into other languages
    cheaply: one call builds a flat node array in one arena, and a binding
    reads it with one copy or in place. A design goes to the user first.

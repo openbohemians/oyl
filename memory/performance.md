@@ -1,6 +1,6 @@
 # Performance
 
-*Updated 2026-10-10*
+*Updated 2026-10-11*
 
 ## Measuring
 
@@ -87,6 +87,22 @@ event parser, built from source.
 To verify any of these, diff the event streams of old vs new over the fuzz
 corpus (plus shifted copies to move 16- and 64-byte boundaries), and
 compare instruction counts.
+
+## YAMLToJSON toward 10x (noted 2026-10-11, not planned)
+
+`oyl_parse_json` is 7.3x `sigs.k8s.io/yaml` through Go on real Kubernetes
+manifests (roadmap.md 4b); the user called 7x good enough and asked only
+that the path further be noted. Writing JSON now costs about as much as
+parsing (on the 866 documents: parse 650 MB/s, to JSON 376 MB/s), so 10x
+needs both halves faster:
+- the parser: the structural index and the flow fast path above (items 4
+  and 5), which every use of Oyl gains from
+- the writer: type scalars while reading the document instead of in a
+  second pass; build fewer, smaller nodes (gprof on the real set: node
+  building and walking 19%, collecting entries 10%, strings 8%)
+
+Measure on real manifests, not only the synthetic CRD
+(yamltojson-design.md, "Speed").
 
 ## Plain-scalar classifier measurements (2026-10-07)
 
