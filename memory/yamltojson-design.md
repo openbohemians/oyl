@@ -43,10 +43,11 @@ YAML 1.2 (the suite's libyaml results agree):
   malformed text; Oyl reports it
 - invalid UTF-8 input is an error (Oyl doesn't validate UTF-8)
 
-**Decided (the user, 2026-10-11): add an opt-in parser option** for the
-first two, which occur in real manifests, e.g.
-`oyl_parser_set_compat(p, OYL_COMPAT_LIBYAML)`, off by default and set by
-the Kubernetes wrapper. Not yet built.
+**Decided (the user, 2026-10-11): make them opt-in**, for the first two,
+which occur in real manifests. First sketched as a parser switch, then
+folded into dialects (dialects-design.md): the libyaml leniencies are part
+of the go-yaml v2 dialect, which the Kubernetes wrapper sets as default.
+Not yet built.
 
 Directives, checked 2026-10-11: go-yaml v2 rejects every `%YAML` but 1.1
 ("found incompatible YAML document"), even 1.2; PyYAML takes 1.x and
