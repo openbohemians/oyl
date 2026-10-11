@@ -57,10 +57,15 @@ rejects 2.0; Oyl takes any version and ignores it (see release.md). The scanner 
 scalar change was written and reverted on 2026-10-11 when the suite showed
 YAML 1.2 requires the line feed).
 
-**Speed, open:** the JSON writer costs more than parsing on key-heavy
-documents (a 1 MB CRD: parsing 300 MB/s, to JSON 127 MB/s after
-`bbde00e`'s first-byte shortcut and snprintf-free integers). Ideas: type
-scalars while reading, avoid copying each key, a cheaper node array.
+**Speed:** see roadmap.md 4b. Measure on real manifests, not only the
+synthetic CRD (all short keys, tiny mappings), which flatters neither
+library: 866 Kubernetes documents give parse 650 MB/s, to JSON 376 MB/s
+in C after `e90ac2a`; the CRD 300 and 125. gprof (perf isn't installed)
+on the real set: writing is about 55% (node building and walking 19%,
+collecting entries 10%, strings 8%, typing 5%, sorting 2%). Done: the
+first-byte table, inline rule-outs, no event per scalar, integers
+without snprintf, keys pointing into the document, 32-byte entries,
+64-byte nodes, SSE2 string scanning.
 
 Also: Go 1.27's encoding/json writes invalid UTF-8 as the character U+FFFD;
 older Go wrote the escape `\ufffd`. Oyl matches 1.27.

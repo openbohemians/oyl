@@ -166,7 +166,8 @@ branch (`bbde00e`); **no tags until Oyl 1.1** (README says so). Tests
 compare `testdata/` with `sigs.k8s.io/yaml` (`OYL_COMPARE=dir` adds more;
 866 Kubernetes documents all match), fuzz for valid JSON; CI on Linux and
 macOS green. `MaxDepth` 256 (go-yaml v2 allows 10,000; cgo thread stacks
-may be small). 5-6x `sigs.k8s.io/yaml` through Go. Not yet linked from
+may be small). 7.3x `sigs.k8s.io/yaml` through Go on real manifests
+(`OYL_BENCH=dir`), 5-6x on tiny or synthetic ones. Vendors `e90ac2a`. Not yet linked from
 Oyl's README (it documents 1.0).
 
 ### Crystal
