@@ -41,8 +41,30 @@ digits that read back; `e` notation below 1e-6 or from 1e21, exponent
 without padding). Cross-type duplicate keys (`1` and `"1"`) collide in Go
 in random order, so no output can match those.
 
-Merge order is a dialect difference beyond scalar types: YAML's merge
-rule, which Oyl follows, says explicit keys always win.
+Merge order is a dialect difference beyond scalar types. Checked
+2026-10-11:
+- The merge key isn't part of YAML 1.2. It comes from the YAML 1.1 type
+  repository, "Merge Key Language-Independent Type", working draft
+  2005-01-18 (yaml.org/type/merge.html): a merged mapping's pairs are
+  inserted "unless the key already exists in it"; mappings are unordered,
+  so explicit keys win wherever `<<` sits. Its examples all put `<<` first.
+- PyYAML 6.0.3, go-yaml v3.0.5 and Oyl follow that. go-yaml v2 alone lets
+  a merge override the keys before it.
+- Not intended by Kubernetes: go-yaml v3 changed it deliberately (its
+  decoder applies the merge after the explicit keys and skips those
+  already set, `mergedFields` in decode.go). v2 is frozen, security fixes
+  only, and `sigs.k8s.io/yaml` keeps a v2 fork for Kubernetes' backward
+  compatibility.
+- Putting `<<` first is the common convention (the type's examples,
+  Rails' database.yml), and then every implementation agrees. Only a merge
+  after a key it also defines differs. How often that happens in real
+  files is still to measure.
+
+Handling it properly (the user, 2026-10-11: "deal with it proper like"):
+both behaviors as flags; the Kubernetes setting reproduces go-yaml v2 for
+identical output; the converter to standard rewrites the conflicting case
+(moves the `<<` up or drops the overridden key); and a check can report
+where a file means different things under the two rules.
 
 ## API sketch
 
