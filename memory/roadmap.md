@@ -6,13 +6,12 @@ The order the user agreed on 2026-10-11 (revised from 2026-10-10, when the
 tree came first; YAMLToJSON needs no tree, so it moved ahead):
 
 1. **Tag 1.0.** Done 2026-10-10 (release.md).
-2. **Schema design:** flexible matching and tags bound to parsers, in C
-   (below). New public API for all of 1.x, so a design goes to the user
-   first. Goal, in the user's words: the YAML 1.2 standard and go-yaml v2
-   schemas from the same parser.
-3. **YAMLToJSON in C** with a go-yaml v2 schema, checked against
-   `sigs.k8s.io/yaml` on real manifests and the fuzz corpus (Go is
-   installed locally).
+2. **Schema design:** flexible matching and tags bound to parsers, in C.
+   Built on `schema-parsers` (schema-design.md), 2026-10-11.
+3. **YAMLToJSON in C**, checked against `sigs.k8s.io/yaml`. Built, with
+   dialects chosen by directives (yamltojson-design.md,
+   dialects-design.md), 2026-10-11. **Next:** merge `schema-parsers` after
+   1.0.1 is tagged.
 4. **A thin Go wrapper:** just YAMLToJSON over cgo, with benchmarks against
    what Kubernetes uses now.
 5. **Tree API in C** (ideas.md), designed to cross into other languages

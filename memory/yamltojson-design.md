@@ -44,10 +44,12 @@ YAML 1.2 (the suite's libyaml results agree):
 - invalid UTF-8 input is an error (Oyl doesn't validate UTF-8)
 
 **Decided (the user, 2026-10-11): make them opt-in**, for the first two,
-which occur in real manifests. First sketched as a parser switch, then
-folded into dialects (dialects-design.md): the libyaml leniencies are part
-of the go-yaml v2 dialect, which the Kubernetes wrapper sets as default.
-Not yet built.
+which occur in real manifests. Folded into dialects (dialects-design.md)
+and built in `8dc86a2`: with the go-yaml v2 dialect, all 866 Kubernetes
+documents and all 9,739 local files match `sigs.k8s.io/yaml` (identical
+or failing alike); the suite's remaining 6 differences are the libyaml
+quirks not copied (`?x`, anchors cut at `:`, `omitted value:,`,
+zero-indented top-level block scalars).
 
 Directives, checked 2026-10-11: go-yaml v2 rejects every `%YAML` but 1.1
 ("found incompatible YAML document"), even 1.2; PyYAML takes 1.x and

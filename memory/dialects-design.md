@@ -2,8 +2,29 @@
 
 *Updated 2026-10-11*
 
-**Agreed with the user, 2026-10-11** (decisions at the end); not yet
-built. Replaces the bare libyaml compatibility switch planned in
+**Agreed with the user, 2026-10-11** (decisions at the end). **Built
+2026-10-11 on `schema-parsers`**: `a9d8fd5` (the YAML 1.1 schema), `8dc86a2`
+(dialects, warnings, oyl_parse_json with dialects); CI green. As built:
+- the default dialect is `oyl_parser_set_dialect`'s, else YAML 1.2 with
+  `oyl_parser_set_schema`'s schema; with a schema set, events are tagged by
+  the document's dialect
+- `OYL_SYNTAX_YAML11_ONLY` in the default dialect rejects any other
+  `%YAML` in every document (go-yaml v2 does), so the Kubernetes setting
+  is just `oyl_parser_set_dialect(p, oyl_dialect_goyaml2())`
+- the document dialect and version are read at `OYL_EVT_DOC_START`: the
+  eager parser produces a document's DOC_END while starting the next
+- warnings dedupe per code by offset (the eager fallback re-reads input)
+- the parser's own merge (`oyl_parser_set_merge`) stays YAML's; a
+  dialect's merge order applies in `oyl_parse_json`
+- the YAML 1.1 schema matches PyYAML on 391,179 generated and 55,339 real
+  scalars except y/Y/n/N (booleans in 1.1), a sign before a leading dot
+  (`+.5`, which the 1.1 type allows), and digitless `0b_`
+
+**Open:** the emitter quotes plain scalars by Core's types, so it isn't
+dialect-aware: text a dialect would type (`yes`, `1_000` in go-yaml v2) is
+written plain. The converter to standard needs a dialect-aware emitter
+(write for the target dialect); the fuzzer keeps the dialect and tag
+resolution apart for now. Replaces the bare libyaml compatibility switch planned in
 yamltojson-design.md, and builds on schema-design.md.
 
 ## The principle (the user's, 2026-10-11)
