@@ -347,8 +347,14 @@ enum {
     OYL_INT_SIGN_PREFIX  = 1 << 6,  /**< a sign before a prefix: -0x1F */
     OYL_INT_UNDERSCORE   = 1 << 7,  /**< underscores anywhere but first are ignored: 1_000 */
     OYL_INT_RANGE        = 1 << 8,  /**< decline a value beyond 64 bits (else it is text) */
+    OYL_INT_DIGIT_UNDERSCORE = 1 << 9,  /**< underscores after the first digit or a prefix:
+                                             1_000, 0x_1F (YAML 1.1) */
+    OYL_INT_BASE60       = 1 << 10, /**< 1:20 is 80, 190:20:30 is 685230 (YAML 1.1) */
     /** The Core schema's ints (with a sign also allowed before 0x or 0o) */
     OYL_INT_CORE = OYL_INT_SIGN | OYL_INT_HEX | OYL_INT_OCT | OYL_INT_SIGN_PREFIX,
+    /** YAML 1.1's ints (yaml.org/type/int) */
+    OYL_INT_YAML11 = OYL_INT_SIGN | OYL_INT_HEX | OYL_INT_OCT_ZERO | OYL_INT_BIN |
+                     OYL_INT_SIGN_PREFIX | OYL_INT_DIGIT_UNDERSCORE | OYL_INT_BASE60,
 };
 
 /** Options for the built-in float parser, which always accepts
@@ -359,9 +365,17 @@ enum {
     OYL_FLOAT_UNDERSCORE = 1 << 2,  /**< underscores, as go-yaml v2: anywhere after a leading
                                          digit or sign, else only between digits */
     OYL_FLOAT_RANGE      = 1 << 3,  /**< decline a value too large for a double */
+    OYL_FLOAT_NEED_DOT   = 1 << 4,  /**< a dot is required: 1e3 is not a float (YAML 1.1) */
+    OYL_FLOAT_EXP_SIGN   = 1 << 5,  /**< an exponent needs a sign: 1.0e+3 (YAML 1.1) */
+    OYL_FLOAT_DIGIT_UNDERSCORE = 1 << 6,  /**< underscores after the first digit and in the
+                                               fraction, not the exponent (YAML 1.1) */
+    OYL_FLOAT_BASE60     = 1 << 7,  /**< 1:20.5 is 80.5 (YAML 1.1) */
     /** The Core schema's floats. Digits alone count for an explicit
      *  !!float; untagged, the int rule takes them first. */
     OYL_FLOAT_CORE = OYL_FLOAT_SPECIALS | OYL_FLOAT_DIGITS,
+    /** YAML 1.1's floats (yaml.org/type/float, as PyYAML reads its pattern) */
+    OYL_FLOAT_YAML11 = OYL_FLOAT_SPECIALS | OYL_FLOAT_NEED_DOT | OYL_FLOAT_EXP_SIGN |
+                       OYL_FLOAT_DIGIT_UNDERSCORE | OYL_FLOAT_BASE60,
 };
 
 /** Add the built-in int parser with the given OYL_INT_ options. */
@@ -384,6 +398,12 @@ OYL_API void    oyl_schema_builder_add_type(oyl_schema_builder *b, oyl_str tag,
 OYL_API oyl_status oyl_schema_value(const oyl_schema *schema, const oyl_event *scalar,
                                     oyl_value *out);
 
+/** YAML 1.1's types (yaml.org/type): y/n/yes/no/on/off booleans, 0b
+ *  binary, 0-octal, base 60, underscores, floats with a dot, timestamps,
+ *  << as !!merge and = as !!value. Where the 1.1 patterns contradict
+ *  themselves, as libyaml's PyYAML reads them. */
+OYL_API const oyl_schema *oyl_schema_yaml11(void);
+
 /** go-yaml v2's types, as Kubernetes reads YAML: yes/no/on/off and y/n
  *  booleans, 0777 octal, 0b binary, underscores in numbers, an int beyond
  *  64 bits as a float, timestamps. Like go-yaml v2 it gives << no merge
@@ -392,6 +412,9 @@ OYL_API const oyl_schema *oyl_schema_goyaml2(void);
 
 /** The tag YAML gives timestamps. */
 OYL_API extern const oyl_str OYL_TAG_TIMESTAMP;   /**< tag:yaml.org,2002:timestamp */
+
+/** The tag of YAML 1.1's = key. */
+OYL_API extern const oyl_str OYL_TAG_VALUE;       /**< tag:yaml.org,2002:value */
 
 /** The tag of base64 data, which oyl_parse_json decodes. */
 OYL_API extern const oyl_str OYL_TAG_BINARY;      /**< tag:yaml.org,2002:binary */

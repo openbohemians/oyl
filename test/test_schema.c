@@ -545,6 +545,54 @@ static void test_values_goyaml2(void) {
     ASSERT(str_eq(resolve_plain(s, "<<"), OYL_TAG_STR), "<< has no merge tag, as in go-yaml v2");
 }
 
+static void test_values_yaml11(void) {
+    printf("test_values_yaml11:\n");
+    const oyl_schema *s = oyl_schema_yaml11();
+    oyl_value v;
+
+    ASSERT(is_bool(plain_value(s, "y"), true), "y");
+    ASSERT(is_bool(plain_value(s, "NO"), false), "NO");
+    ASSERT(is_bool(plain_value(s, "on"), true), "on");
+    ASSERT(plain_value(s, "~").kind == OYL_VALUE_NULL, "~");
+
+    ASSERT(is_int(plain_value(s, "0b1010_0111"), 0xA7), "0b1010_0111");
+    ASSERT(is_int(plain_value(s, "02472256"), 685230), "02472256 (octal)");
+    ASSERT(is_int(plain_value(s, "0x_0A_74_AE"), 685230), "0x_0A_74_AE");
+    ASSERT(is_int(plain_value(s, "685_230"), 685230), "685_230");
+    ASSERT(is_int(plain_value(s, "190:20:30"), 685230), "190:20:30 (base 60)");
+    ASSERT(is_int(plain_value(s, "-1:30"), -90), "-1:30");
+    ASSERT(is_int(plain_value(s, "0"), 0), "0");
+    ASSERT(is_text(plain_value(s, "09"), "09"), "09 is no int (nor float: no dot)");
+    ASSERT(is_text(plain_value(s, "0o17"), "0o17"), "0o17 is a 1.2 form");
+    ASSERT(is_text(plain_value(s, "0X1F"), "0X1F"), "0X1F: the prefix is lowercase");
+    ASSERT(is_text(plain_value(s, "0_x1F"), "0_x1F"), "a prefix is whole");
+    ASSERT(is_text(plain_value(s, "_1"), "_1"), "_1");
+    ASSERT(is_text(plain_value(s, "-_1"), "-_1"), "-_1");
+    ASSERT(is_text(plain_value(s, "1:60"), "1:60"), "1:60 (60 is no base 60 digit)");
+
+    ASSERT(is_float(plain_value(s, "6.8523015e+5"), 685230.15), "6.8523015e+5");
+    ASSERT(is_float(plain_value(s, "685.230_15e+03"), 685230.15), "685.230_15e+03");
+    ASSERT(is_float(plain_value(s, "685_230.15"), 685230.15), "685_230.15");
+    ASSERT(is_float(plain_value(s, "190:20:30.15"), 685230.15), "190:20:30.15 (base 60)");
+    ASSERT(is_float(plain_value(s, "-.inf"), -INFINITY), "-.inf");
+    ASSERT(is_float(plain_value(s, "1."), 1.0), "1.");
+    ASSERT(is_float(plain_value(s, "+.5"), 0.5), "+.5 (the 1.1 type allows the sign)");
+    ASSERT(is_text(plain_value(s, "1e3"), "1e3"), "1e3: a float needs a dot");
+    ASSERT(is_text(plain_value(s, "1.0e3"), "1.0e3"), "1.0e3: an exponent needs a sign");
+    ASSERT(is_text(plain_value(s, "."), "."), ". (the 1.1 pattern would take it; PyYAML doesn't)");
+    ASSERT(is_text(plain_value(s, "1.2.3"), "1.2.3"), "1.2.3");
+    ASSERT(is_text(plain_value(s, "1.5e+_3"), "1.5e+_3"), "no underscore in the exponent");
+
+    ASSERT(str_eq(resolve_plain(s, "2001-12-14"), OYL_TAG_TIMESTAMP), "2001-12-14");
+    ASSERT(str_eq(resolve_plain(s, "2001-12-14t21:59:43.10-05:00"), OYL_TAG_TIMESTAMP), "canonical");
+    ASSERT(str_eq(resolve_plain(s, "2001-12-14 21:59:43.10 -5"), OYL_TAG_TIMESTAMP), "spaced, as the type's example");
+    ASSERT(str_eq(resolve_plain(s, "2001-12-15 2:59:43.10"), OYL_TAG_TIMESTAMP), "no time zone");
+    ASSERT(str_eq(resolve_plain(s, "2001-1-14"), OYL_TAG_STR), "a date alone has two-digit fields");
+    ASSERT(str_eq(resolve_plain(s, "<<"), OYL_TAG_MERGE), "<< is !!merge");
+    ASSERT(str_eq(resolve_plain(s, "="), OYL_TAG_VALUE), "= is !!value");
+    (void)v;
+}
+
 /* !!int redefined: Roman numerals made of I, V and X */
 static bool parse_roman(oyl_str text, oyl_value *out, void *user) {
     int *calls = user;
@@ -676,6 +724,7 @@ int main(void) {
     test_icase();
     test_values_core();
     test_values_goyaml2();
+    test_values_yaml11();
     test_custom_types();
     test_values_from_parser();
 

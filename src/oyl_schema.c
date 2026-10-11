@@ -33,6 +33,7 @@ static const char TAG_MAP[]       = "tag:yaml.org,2002:map";
 static const char TAG_MERGE[]     = "tag:yaml.org,2002:merge";
 static const char TAG_TIMESTAMP[] = "tag:yaml.org,2002:timestamp";
 static const char TAG_BINARY[]    = "tag:yaml.org,2002:binary";
+static const char TAG_VALUE[]     = "tag:yaml.org,2002:value";
 
 #define TAG(name) { TAG_##name, sizeof(TAG_##name) - 1 }
 
@@ -46,6 +47,7 @@ const oyl_str OYL_TAG_MAP       = TAG(MAP);
 const oyl_str OYL_TAG_MERGE     = TAG(MERGE);
 const oyl_str OYL_TAG_TIMESTAMP = TAG(TIMESTAMP);
 const oyl_str OYL_TAG_BINARY    = TAG(BINARY);
+const oyl_str OYL_TAG_VALUE     = TAG(VALUE);
 
 static bool str_eq(oyl_str a, oyl_str b) {
     return a.len == b.len && (a.len == 0 || memcmp(a.data, b.data, a.len) == 0);
@@ -85,9 +87,58 @@ static int digit_value(int ch, int base) {
  * otherwise kept as text. The Core flags accept what YAML 1.2's Core int
  * does, and a sign before 0x or 0o.
  */
+/* A magnitude plus a sign as an int value: INT, UINT, or text if too big */
+static void int_value(uint64_t mag, bool neg, bool big, const char *s, size_t len,
+                      oyl_value *out) {
+    if (!big && neg && mag > (uint64_t)INT64_MAX + 1) big = true;
+    if (big)
+        *out = (oyl_value){ .kind = OYL_VALUE_STR, .as = { .s = { s, len } } };
+    else if (neg)
+        *out = (oyl_value){ .kind = OYL_VALUE_INT,
+                            .as = { .i = mag == (uint64_t)INT64_MAX + 1 ? INT64_MIN : -(int64_t)mag } };
+    else if (mag <= INT64_MAX)
+        *out = (oyl_value){ .kind = OYL_VALUE_INT, .as = { .i = (int64_t)mag } };
+    else
+        *out = (oyl_value){ .kind = OYL_VALUE_UINT, .as = { .u = mag } };
+}
+
+static bool mul_add(uint64_t *v, uint64_t m, uint64_t a) {
+    return !__builtin_mul_overflow(*v, m, v) && !__builtin_add_overflow(*v, a, v);
+}
+
+/* YAML 1.1's base 60 int, [-+]?[1-9][0-9_]*(:[0-5]?[0-9])+: 190:20:30 is
+ * 190 * 3600 + 20 * 60 + 30 */
+static bool parse_int60(const char *s, size_t len, oyl_value *out) {
+    size_t i = s[0] == '+' || s[0] == '-';
+    bool neg = s[0] == '-', big = false;
+    if (i >= len || s[i] < '1' || s[i] > '9') return false;
+    uint64_t v = 0;
+    for (; i < len && s[i] != ':'; i++) {
+        if (s[i] == '_') continue;
+        if (!isdigit((unsigned char)s[i])) return false;
+        if (!big && !mul_add(&v, 10, (uint64_t)(s[i] - '0'))) big = true;
+    }
+    int parts = 0;
+    while (i < len) {   /* at a ':' */
+        size_t start = ++i;
+        unsigned d = 0;
+        while (i < len && i - start < 2 && isdigit((unsigned char)s[i])) d = d * 10 + (unsigned)(s[i++] - '0');
+        if (i == start || (i - start == 2 && s[start] > '5') || (i < len && s[i] != ':')) return false;
+        if (!big && !mul_add(&v, 60, d)) big = true;
+        parts++;
+    }
+    if (!parts) return false;
+    if (out) int_value(v, neg, big, s, len, out);
+    return true;
+}
+
 static bool parse_int(const char *s, size_t len, unsigned flags, oyl_value *out) {
-    bool underscores = (flags & OYL_INT_UNDERSCORE) != 0;
+    bool digit_underscores = (flags & OYL_INT_DIGIT_UNDERSCORE) != 0;
+    bool underscores = (flags & OYL_INT_UNDERSCORE) != 0 || digit_underscores;
     if (len == 0 || (underscores && s[0] == '_')) return false;
+    if ((flags & OYL_INT_BASE60) && memchr(s, ':', len)) return parse_int60(s, len, out);
+    /* YAML 1.1: no underscore right after the sign */
+    if (digit_underscores && len > 1 && (s[0] == '+' || s[0] == '-') && s[1] == '_') return false;
     cursor c = { s, len, 0, underscores };
     int ch = cur_peek(&c);
     bool sign = false, neg = false;
@@ -104,7 +155,9 @@ static bool parse_int(const char *s, size_t len, unsigned flags, oyl_value *out)
     if (ch == '0') {
         cursor after = c;
         cur_next(&after);
-        int p = cur_peek(&after);
+        /* YAML 1.1 keeps a prefix whole (0_x1F is no hex) */
+        int p = digit_underscores ? (after.i < len ? (unsigned char)s[after.i] : -1)
+                                  : cur_peek(&after);
         bool any_case = (flags & OYL_INT_PREFIX_CASE) != 0;
         int prefix = (p == 'x' || (any_case && p == 'X')) && (flags & OYL_INT_HEX) ? 16
                    : (p == 'o' || (any_case && p == 'O')) && (flags & OYL_INT_OCT) ? 8
@@ -139,21 +192,8 @@ static bool parse_int(const char *s, size_t len, unsigned flags, oyl_value *out)
     }
     if (!big && neg && mag > (uint64_t)INT64_MAX + 1) big = true;
     if (!big && sign && !neg && mag > INT64_MAX && (flags & OYL_INT_RANGE)) big = true;
-    if (big) {
-        if (flags & OYL_INT_RANGE) return false;
-        if (out) *out = (oyl_value){ .kind = OYL_VALUE_STR, .as = { .s = { s, len } } };
-        return true;
-    }
-    if (out) {
-        if (neg)
-            *out = (oyl_value){ .kind = OYL_VALUE_INT,
-                                .as = { .i = mag == (uint64_t)INT64_MAX + 1 ? INT64_MIN
-                                                                            : -(int64_t)mag } };
-        else if (mag <= INT64_MAX)
-            *out = (oyl_value){ .kind = OYL_VALUE_INT, .as = { .i = (int64_t)mag } };
-        else
-            *out = (oyl_value){ .kind = OYL_VALUE_UINT, .as = { .u = mag } };
-    }
+    if (big && (flags & OYL_INT_RANGE)) return false;
+    if (out) int_value(mag, neg, big, s, len, out);
     return true;
 }
 
@@ -188,14 +228,59 @@ static int float_value(const char *s, size_t len, bool underscores, unsigned fla
     return overflow && (flags & OYL_FLOAT_RANGE) ? 0 : 1;
 }
 
+/* YAML 1.1's base 60 float, [-+]?[0-9][0-9_]*(:[0-5]?[0-9])+\.[0-9_]*:
+ * 20:30.15 is 20 * 60 + 30.15. The value as PyYAML computes it: each part
+ * read as a float, then summed from the right times powers of 60. */
+static int parse_float60(const char *s, size_t len, oyl_value *out) {
+    size_t i = s[0] == '+' || s[0] == '-';
+    if (i >= len || !isdigit((unsigned char)s[i])) return 0;
+    size_t starts[64], ends[64];
+    int parts = 0;
+    starts[0] = i;
+    for (; i < len && s[i] != ':'; i++)
+        if (s[i] != '_' && !isdigit((unsigned char)s[i])) return 0;
+    if (i >= len) return 0;
+    ends[parts++] = i;
+    bool fraction = false;
+    while (i < len) {   /* at a ':' */
+        size_t start = ++i;
+        while (i < len && i - start < 2 && isdigit((unsigned char)s[i])) i++;
+        if (i == start || (i - start == 2 && s[start] > '5')) return 0;
+        if (i < len && s[i] == '.') {   /* the fraction ends it */
+            for (i++; i < len; i++)
+                if (s[i] != '_' && !isdigit((unsigned char)s[i])) return 0;
+            fraction = true;
+        } else if (i < len && s[i] != ':') {
+            return 0;
+        }
+        if (parts == 64) return 0;
+        starts[parts] = start;
+        ends[parts++] = i;
+    }
+    if (!fraction) return 0;   /* a base 60 int, not a float */
+    if (!out) return 1;
+    double value = 0, base = 1;
+    for (int k = parts - 1; k >= 0; k--) {
+        double part;
+        if (float_value(s + starts[k], ends[k] - starts[k], true, 0, &part) < 0) return -1;
+        value += part * base;
+        base *= 60;
+    }
+    *out = (oyl_value){ .kind = OYL_VALUE_FLOAT, .as = { .f = s[0] == '-' ? -value : value } };
+    return 1;
+}
+
 /*
  * [-+]?(\.[0-9]+|[0-9]+(\.[0-9]*)?)([eE][-+]?[0-9]+)? with a dot or an
  * exponent, or digits alone under OYL_FLOAT_DIGITS. Under
  * OYL_FLOAT_SPECIALS also [-+]?(\.inf|\.Inf|\.INF) and \.nan|\.NaN|\.NAN.
+ * YAML 1.1's flags require a dot and an exponent's sign, allow underscores
+ * after the first digit, and add base 60.
  * 1 accepted, 0 declined, -1 out of memory.
  */
 static int parse_float(const char *s, size_t len, unsigned flags, oyl_value *out) {
     if (len == 0) return 0;
+    if ((flags & OYL_FLOAT_BASE60) && memchr(s, ':', len)) return parse_float60(s, len, out);
     if (flags & OYL_FLOAT_SPECIALS) {
         if (spelled(s, len, ".nan", ".NaN", ".NAN")) {
             if (out) *out = (oyl_value){ .kind = OYL_VALUE_FLOAT, .as = { .f = NAN } };
@@ -214,7 +299,17 @@ static int parse_float(const char *s, size_t len, unsigned flags, oyl_value *out
      * and hands the rest to Go's ParseFloat, which allows them only
      * between digits */
     bool underscores = false;
-    if ((flags & OYL_FLOAT_UNDERSCORE) && memchr(s, '_', len)) {
+    if ((flags & OYL_FLOAT_DIGIT_UNDERSCORE) && memchr(s, '_', len)) {
+        /* YAML 1.1: after the first digit and in the fraction, not before
+         * the first digit nor in the exponent */
+        size_t k = s[0] == '+' || s[0] == '-';
+        if (k < len && s[k] == '_') return 0;
+        for (bool exponent = false; k < len; k++) {
+            if (s[k] == 'e' || s[k] == 'E') exponent = true;
+            else if (s[k] == '_' && exponent) return 0;
+        }
+        underscores = true;
+    } else if ((flags & OYL_FLOAT_UNDERSCORE) && memchr(s, '_', len)) {
         underscores = isdigit((unsigned char)s[0]) || s[0] == '+' || s[0] == '-';
         if (!underscores) {
             for (size_t k = 0; k < len; k++)
@@ -243,11 +338,13 @@ static int parse_float(const char *s, size_t len, unsigned flags, oyl_value *out
         cur_next(&c);
         ch = cur_peek(&c);
         if (ch == '+' || ch == '-') { cur_next(&c); ch = cur_peek(&c); }
+        else if (flags & OYL_FLOAT_EXP_SIGN) return 0;
         if (ch < '0' || ch > '9') return 0;
         for (; ch >= '0' && ch <= '9'; cur_next(&c), ch = cur_peek(&c))
             ;
     }
     if (ch >= 0) return 0;
+    if (!dot && (flags & OYL_FLOAT_NEED_DOT)) return 0;
     if (!dot && !exp && !(flags & OYL_FLOAT_DIGITS)) return 0;
     if (!out && !(flags & OYL_FLOAT_RANGE)) return 1;
 
@@ -319,6 +416,46 @@ static bool parse_timestamp(const char *s, size_t len) {
     return zh <= 24 && zm <= 60;   /* Go allows offsets of 24 hours or 60 minutes */
 }
 
+/* YAML 1.1's timestamps (yaml.org/type/timestamp), as PyYAML's pattern has
+ * them, which allows space before a zone as the type's own example does:
+ *   YYYY-MM-DD
+ *   YYYY-M-D([Tt]|[ \t]+)H:MM:SS(.F*)?([ \t]*(Z|[-+]H(:MM)?))?
+ * The pattern checks no ranges. */
+static bool digits_at(const char *s, size_t len, size_t *i, size_t min, size_t max) {
+    size_t n = 0;
+    while (*i < len && n < max && isdigit((unsigned char)s[*i])) { (*i)++; n++; }
+    return n >= min;
+}
+
+static bool parse_timestamp11(const char *s, size_t len) {
+    size_t i = 0;
+    if (!digits_at(s, len, &i, 4, 4) || i >= len || s[i++] != '-') return false;
+    size_t m = i;
+    if (!digits_at(s, len, &i, 1, 2) || i >= len || s[i++] != '-') return false;
+    size_t d = i;
+    if (!digits_at(s, len, &i, 1, 2)) return false;
+    if (i == len) return i - d == 2 && d - m == 3;   /* the date alone: MM and DD */
+    if (s[i] == 'T' || s[i] == 't') {
+        i++;
+    } else if (s[i] == ' ' || s[i] == '\t') {
+        while (i < len && (s[i] == ' ' || s[i] == '\t')) i++;
+    } else {
+        return false;
+    }
+    if (!digits_at(s, len, &i, 1, 2) || i >= len || s[i++] != ':') return false;
+    if (!digits_at(s, len, &i, 2, 2) || i >= len || s[i++] != ':') return false;
+    if (!digits_at(s, len, &i, 2, 2)) return false;
+    if (i < len && s[i] == '.') { i++; digits_at(s, len, &i, 0, SIZE_MAX); }
+    if (i == len) return true;
+    while (i < len && (s[i] == ' ' || s[i] == '\t')) i++;
+    if (i < len && s[i] == 'Z') return i + 1 == len;
+    if (i >= len || (s[i] != '+' && s[i] != '-')) return false;
+    i++;
+    if (!digits_at(s, len, &i, 1, 2)) return false;
+    if (i < len && s[i] == ':') { i++; if (!digits_at(s, len, &i, 2, 2)) return false; }
+    return i == len;
+}
+
 /* ── Rules ───────────────────────────────────────────────── */
 
 static bool word_eq(const char *pattern, size_t plen, oyl_str text, bool icase) {
@@ -352,8 +489,10 @@ static int rule_parse(const oyl_schema_rule *r, oyl_str text, oyl_value *out) {
         return parse_int(text.data, text.len, r->flags, out);
     case RULE_FLOAT:
         return parse_float(text.data, text.len, r->flags, out);
-    case RULE_TIMESTAMP:
-        if (!parse_timestamp(text.data, text.len)) return 0;
+    case RULE_TIMESTAMP:   /* flags 1: YAML 1.1's forms, else go-yaml v2's */
+        if (!(r->flags ? parse_timestamp11(text.data, text.len)
+                       : parse_timestamp(text.data, text.len)))
+            return 0;
         if (out) *out = (oyl_value){ .kind = OYL_VALUE_STR, .as = { .s = text } };
         return 1;
     case RULE_CUSTOM: {
@@ -429,6 +568,8 @@ oyl_status oyl_schema_value(const oyl_schema *schema, const oyl_event *scalar,
 #define INT_RULE(f)       { .kind = RULE_INT, .tag = TAG(INT), .flags = (f) }
 #define FLOAT_RULE(f)     { .kind = RULE_FLOAT, .tag = TAG(FLOAT), .flags = (f) }
 #define TIMESTAMP_RULE    { .kind = RULE_TIMESTAMP, .tag = TAG(TIMESTAMP) }
+#define TIMESTAMP11_RULE  { .kind = RULE_TIMESTAMP, .tag = TAG(TIMESTAMP), .flags = 1 }
+#define V_TEXT   { .kind = OYL_VALUE_STR }
 
 #define DEFAULT_TAGS \
     .default_plain_tag  = TAG(STR), \
@@ -471,6 +612,31 @@ static const oyl_schema core_schema = PRESET(core_rules);
 
 const oyl_schema *oyl_schema_core(void) {
     return &core_schema;
+}
+
+/* YAML 1.1's types (yaml.org/type), with PyYAML's reading where the
+ * patterns contradict themselves: a float needs a digit (the float pattern
+ * would take "." and "1.2.3"), and a zone may follow a space (as the
+ * timestamp type's own example has it) */
+static const oyl_schema_rule yaml11_rules[] = {
+    NULL_WORD("~"), NULL_WORD("null"), NULL_WORD("Null"), NULL_WORD("NULL"), NULL_WORD(""),
+    TRUE_WORD("y"), TRUE_WORD("Y"), TRUE_WORD("yes"), TRUE_WORD("Yes"), TRUE_WORD("YES"),
+    TRUE_WORD("true"), TRUE_WORD("True"), TRUE_WORD("TRUE"),
+    TRUE_WORD("on"), TRUE_WORD("On"), TRUE_WORD("ON"),
+    FALSE_WORD("n"), FALSE_WORD("N"), FALSE_WORD("no"), FALSE_WORD("No"), FALSE_WORD("NO"),
+    FALSE_WORD("false"), FALSE_WORD("False"), FALSE_WORD("FALSE"),
+    FALSE_WORD("off"), FALSE_WORD("Off"), FALSE_WORD("OFF"),
+    WORD("<<", TAG(MERGE), V_TEXT),
+    WORD("=", TAG(VALUE), V_TEXT),
+    INT_RULE(OYL_INT_YAML11),
+    FLOAT_RULE(OYL_FLOAT_YAML11),
+    TIMESTAMP11_RULE,
+};
+
+static const oyl_schema yaml11_schema = PRESET(yaml11_rules);
+
+const oyl_schema *oyl_schema_yaml11(void) {
+    return &yaml11_schema;
 }
 
 /* go-yaml v2 (resolve.go, v2 branch): its word map, then for text that
