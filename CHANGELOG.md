@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.1 (unreleased)
+
+### Fixed
+
+- The Core schema resolves `.Inf`, `.INF`, `.NaN` and `.NAN` to `!!float`,
+  as YAML 1.2 specifies; only the lowercase spellings did. The JSON preset,
+  which shares Core's number rules, does too.
+
+### Documentation
+
+- The JSON preset is looser than YAML 1.2's JSON schema: `+1`, `01`,
+  `0x1F`, `0o17`, `.inf` and `.nan` resolve as numbers, and other plain
+  scalars as `!!str` rather than an error. It stays that way within 1.x.
+
 ## 1.0.0 (2026-10-10)
 
 The first stable release, and the first under a new name: **yam is now

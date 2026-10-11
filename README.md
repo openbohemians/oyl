@@ -327,6 +327,11 @@ built-in schemas ship as presets:
 | **JSON** | `null`, `true`/`false`, integers, floats |
 | **Core** | JSON + `Null`/`NULL`/`~`, `True`/`TRUE`/`False`/`FALSE`, `0x`/`0o` ints |
 
+The JSON preset shares Core's number rules, so it is looser than the YAML
+1.2 JSON schema (section 10.2): `+1`, `01`, `0x1F`, `0o17`, `.inf` and `.nan`
+resolve as numbers, and other plain scalars as `!!str` rather than an
+error.
+
 Schema is opt-in -- without `oyl_parser_set_schema()`, scalars have no tag.
 
 ```c

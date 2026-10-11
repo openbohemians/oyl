@@ -177,6 +177,13 @@ static void test_float_matcher(void) {
     ASSERT(str_eq(resolve_plain(s, "+.inf"), OYL_TAG_FLOAT), "+.inf");
     ASSERT(str_eq(resolve_plain(s, "-.inf"), OYL_TAG_FLOAT), "-.inf");
     ASSERT(str_eq(resolve_plain(s, ".nan"), OYL_TAG_FLOAT), ".nan");
+    /* the spec's other spellings */
+    ASSERT(str_eq(resolve_plain(s, ".Inf"), OYL_TAG_FLOAT), ".Inf");
+    ASSERT(str_eq(resolve_plain(s, ".INF"), OYL_TAG_FLOAT), ".INF");
+    ASSERT(str_eq(resolve_plain(s, "-.Inf"), OYL_TAG_FLOAT), "-.Inf");
+    ASSERT(str_eq(resolve_plain(s, "+.INF"), OYL_TAG_FLOAT), "+.INF");
+    ASSERT(str_eq(resolve_plain(s, ".NaN"), OYL_TAG_FLOAT), ".NaN");
+    ASSERT(str_eq(resolve_plain(s, ".NAN"), OYL_TAG_FLOAT), ".NAN");
 
     /* not floats — int takes precedence for pure digits */
     ASSERT(str_eq(resolve_plain(s, "42"), OYL_TAG_INT), "42 is int not float");
@@ -187,6 +194,9 @@ static void test_float_matcher(void) {
     ASSERT(str_eq(resolve_plain(s, "1e"), OYL_TAG_STR), "1e (no exponent)");
     ASSERT(str_eq(resolve_plain(s, "inf"), OYL_TAG_STR), "inf (no dot)");
     ASSERT(str_eq(resolve_plain(s, "nan"), OYL_TAG_STR), "nan (no dot)");
+    ASSERT(str_eq(resolve_plain(s, ".iNf"), OYL_TAG_STR), ".iNf (not a spelling)");
+    ASSERT(str_eq(resolve_plain(s, ".Nan"), OYL_TAG_STR), ".Nan (not a spelling)");
+    ASSERT(str_eq(resolve_plain(s, "+.nan"), OYL_TAG_STR), "+.nan (no sign on nan)");
 }
 
 /* ── Test: Schema builder ────────────────────────────────── */

@@ -252,7 +252,10 @@ typedef struct oyl_schema oyl_schema;
  *  Presets are static and never need freeing. */
 OYL_API const oyl_schema *oyl_schema_failsafe(void);
 
-/** YAML 1.2 JSON schema: null, true/false, integers, floats. */
+/** YAML 1.2 JSON schema: null, true/false, integers, floats. Its numbers
+ *  follow the Core schema's rules, so it accepts more than the spec's JSON
+ *  schema (+1, 01, 0x1F, 0o17, .inf, .nan), and other plain scalars resolve
+ *  to !!str rather than being an error. */
 OYL_API const oyl_schema *oyl_schema_json(void);
 
 /** YAML 1.2 Core schema: JSON + Null/NULL/~, True/TRUE, 0x/0o ints, etc. */

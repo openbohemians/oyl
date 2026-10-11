@@ -82,18 +82,24 @@ static bool match_int(const char *s, size_t len) {
     return true;
 }
 
+/* One of a four-byte word's three spellings: ".inf", ".Inf", ".INF" */
+static bool spelled(const char *s, size_t len, const char *lower,
+                    const char *capital, const char *upper) {
+    return len == 4 && (memcmp(s, lower, 4) == 0 || memcmp(s, capital, 4) == 0 ||
+                        memcmp(s, upper, 4) == 0);
+}
+
 /*
  * Core/JSON float:
  *   [-+]?(\.[0-9]+|[0-9]+(\.[0-9]*)?)([eE][-+]?[0-9]+)?
- *   [-+]?(\.inf)
- *   \.nan
+ *   [-+]?(\.inf|\.Inf|\.INF)
+ *   \.nan|\.NaN|\.NAN
  */
 static bool match_float(const char *s, size_t len) {
     if (len == 0) return false;
     size_t i = 0;
 
-    /* .nan */
-    if (len == 4 && memcmp(s, ".nan", 4) == 0) return true;
+    if (spelled(s, len, ".nan", ".NaN", ".NAN")) return true;
 
     /* optional sign */
     if (s[0] == '+' || s[0] == '-') {
@@ -101,8 +107,7 @@ static bool match_float(const char *s, size_t len) {
         if (i >= len) return false;
     }
 
-    /* .inf */
-    if (i + 4 == len && memcmp(s + i, ".inf", 4) == 0) return true;
+    if (spelled(s + i, len - i, ".inf", ".Inf", ".INF")) return true;
 
     /* must have digits or leading dot */
     bool has_dot = false;
