@@ -1896,6 +1896,12 @@ static oyl_status parse_directive(oyl_parser *p, bool *had_yaml) {
         while (i < l1 && w1[i] >= '0' && w1[i] <= '9') i++;
         if (i != l1 || i == dot + 1)
             PARSE_ERROR(p, "invalid %YAML version");
+        /* only major version 1: the spec rejects a higher one, and for a
+         * lower one follows libyaml, which rejects it too */
+        size_t z = 0;
+        while (z + 1 < dot && w1[z] == '0') z++;
+        if (dot - z != 1 || w1[z] != '1')
+            PARSE_ERROR(p, "unsupported %YAML version: only 1.x is accepted");
         if (directive_word(&cur, end, &extra, &lx))
             PARSE_ERROR(p, "unexpected text after %YAML version");
         return OYL_OK;
