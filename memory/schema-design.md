@@ -2,8 +2,9 @@
 
 *Updated 2026-10-11*
 
-**Proposal, awaiting the user's review.** Step 2 of
-[roadmap.md](roadmap.md). New public API, additive within 1.x.
+**Agreed 2026-10-11**: the user took every recommendation below. Step 2
+of [roadmap.md](roadmap.md). New public API, additive within 1.x, built on
+the branch `schema-parsers` and merged after 1.0.1 is tagged.
 
 ## Goal
 
@@ -120,13 +121,24 @@ duplicate keys and taking the first document only belong to that design.
   numbers, and an unmatched plain scalar is `!!str` where the spec makes
   it an error.
 
-## Open questions for the user
+## Decisions (the user, 2026-10-11)
 
-1. `oyl_value` public with six kinds, as above, or opaque with accessors?
-   Recommended: public; it's small and bindings read it directly.
-2. Flags for the int and float parsers, or only named dialects?
-   Recommended: flags, with the presets built from them.
-3. Fix the Core bug as 1.0.1 now, or with this work in 1.1?
-4. Make the JSON preset match the spec (a behavior change within 1.x), or
-   leave it and document it?
-5. The go-yaml v2 preset's name: `oyl_schema_goyaml2()`?
+1. `oyl_value` is public, with the six kinds above.
+2. The int and float parsers take flags; the presets are built from them.
+3. The Core bug is fixed for 1.0.1: `707aa94`, pushed 2026-10-11. **Open:**
+   tag 1.0.1 after clean batch runs, on the user's go-ahead.
+4. The JSON preset stays as it is within 1.x, documented (header, README,
+   CHANGELOG in `707aa94`).
+5. The go-yaml v2 preset is `oyl_schema_goyaml2()`.
+
+## Notes for building it
+
+- Resolution of existing presets must not change: Core's int matcher
+  accepts any digits, so an int beyond 64 bits keeps `!!int`, and its
+  value comes back as text (kind STR). go-yaml v2's int parser declines
+  out-of-range values instead, so they fall to its float parser.
+- `oyl_schema_value` works without `oyl_parser_set_schema` (it resolves
+  untagged scalars itself), so YAMLToJSON can keep the incremental parser,
+  which a schema on the parser turns off.
+- Check the go-yaml v2 preset against go-yaml v2 itself over many scalars
+  (the corpus's plain scalars plus generated numbers); Go is installed.
