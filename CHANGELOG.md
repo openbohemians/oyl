@@ -28,6 +28,25 @@
   the other 4 are where libyaml's syntax differs from YAML 1.2. About six
   times as fast. With the Core schema and `OYL_JSON_MERGE`, standard JSON.
 
+- **Dialects**: a schema, syntax leniencies and a merge order, chosen per
+  document by its directives: a `%TAG !!` prefix the program registered,
+  else its `%YAML` version (1.1 and 1.2 built in), else the parser's
+  default (`oyl_parser_set_dialect`, `oyl_parser_add_dialect`). Built in:
+  YAML 1.2, YAML 1.1, and go-yaml v2 with libyaml's leniencies, which
+  makes `oyl_parse_json` identical to `sigs.k8s.io/yaml` on all 866
+  documents of the Kubernetes manifests it was checked on.
+- **`oyl_schema_yaml11()`**, YAML 1.1's types as the 1.1 spec has them
+  (base 60, 0-octal, y/n booleans, timestamps), with new int and float
+  flags for them.
+- **Warnings**, to a callback (`oyl_parser_set_warn`).
+- `oyl_parser_document_dialect`, `oyl_parser_yaml_version`, `OYL_TAG_VALUE`.
+
+### Changed
+
+- With a schema set, a document that says `%YAML 1.1` is typed with YAML
+  1.1's types (`yes` is true), as the directive asks; before, with the
+  parser's schema. Documents without the directive are unchanged.
+
 ### Performance
 
 - Tag resolution is about 40% faster with the Core schema: a word rule

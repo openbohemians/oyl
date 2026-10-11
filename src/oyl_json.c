@@ -84,8 +84,9 @@ typedef struct {
 } entry;
 
 typedef struct {
-    oyl_parser       *p;
-    const oyl_schema *schema;
+    oyl_parser        *p;
+    const oyl_dialect *dialect;   /* the document's, read at its start */
+    const oyl_schema  *schema;
     unsigned          flags;
     node             *nodes;
     uint32_t          len, cap;
@@ -197,7 +198,10 @@ static oyl_status read_document(doc *d, uint32_t *root, bool *end) {
             *end = true;
             return OYL_OK;
         }
-        if (e->type == OYL_EVT_DOC_START) break;
+        if (e->type == OYL_EVT_DOC_START) {
+            d->dialect = oyl_parser_document_dialect(d->p);
+            break;
+        }
         oyl_parser_fail(d->p, e->start, "oyl_parse_json: not at the start of a document");
         return OYL_ERR_INPUT;
     }
@@ -847,6 +851,17 @@ static bool settle(doc *d, size_t base, size_t *count) {
         if (strict && (any_counts ? j - i > 1 : written > 1))
             return fail(d, OYL_ERR_PARSE, d->nodes[e[j - 1].key].mark, "key \"%.*s\" already set in map",
                         (int)e[i].key_len, d->keys.data + e[i].key_off);
+        if (any_counts && written && !e[j - 1].written) {
+            /* a merge won over a key written in the mapping: go-yaml v2's
+             * order, but every other YAML reader keeps the written key */
+            size_t w = j - 1;
+            while (w > i && !e[w].written) w--;
+            char msg[256];
+            snprintf(msg, sizeof msg, "key \"%.*s\" is overridden by a later << merge, as go-yaml v2 "
+                     "reads it; YAML's merge keeps it", (int)(e[w].key_len > 100 ? 100 : e[w].key_len),
+                     d->keys.data + e[w].key_off);
+            oyl_parser_warn(d->p, OYL_WARN_MERGE_ORDER, d->nodes[e[w].key].mark, msg);
+        }
         e[out++] = e[j - 1];   /* the highest priority */
         i = j;
     }
@@ -910,7 +925,7 @@ static bool write_node(doc *d, uint32_t i) {
 
 oyl_status oyl_parse_json(oyl_parser *p, const oyl_schema *schema, unsigned flags,
                           oyl_str *json) {
-    if (!p || !schema || !json) return OYL_ERR_INPUT;
+    if (!p || !json) return OYL_ERR_INPUT;
     *json = (oyl_str){ NULL, 0 };
     doc d = { .p = p, .schema = schema, .flags = flags,
               .max_depth = oyl_parser_depth_limit(p) };
@@ -927,6 +942,13 @@ oyl_status oyl_parse_json(oyl_parser *p, const oyl_schema *schema, unsigned flag
     uint32_t root = NONE;
     bool end = false;
     oyl_status st = read_document(&d, &root, &end);
+    if (st == OYL_OK && !end && !schema) {   /* the document's dialect */
+        d.schema = oyl_dialect_schema(d.dialect);
+        oyl_merge_order m = oyl_dialect_merge(d.dialect);
+        d.flags = (flags & ~(unsigned)(OYL_JSON_MERGE | OYL_JSON_MERGE_ORDER)) |
+                  (m == OYL_MERGE_YAML ? OYL_JSON_MERGE
+                   : m == OYL_MERGE_ORDERED ? OYL_JSON_MERGE | OYL_JSON_MERGE_ORDER : 0);
+    }
     if (st == OYL_OK && !end) {
         bool ok = root == NONE ? buf_puts(&d.out, "null") || out_of_memory(&d)
                                : write_node(&d, root);

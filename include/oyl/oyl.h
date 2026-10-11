@@ -483,6 +483,89 @@ OYL_API oyl_mark    oyl_parser_error_mark(oyl_parser *p);
 /** Free the parser (does not free the arena). */
 OYL_API void        oyl_parser_free(oyl_parser *p);
 
+/* ── Dialects and warnings ───────────────────────────────── */
+
+/* A dialect is what varies between YAML worlds: a schema (types and
+ * values), syntax leniencies, and how << merges. A document chooses its
+ * dialect with directives, among those the program allows:
+ *   1. %TAG !! <prefix>: the dialect registered for that prefix sets the
+ *      types of explicit !! tags and of untagged values
+ *   2. %YAML <version>: the version of the standard !! schema; 1.1 and 1.2
+ *      are built in, other 1.x versions read as 1.2 with a warning
+ *   3. otherwise the parser's default dialect
+ * (YAML 1.2 applies a %TAG !! prefix to explicit tags only; Oyl applies it
+ * to untagged values as well, the intent of !! in YAML 1.2's design.) */
+
+typedef struct oyl_dialect oyl_dialect;
+
+/** Syntax leniencies a dialect may take on: each is an error, or reads
+ *  differently, in YAML 1.2. */
+enum {
+    OYL_SYNTAX_SQUOTE_ESCAPE = 1 << 0,  /**< \' in double quotes is ' */
+    OYL_SYNTAX_EOF_NO_BREAK  = 1 << 1,  /**< a block scalar ending the input gets no
+                                             final line feed */
+    OYL_SYNTAX_YAML11_ONLY   = 1 << 2,  /**< %YAML other than 1.1 is an error */
+    /** libyaml's, as go-yaml v2 inherits them */
+    OYL_SYNTAX_LIBYAML = OYL_SYNTAX_SQUOTE_ESCAPE | OYL_SYNTAX_EOF_NO_BREAK | OYL_SYNTAX_YAML11_ONLY,
+};
+
+/** How << merge keys combine with the keys written in a mapping. */
+typedef enum {
+    OYL_MERGE_NONE,     /**< << is an ordinary key */
+    OYL_MERGE_YAML,     /**< keys written in the mapping win (YAML 1.1's merge type) */
+    OYL_MERGE_ORDERED,  /**< go-yaml v2: a merge overrides the keys before it */
+} oyl_merge_order;
+
+/** A dialect, allocated in the arena. */
+OYL_API const oyl_dialect *oyl_dialect_new(oyl_arena *a, const oyl_schema *schema,
+                                           unsigned syntax, oyl_merge_order merge);
+OYL_API const oyl_schema *oyl_dialect_schema(const oyl_dialect *d);
+OYL_API unsigned          oyl_dialect_syntax(const oyl_dialect *d);
+OYL_API oyl_merge_order   oyl_dialect_merge(const oyl_dialect *d);
+
+/** YAML 1.2: the Core schema, YAML 1.2's syntax, YAML's merge. */
+OYL_API const oyl_dialect *oyl_dialect_yaml12(void);
+/** YAML 1.1: its types (oyl_schema_yaml11), read with YAML 1.2's syntax, as
+ *  the spec asks of a 1.2 parser, and YAML's merge. */
+OYL_API const oyl_dialect *oyl_dialect_yaml11(void);
+/** go-yaml v2, as Kubernetes reads YAML: its types, libyaml's syntax
+ *  leniencies, and its merge order. */
+OYL_API const oyl_dialect *oyl_dialect_goyaml2(void);
+
+/** The default dialect, for documents whose directives choose none. Without
+ *  one, it is YAML 1.2, with the schema of oyl_parser_set_schema if set. */
+OYL_API void oyl_parser_set_dialect(oyl_parser *p, const oyl_dialect *d);
+
+/** Let documents choose @p d: by %YAML @p version ("1.1"), or by a
+ *  %TAG !! @p tag_prefix; give one, the other NULL. A version replaces the
+ *  built-in dialect for it. OYL_ERR_INPUT for both or neither or a prefix
+ *  too long, OYL_ERR_LIMIT past 8 of each. */
+OYL_API oyl_status oyl_parser_add_dialect(oyl_parser *p, const oyl_dialect *d,
+                                          const char *version, const char *tag_prefix);
+
+/** The dialect of the document an OYL_EVT_DOC_START begins: ask when that
+ *  event arrives (the parser may read ahead, so by the document's DOC_END
+ *  it may describe the next). */
+OYL_API const oyl_dialect *oyl_parser_document_dialect(oyl_parser *p);
+
+/** Likewise the document's %YAML version; false if it has none. */
+OYL_API bool oyl_parser_yaml_version(oyl_parser *p, int *major, int *minor);
+
+/** What a warning is about. Codes may be added at the end. */
+typedef enum {
+    OYL_WARN_YAML_VERSION = 1,  /**< a %YAML 1.x version other than 1.1 or 1.2 */
+    OYL_WARN_DIALECT,           /**< a %TAG !! prefix with no dialect registered */
+    OYL_WARN_LENIENCY,          /**< the dialect accepted what YAML 1.2 doesn't */
+    OYL_WARN_MERGE_ORDER,       /**< in go-yaml v2's merge order, a merge overrode a key
+                                     written before it, which YAML's merge would keep */
+} oyl_warning;
+
+/** A warning: @p message says what, @p mark where. Parsing goes on. */
+typedef void (*oyl_warn_fn)(void *user, oyl_warning code, oyl_mark mark, const char *message);
+
+/** Receive warnings; NULL for none (the default). */
+OYL_API void oyl_parser_set_warn(oyl_parser *p, oyl_warn_fn fn, void *user);
+
 /* ── JSON ────────────────────────────────────────────────── */
 
 /** Options for oyl_parse_json. */
@@ -497,7 +580,9 @@ enum {
 };
 
 /** Read the parser's next document and write it as JSON, typing scalars
- *  with @p schema. The output lives in the parser's arena. At the end of
+ *  with @p schema; with @p schema NULL, with the document's dialect, whose
+ *  merge order then replaces the MERGE flags. The output lives in the
+ *  parser's arena. At the end of
  *  the stream, returns OYL_OK with an empty @p json.
  *
  *  Keys are sorted by their bytes, and a key set twice keeps its last

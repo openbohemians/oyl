@@ -102,6 +102,14 @@ static void check_values(const oyl_event *e) {
     }
 }
 
+static unsigned warnings_seen;
+
+static void count_warning(void *user, oyl_warning code, oyl_mark mark, const char *message) {
+    (void)user; (void)mark;
+    if (!message || code < OYL_WARN_YAML_VERSION) __builtin_trap();
+    warnings_seen++;
+}
+
 /* Parse `yaml` into a canonical string, optionally feeding an emitter.
  * Returns false if parsing fails. */
 static bool parse_canon(const char *yaml, size_t len, uint8_t flags, oyl_emitter *em,
@@ -113,7 +121,14 @@ static bool parse_canon(const char *yaml, size_t len, uint8_t flags, oyl_emitter
     oyl_parser_set_max_events(p, MAX_EVENTS);
     if (flags & 1) oyl_parser_set_merge(p, true);
     if (flags & 2) oyl_parser_set_resolve(p, true);
-    if (flags & 4) oyl_parser_set_schema(p, oyl_schema_core());
+    /* bit 5: go-yaml v2's dialect (libyaml's leniencies). Not with a schema:
+     * the emitter quotes by Core's types, so a dialect's tags (yes, 1_000)
+     * wouldn't survive the round trip. */
+    if ((flags & 4) && !(flags & 32)) oyl_parser_set_schema(p, oyl_schema_core());
+    if (flags & 32) {
+        oyl_parser_set_dialect(p, oyl_dialect_goyaml2());
+        oyl_parser_set_warn(p, count_warning, NULL);
+    }
 
     size_t cap = 0;
     const oyl_event *evt;
@@ -147,13 +162,14 @@ static uint64_t fnv_str(uint64_t h, oyl_str s) {
  * keys), hashing every field of every event. Returns false if parsing
  * fails; an eager parse fails before its first event, so failures are
  * compared, not the events before them. */
-static bool parse_fields(const char *yaml, size_t len, bool eager, uint64_t *hash) {
+static bool parse_fields(const char *yaml, size_t len, bool eager, bool dialect, uint64_t *hash) {
     oyl_arena *a = oyl_arena_new(4096);
     if (!a) return false;
     oyl_parser *p = oyl_parser_new(yaml, len, a);
     if (!p) { oyl_arena_free(a); return false; }
     oyl_parser_set_max_events(p, MAX_EVENTS);
     if (eager) oyl_parser_set_merge(p, true);
+    if (dialect) oyl_parser_set_dialect(p, oyl_dialect_goyaml2());
     uint64_t h = 14695981039346656037u;
     const oyl_event *e;
     oyl_status st;
@@ -185,6 +201,10 @@ static bool to_json(const char *yaml, size_t len, const oyl_schema *schema, unsi
     oyl_parser *p = oyl_parser_new(yaml, len, a);
     if (!p) return false;
     oyl_parser_set_max_events(p, MAX_EVENTS);
+    if (!schema) {   /* as Kubernetes reads YAML, by its dialect */
+        oyl_parser_set_dialect(p, oyl_dialect_goyaml2());
+        oyl_parser_set_warn(p, count_warning, NULL);
+    }
     *st = oyl_parse_json(p, schema, flags, json);
     oyl_parser_free(p);
     return *st == OYL_OK;
@@ -213,11 +233,11 @@ static void check_json(const char *yaml, size_t len) {
     for (size_t m = 0; m < sizeof modes / sizeof modes[0]; m++) {
         oyl_arena *a = oyl_arena_new(4096);
         if (!a) return;
-        const oyl_schema *schema = m == 0 ? oyl_schema_goyaml2() : oyl_schema_core();
+        const oyl_schema *schema = m == 0 ? NULL : oyl_schema_core();
         oyl_str j1, j2;
         oyl_status st;
         if (to_json(yaml, len, schema, modes[m], a, &j1, &st) && j1.data && !unstable(j1)) {
-            if (!to_json(j1.data, j1.len, oyl_schema_goyaml2(), OYL_JSON_KUBERNETES, a, &j2, &st)) {
+            if (!to_json(j1.data, j1.len, NULL, 0, a, &j2, &st)) {
                 if (st == OYL_ERR_PARSE || st == OYL_ERR_SCAN)
                     __builtin_trap();   /* the JSON doesn't read back */
             } else if (j1.len != j2.len || memcmp(j1.data, j2.data, j1.len) != 0) {
@@ -255,7 +275,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
      * already has them expanded. */
     if (ok && em) {
         oyl_str out = oyl_emitter_output(em);
-        if (!parse_canon(out.data ? out.data : "", out.len, flags & 4, NULL,
+        if (!parse_canon(out.data ? out.data : "", out.len, flags & (4 | 32), NULL,
                          &after, &after_len))
             __builtin_trap(); /* emitted YAML does not parse */
         if (before_len != after_len ||
@@ -267,8 +287,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
      * changes only which parser runs */
     if (!(flags & 7) && !has_merge_key(buf, size)) {
         uint64_t hi = 0, he = 0;
-        bool oi = parse_fields(buf, size, false, &hi);
-        bool oe = parse_fields(buf, size, true, &he);
+        bool oi = parse_fields(buf, size, false, flags & 32, &hi);
+        bool oe = parse_fields(buf, size, true, flags & 32, &he);
         if (oi != oe || (oi && hi != he))
             __builtin_trap(); /* the parse paths disagree */
     }

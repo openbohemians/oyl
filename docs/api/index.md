@@ -388,6 +388,50 @@ oyl_schema_builder_add_float_flags(b, OYL_FLOAT_CORE);
 
 ---
 
+## Dialects
+
+```c
+oyl_parser_set_dialect(p, oyl_dialect_goyaml2());             // the default
+oyl_parser_add_dialect(p, d, "1.1", NULL);                     // for %YAML 1.1
+oyl_parser_add_dialect(p, d, NULL, "tag:acme.com,2026:");      // for %TAG !! tag:acme.com,2026:
+oyl_parser_set_warn(p, on_warning, user);
+```
+
+A dialect bundles a schema, syntax leniencies (`OYL_SYNTAX_`) and a merge
+order (`OYL_MERGE_NONE`, `_YAML`, `_ORDERED`). A document's dialect: the
+one registered for its `%TAG !!` prefix, else for its `%YAML` version
+(built in: 1.1 is `oyl_dialect_yaml11()`, 1.2 `oyl_dialect_yaml12()`;
+other 1.x versions read as 1.2 with a warning), else the default. The
+default is `oyl_parser_set_dialect`'s, else YAML 1.2 with the schema of
+`oyl_parser_set_schema`. With tag resolution on (a schema set), events are
+tagged by the document's dialect.
+
+| Function | Description |
+|----------|-------------|
+| `oyl_dialect_new(arena, schema, syntax, merge)` | Build a dialect. |
+| `oyl_dialect_yaml12()`, `_yaml11()`, `_goyaml2()` | The built-in ones. |
+| `oyl_dialect_schema(d)`, `_syntax(d)`, `_merge(d)` | Its parts. |
+| `oyl_parser_set_dialect(p, d)` | The default dialect. |
+| `oyl_parser_add_dialect(p, d, version, prefix)` | Let documents choose `d` by `%YAML` or `%TAG !!`. |
+| `oyl_parser_document_dialect(p)` | The dialect of the document an `OYL_EVT_DOC_START` begins (ask then). |
+| `oyl_parser_yaml_version(p, &major, &minor)` | Likewise its `%YAML` version. |
+| `oyl_parser_set_warn(p, fn, user)` | Receive warnings. |
+
+| Syntax flag | Effect |
+|-------------|--------|
+| `OYL_SYNTAX_SQUOTE_ESCAPE` | `\'` in double quotes is `'` |
+| `OYL_SYNTAX_EOF_NO_BREAK` | a block scalar ending the input gets no final line feed |
+| `OYL_SYNTAX_YAML11_ONLY` | `%YAML` other than 1.1 is an error (in the default dialect, for every document) |
+| `OYL_SYNTAX_LIBYAML` | all three, as go-yaml v2 inherits them |
+
+Warnings (`oyl_warning`): `OYL_WARN_YAML_VERSION`, `OYL_WARN_DIALECT` (a
+`%TAG !!` prefix with no dialect), `OYL_WARN_LENIENCY`,
+`OYL_WARN_MERGE_ORDER` (go-yaml v2's merge order overrode a written key, in
+`oyl_parse_json`). Each is reported once, though the parser re-reads input
+internally when it falls back to its eager mode.
+
+---
+
 ## JSON
 
 ```c

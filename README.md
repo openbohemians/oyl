@@ -385,17 +385,48 @@ dialect flags (`oyl_schema_builder_add_int_flags`, `..._float_flags`), and
 `oyl_schema_builder_add_type` binds any tag, a built-in one included, to
 your own parser. See [docs/api](docs/api/index.md#tag-schemas).
 
+## Dialects and Directives
+
+A dialect is what varies between YAML worlds: a schema (types and
+values), syntax leniencies, and how `<<` merges. Each document's
+directives choose its dialect, among those the program allows:
+
+1. `%TAG !! <prefix>`: the dialect registered for that prefix types the
+   document's explicit `!!` tags and its untagged values alike
+2. `%YAML <version>`: the version of the standard `!!` schema; `1.1` gives
+   YAML 1.1's types (`yes` is true, `0777` is octal), `1.2` the Core schema
+3. otherwise the parser's default dialect
+
+```c
+oyl_parser_set_dialect(p, oyl_dialect_goyaml2());           /* the default */
+oyl_parser_add_dialect(p, my_dialect, NULL, "tag:acme.com,2026:");
+```
+
+Built in: `oyl_dialect_yaml12()`, `oyl_dialect_yaml11()` and
+`oyl_dialect_goyaml2()` (go-yaml v2's types and merge order, with libyaml's
+leniencies: `\'` in double quotes, no line feed for a block scalar ending
+the input, `%YAML` 1.1 only). `oyl_dialect_new` builds one from any schema.
+YAML 1.2 applies a `%TAG !!` prefix to explicit tags only; Oyl applies it
+to untagged values too, which is what `!!` was meant for in YAML 1.2's
+design: `!` for the application's types, `!!` for the underlying schema.
+
+Warnings go to a callback (`oyl_parser_set_warn`): a `%YAML` 1.x version
+other than 1.1 or 1.2, a `%TAG !!` prefix with no dialect, each leniency a
+dialect used, and in go-yaml v2's merge order a merge overriding a key
+written before it.
+
 ## YAML to JSON
 
-`oyl_parse_json` reads a document and writes it as JSON, typing scalars
-with a schema. With the go-yaml v2 schema and `OYL_JSON_KUBERNETES`, the
-output is byte for byte what Kubernetes gets from `sigs.k8s.io/yaml`'s
-`YAMLToJSON`, about six times faster on real manifests:
+`oyl_parse_json` reads a document and writes it as JSON. With the go-yaml
+v2 dialect, the output is byte for byte what Kubernetes gets from
+`sigs.k8s.io/yaml`'s `YAMLToJSON`, about six times faster on real
+manifests:
 
 ```c
 oyl_parser *p = oyl_parser_new(yaml, len, arena);
+oyl_parser_set_dialect(p, oyl_dialect_goyaml2());
 oyl_str json;
-if (oyl_parse_json(p, oyl_schema_goyaml2(), OYL_JSON_KUBERNETES, &json) == OYL_OK && json.data)
+if (oyl_parse_json(p, NULL, 0, &json) == OYL_OK && json.data)   /* NULL: the document's dialect */
     puts(json.data);          /* {"apiVersion":"v1","kind":"Pod",...} */
 ```
 
@@ -406,11 +437,9 @@ Core schema and `OYL_JSON_MERGE`, YAML's merge, where keys written in the
 mapping win. Each call reads one document; at the end of the stream the
 result is empty.
 
-Where go-yaml v2 reads YAML differently from YAML 1.2, it inherits that
-from libyaml: `?x` as an explicit key, anchor names cut at `:`, `\'`
-accepted in double quotes, no line break added to a block scalar that ends
-the input, and everything after the first document's root node ignored.
-Oyl follows YAML 1.2 there, so those inputs convert differently or fail.
+The go-yaml v2 dialect takes on libyaml's leniencies that occur in real
+manifests. Others it doesn't copy: `?x` as an explicit key, anchor names
+cut at `:`, and everything after the first document's root node ignored.
 
 ## Architecture
 
