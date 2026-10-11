@@ -28,7 +28,8 @@ with the source schema and with Core, keeps the text where the values
 agree, and otherwise writes Core's spelling of the source value. JSON is
 one standard target (yamltojson-design.md), YAML 1.2 Core the other.
 Dialects also differ in merge order (go-yaml v2 lets a merge override the
-keys before it), which a converter has to rewrite too.
+keys before it): the converter comments out the overridden key and warns,
+keeping what go-yaml v2 read (the user, 2026-10-11).
 
 Most YAML in use was written for libyaml-based loaders (PyYAML, Psych),
 which read YAML 1.1 types and accept some syntax YAML 1.2 forbids. Oyl is

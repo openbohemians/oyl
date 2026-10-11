@@ -62,9 +62,12 @@ Merge order is a dialect difference beyond scalar types. Checked
 
 Handling it properly (the user, 2026-10-11: "deal with it proper like"):
 both behaviors as flags; the Kubernetes setting reproduces go-yaml v2 for
-identical output; the converter to standard rewrites the conflicting case
-(moves the `<<` up or drops the overridden key); and a check can report
-where a file means different things under the two rules.
+identical output; and a check can report where a file means different
+things under the two rules. **Decided by the user (2026-10-11) for the
+converter to 1.2:** where a merge after a key overrides it, comment out
+the overridden key's line(s) and warn. That keeps what Kubernetes reads
+today, keeps the author's text visible, and leaves no conflict, so the
+position of `<<` no longer matters (moving it to the top is only style).
 
 ## API sketch
 
