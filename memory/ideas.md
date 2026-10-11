@@ -1,6 +1,6 @@
 # Ideas
 
-*Updated 2026-10-10*
+*Updated 2026-10-11*
 
 Larger features agreed in principle. None blocks 1.0, and none is started.
 
@@ -21,6 +21,14 @@ parse-to-tree benchmark against all three, next to the event-parsing one.
 Propose a design to the user before building it.
 
 ## YAML 1.1 → 1.2 converter (the user's idea, 2026-10-10)
+
+**Generalized by the user, 2026-10-11: from any schema to standard.** With
+schemas giving values (schema-design.md), a converter reads each scalar
+with the source schema and with Core, keeps the text where the values
+agree, and otherwise writes Core's spelling of the source value. JSON is
+one standard target (yamltojson-design.md), YAML 1.2 Core the other.
+Dialects also differ in merge order (go-yaml v2 lets a merge override the
+keys before it), which a converter has to rewrite too.
 
 Most YAML in use was written for libyaml-based loaders (PyYAML, Psych),
 which read YAML 1.1 types and accept some syntax YAML 1.2 forbids. Oyl is
