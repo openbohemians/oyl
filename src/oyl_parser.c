@@ -2824,12 +2824,16 @@ ALWAYS_INLINE int fk_quote_kind(const char *input, size_t i, size_t qend) {
     char c = input[i - 1];          /* i > 0: the scan starts at a bracket */
     if (c != ' ' && c != '\t') {
         /* directly after an entry start, or after a value ':' that
-         * follows a closed scalar or collection ({"a":"b"}, [a]:'b') */
+         * follows a closed scalar or collection, blanks allowed between
+         * ({"a":"b"}, [a]:'b', ['a' :'b']) */
         if (c == '[' || c == '{' || c == ',') return 1;
-        if (c == ':' && i >= 2 &&
-            (((input[i - 2] == '"' || input[i - 2] == '\'') && i - 1 == qend) ||
-             input[i - 2] == ']' || input[i - 2] == '}'))
-            return 1;
+        if (c == ':' && i >= 2) {
+            size_t k = i - 2;
+            while (k > 0 && (input[k] == ' ' || input[k] == '\t')) k--;
+            if (((input[k] == '"' || input[k] == '\'') && k + 1 == qend) ||
+                input[k] == ']' || input[k] == '}')
+                return 1;
+        }
         /* inside a word: plain text, or a tag or anchor name, since a
          * quoted scalar only starts a token */
         return 0;
