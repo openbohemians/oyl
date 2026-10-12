@@ -1,6 +1,6 @@
 # Ideas
 
-*Updated 2026-10-11*
+*Updated 2026-10-12*
 
 Larger features agreed in principle. None blocks 1.0, and none is started.
 
@@ -11,6 +11,31 @@ user's review: roadmap step 5, the base the Go library builds on, designed
 for parallel building later. Every competitor has a tree (`ryml::Tree`,
 libfyaml's `fy_document`, libyaml's `yaml_document_t`); Oyl's only one
 today is in the Crystal binding.
+
+## What the tree's layout makes possible (the user liked these, 2026-10-12)
+
+Candidates once the tree exists, not plans. They rest on its two
+properties: no pointers (offsets, relative sizes), and parts that join by
+summing their sizes (a prefix sum). Neither idea is new: FlatBuffers,
+Cap'n Proto and Arrow use offsets; simdjson's tape stores nodes in order
+with skip counts.
+
+- **More output in parallel,** joined the same way:
+  - JSON for one big document: threads write subtrees, and outputs join
+    by summing lengths (key sorting is per mapping, so it splits cleanly)
+  - YAML emitted from a tree: a subtree's indentation is fixed by its
+    depth, so threads can write subtrees separately
+  - line numbers: newlines counted per chunk, then a running total
+- **A tree saved to disk** and memory-mapped back without parsing: a
+  cache for tools that read the same large configs or CRD sets again and
+  again.
+- **A tree shared between processes** in shared memory.
+- **Re-parsing only what changed:** after an edit, re-parse the chunk
+  around it and swap that part in, as the parallel join swaps parts. For
+  editors and YAML language servers.
+- **Beyond Oyl:** any parser that builds a tree can split this way
+  wherever the structure at the cut is known (indentation in YAML,
+  brackets in JSON).
 
 ## YAML 1.1 → 1.2 converter (the user's idea, 2026-10-10)
 
