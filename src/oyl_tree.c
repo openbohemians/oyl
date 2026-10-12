@@ -174,8 +174,8 @@ static bool place_text(builder *b, oyl_str s, oyl_node *n) {
     if (s.len > UINT32_MAX)
         return fail(b, OYL_ERR_LIMIT, (oyl_mark){ 0, 0, 0 }, "scalar too large for a tree (over 4 GB)");
     if (s.len == 0) { n->text = 0; return true; }
-    uintptr_t p = (uintptr_t)s.data, lo = (uintptr_t)(t->input + t->base),
-              hi = (uintptr_t)(t->input + t->input_len);
+    uintptr_t p = (uintptr_t)s.data, lo = (uintptr_t)t->input + t->base,
+              hi = (uintptr_t)t->input + t->input_len;
     if (p >= lo && p <= hi && s.len <= hi - p && p - lo <= UINT32_MAX) {
         n->text = (uint32_t)(p - lo);
         return true;
@@ -658,6 +658,7 @@ static bool same_key(const oyl_tree *t, const ent *a, const ent *b) {
 static bool settle(collector *c, uint32_t base, bool top) {
     const oyl_tree *t = c->t;
     uint32_t n = c->len - base;
+    if (n == 0) return true;   /* c->e may still be NULL */
     if (n > 16 && n > c->tmp_cap) {
         ent *tmp = realloc(c->tmp, n * sizeof *tmp);
         if (!tmp) { c->status = OYL_ERR_MEMORY; return false; }

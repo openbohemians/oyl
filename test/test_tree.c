@@ -325,6 +325,11 @@ static void test_entries(void) {
     x = load("m:\n  b: 1\n  a: 2\n  b: 3\n  ? [k]\n  : 4\n  ? [k]\n  : 5\n");
     check_entries(&x, "m", 0, "b=3 a=2 =4 =5");
     check_entries(&x, "m", OYL_ENTRIES_STRICT, "ERROR 4 at 7");
+    unload(&x);
+
+    x = load("e: {}\nf: {<<: {}}\n");
+    check_entries(&x, "e", 0, "");
+    check_entries(&x, "f", 0, "");
     char got[64];
     render_entries(&x, 1, 0, got, sizeof got);
     ASSERT(strncmp(got, "ERROR 2", 7) == 0, "entries of a scalar");
@@ -420,6 +425,15 @@ static void test_documents(void) {
     oyl_parse_next(p, &e);   /* inside the first document */
     ASSERT(oyl_parse_tree(p, &t) == OYL_ERR_INPUT && t == NULL, "not at a document's start");
     oyl_parser_free(p);
+    oyl_arena_free(a);
+
+    a = oyl_arena_new(4096);
+    p = oyl_parser_new(NULL, 0, a);
+    if (p) {
+        ASSERT(oyl_parse_tree(p, &t) == OYL_OK && t == NULL, "no input, no document");
+        oyl_tree_free(t);
+        oyl_parser_free(p);
+    }
     oyl_arena_free(a);
 
     ASSERT(oyl_parse_tree(NULL, &t) == OYL_ERR_INPUT, "no parser");
