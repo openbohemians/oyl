@@ -30,7 +30,8 @@ tree came first; YAMLToJSON needs no tree, so it moved ahead):
    ("YAMLToJSON toward 10x"), not planned.
 5. **Tree API in C** (ideas.md), designed to cross into other languages
    cheaply: one call builds a flat node array in one arena, and a binding
-   reads it with one copy or in place. A design goes to the user first.
+   reads it with one copy or in place. **Design proposed 2026-10-11**
+   (tree-design.md), waiting on the user.
 6. **The full Go library** (decoding into Go values, on the tree).
 7. **Parallel parsing in the library** (performance.md). Kubernetes streams
    are many small documents that Go callers can already parse on separate

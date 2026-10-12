@@ -6,19 +6,11 @@ Larger features agreed in principle. None blocks 1.0, and none is started.
 
 ## Tree API (1.x)
 
-**Next after the tag** ([roadmap.md](roadmap.md), agreed 2026-10-10), and
-the base the Go binding builds on.
-
-Oyl has no document tree: only the scanner, the event parser, the emitter,
-schemas, and merge and alias expansion. Every competitor has one
-(`ryml::Tree`, libfyaml's `fy_document`, libyaml's `yaml_document_t`), and
-the only tree for Oyl today is in the Crystal binding.
-
-The idea: an additive, ABI-safe API (new functions, opaque types). An
-arena-allocated, index-based node array built from events, values that point
-into the source without copying, key lookup and iteration. Then publish a
-parse-to-tree benchmark against all three, next to the event-parsing one.
-Propose a design to the user before building it.
+**Design proposed 2026-10-11** in [tree-design.md](tree-design.md), for the
+user's review: roadmap step 5, the base the Go library builds on, designed
+for parallel building later. Every competitor has a tree (`ryml::Tree`,
+libfyaml's `fy_document`, libyaml's `yaml_document_t`); Oyl's only one
+today is in the Crystal binding.
 
 ## YAML 1.1 → 1.2 converter (the user's idea, 2026-10-10)
 
