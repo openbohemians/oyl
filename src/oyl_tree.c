@@ -21,26 +21,10 @@
  * from the nearest one */
 #define MARK_EVERY 64
 
+/* struct oyl_tree is in oyl_internal.h, for oyl_json.c */
+
 /* How deep merges may nest (a merge's source with merges of its own) */
 #define MAX_MERGE_DEPTH 256
-
-struct oyl_tree {
-    const char        *input;       /* the whole input */
-    size_t             input_len;
-    size_t             base;        /* where the document starts in it */
-    oyl_node          *nodes;
-    uint32_t           len, cap;
-    oyl_node_props    *props;       /* props[0] is unused: 0 means none */
-    uint32_t           plen, pcap;
-    char              *pool;
-    size_t             pool_len, pool_cap;
-    oyl_mark          *marks;       /* marks[k]: node k * MARK_EVERY's start */
-    uint32_t           mlen, mcap;
-    oyl_mark           doc_mark;    /* the document's start */
-    const oyl_dialect *dialect;
-    const oyl_schema  *schema;
-    oyl_merge_order    merge;
-};
 
 static bool same(oyl_str a, oyl_str b) {
     return a.len == b.len && (a.len == 0 || memcmp(a.data, b.data, a.len) == 0);
@@ -78,6 +62,9 @@ typedef struct {
     anchor           *anchors;      /* open addressing; name.data NULL is empty */
     size_t            acap, alen;
     const oyl_schema *parser_schema;   /* a parser resolving tags: its tags aren't kept */
+    uintptr_t         lo, hi;       /* the document's text: from its start to the input's end */
+    size_t            base;
+    bool              small;        /* under 4 GB from the document's start: no offset overflows */
     oyl_str           last_tag;     /* the last tag pooled, and where */
     uint32_t          last_tag_at;
     oyl_status        status;
@@ -139,9 +126,12 @@ static uint32_t anchor_get(builder *b, oyl_str name) {
 }
 
 /* An input offset as a position in the document */
-static bool position(builder *b, const oyl_event *e, size_t offset, uint32_t *out) {
-    size_t base = b->t->base;
-    size_t rel = offset >= base ? offset - base : 0;
+static inline bool position(builder *b, const oyl_event *e, size_t offset, uint32_t *out) {
+    if (b->small) {   /* nodes don't start before their document */
+        *out = (uint32_t)(offset - b->base);
+        return true;
+    }
+    size_t rel = offset >= b->base ? offset - b->base : 0;
     if (rel > UINT32_MAX)
         return fail(b, OYL_ERR_LIMIT, e->start, "document too large for a tree (over 4 GB)");
     *out = (uint32_t)rel;
@@ -168,18 +158,16 @@ static bool pool_add(builder *b, oyl_str s, uint32_t *at) {
 
 /* Where text is: in the document, or (rewritten by the parser) copied into
  * the pool */
-static bool place_text(builder *b, oyl_str s, oyl_node *n) {
-    oyl_tree *t = b->t;
+static inline bool place_text(builder *b, oyl_str s, oyl_node *n) {
     n->len = (uint32_t)s.len;
-    if (s.len > UINT32_MAX)
-        return fail(b, OYL_ERR_LIMIT, (oyl_mark){ 0, 0, 0 }, "scalar too large for a tree (over 4 GB)");
     if (s.len == 0) { n->text = 0; return true; }
-    uintptr_t p = (uintptr_t)s.data, lo = (uintptr_t)t->input + t->base,
-              hi = (uintptr_t)t->input + t->input_len;
-    if (p >= lo && p <= hi && s.len <= hi - p && p - lo <= UINT32_MAX) {
-        n->text = (uint32_t)(p - lo);
+    uintptr_t p = (uintptr_t)s.data;
+    if (p >= b->lo && p <= b->hi && s.len <= b->hi - p && (b->small || p - b->lo <= UINT32_MAX)) {
+        n->text = (uint32_t)(p - b->lo);
         return true;
     }
+    if (s.len > UINT32_MAX)
+        return fail(b, OYL_ERR_LIMIT, (oyl_mark){ 0, 0, 0 }, "scalar too large for a tree (over 4 GB)");
     n->flags |= OYL_NODE_POOLED;
     return pool_add(b, s, &n->text);
 }
@@ -237,7 +225,7 @@ static bool close_collection(builder *b, const oyl_event *e) {
     return true;
 }
 
-static bool add_event(builder *b, const oyl_event *e) {
+ALWAYS_INLINE bool add_event(builder *b, const oyl_event *e) {
     oyl_tree *t = b->t;
     oyl_node n = { 0 };
     switch (e->type) {
@@ -319,7 +307,9 @@ oyl_status oyl_parse_tree(oyl_parser *p, oyl_tree **tree) {
     t->schema = oyl_dialect_schema(t->dialect);
     t->merge = oyl_dialect_merge(t->dialect);
     t->plen = 1;
-    builder b = { .p = p, .t = t, .parser_schema = oyl_parser_schema(p) };
+    builder b = { .p = p, .t = t, .parser_schema = oyl_parser_schema(p), .base = t->base,
+                  .lo = (uintptr_t)t->input + t->base, .hi = (uintptr_t)t->input + t->input_len,
+                  .small = t->input_len - t->base <= UINT32_MAX };
     if (!grow((void **)&t->props, &t->pcap, 0, 1, sizeof *t->props)) {
         oyl_tree_free(t);
         return OYL_ERR_MEMORY;
@@ -376,17 +366,12 @@ static oyl_str pooled(const oyl_tree *t, uint32_t at, uint32_t len) {
     return len ? (oyl_str){ t->pool + at, len } : OYL_STR_NULL;
 }
 
-static oyl_str text_of(const oyl_tree *t, const oyl_node *n) {
-    if (!n->len) return (oyl_str){ "", 0 };
-    return n->flags & OYL_NODE_POOLED ? (oyl_str){ t->pool + n->text, n->len }
-                                      : (oyl_str){ t->input + t->base + n->text, n->len };
-}
 
 oyl_str oyl_node_text(const oyl_tree *t, uint32_t i) {
     if (!t || i >= t->len) return OYL_STR_NULL;
     const oyl_node *n = &t->nodes[i];
     if (n->kind != OYL_NODE_SCALAR && n->kind != OYL_NODE_ALIAS) return OYL_STR_NULL;
-    return text_of(t, n);
+    return oyl_tree_text(t, n);
 }
 
 static oyl_str written(const oyl_tree *t, const oyl_node *n) {
@@ -408,7 +393,7 @@ oyl_str oyl_node_tag(const oyl_tree *t, uint32_t i) {
     }
     if (n->style != OYL_SCALAR_PLAIN) return s->default_quoted_tag;
     if (n->type == 0) return s->default_plain_tag;
-    if (n->type == 255) return oyl_schema_resolve(s, text_of(t, n), OYL_SCALAR_PLAIN);
+    if (n->type == 255) return oyl_schema_resolve(s, oyl_tree_text(t, n), OYL_SCALAR_PLAIN);
     return s->rules[n->type - 1].tag;
 }
 
@@ -430,7 +415,7 @@ oyl_status oyl_node_value(const oyl_tree *t, uint32_t i, oyl_value *v) {
     i = oyl_node_target(t, i);
     const oyl_node *n = &t->nodes[i];
     if (n->kind != OYL_NODE_SCALAR) return OYL_ERR_INPUT;
-    oyl_str text = text_of(t, n), tag = written(t, n);
+    oyl_str text = oyl_tree_text(t, n), tag = written(t, n);
     if (tag.len || n->type == 255)
         return oyl_schema_value_of(t->schema, text, (oyl_scalar_style)n->style, tag, v);
     if (n->type == 0) {
@@ -476,7 +461,7 @@ uint32_t oyl_node_at(const oyl_tree *t, uint32_t seq, uint32_t k) {
 /* Is key node k a merge key? << untagged and plain, or tagged !!merge */
 static bool is_merge_key(const oyl_tree *t, uint32_t k) {
     const oyl_node *n = &t->nodes[k];
-    if (n->kind != OYL_NODE_SCALAR || n->len != 2 || memcmp(text_of(t, n).data, "<<", 2) != 0)
+    if (n->kind != OYL_NODE_SCALAR || n->len != 2 || memcmp(oyl_tree_text(t, n).data, "<<", 2) != 0)
         return false;
     oyl_str tag = written(t, n);
     return tag.len ? same(tag, OYL_TAG_MERGE) : n->style == OYL_SCALAR_PLAIN;
@@ -508,7 +493,7 @@ static uint32_t merge_items(const oyl_tree *t, uint32_t v, uint32_t *first) {
 static bool key_is(const oyl_tree *t, uint32_t k, oyl_str key) {
     const oyl_node *n = &t->nodes[oyl_node_target(t, k)];
     return n->kind == OYL_NODE_SCALAR && n->len == key.len &&
-           (key.len == 0 || memcmp(text_of(t, n).data, key.data, key.len) == 0);
+           (key.len == 0 || memcmp(oyl_tree_text(t, n).data, key.data, key.len) == 0);
 }
 
 typedef struct {
@@ -608,7 +593,7 @@ static int by_key(const oyl_tree *t, const ent *a, const ent *b) {
     bool sa = t->nodes[ka].kind == OYL_NODE_SCALAR, sb = t->nodes[kb].kind == OYL_NODE_SCALAR;
     if (sa != sb) return sa ? -1 : 1;
     if (sa) {
-        oyl_str x = text_of(t, &t->nodes[ka]), y = text_of(t, &t->nodes[kb]);
+        oyl_str x = oyl_tree_text(t, &t->nodes[ka]), y = oyl_tree_text(t, &t->nodes[kb]);
         size_t n = x.len < y.len ? x.len : y.len;
         int r = n ? memcmp(x.data, y.data, n) : 0;
         if (r) return r;

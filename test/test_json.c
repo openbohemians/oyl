@@ -152,6 +152,21 @@ static void test_errors(void) {
     tests_run++;
     if (strcmp(got, err_limit) == 0) tests_passed++;
     else printf("  FAIL: depth limit through aliases: %s\n", got);
+
+    /* go-yaml v2 rejects an unknown anchor while parsing, before it finds
+     * an alias inside its own anchor while decoding */
+    const char *y = "a: &a [*a]\nb: *nope\n";
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_parser *p = oyl_parser_new(y, strlen(y), a);
+    oyl_str json;
+    oyl_status st = oyl_parse_json(p, oyl_schema_goyaml2(), OYL_JSON_KUBERNETES, &json);
+    tests_run++;
+    if (st == OYL_ERR_PARSE && oyl_parser_error(p) && strstr(oyl_parser_error(p), "unknown anchor 'nope'"))
+        tests_passed++;
+    else
+        printf("  FAIL: an unknown anchor is reported first: %s\n", oyl_parser_error(p));
+    oyl_parser_free(p);
+    oyl_arena_free(a);
 }
 
 /* Standard JSON: the Core schema and YAML's merge */

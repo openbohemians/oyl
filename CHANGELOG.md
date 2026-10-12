@@ -15,6 +15,21 @@
   `oyl_node_mark` read a node. Every valid YAML Test Suite case's tree
   replays the parser's events exactly, and the fuzzer checks the same.
 
+### Changed
+
+- `oyl_parse_json` reads each document into a tree, and writes JSON from
+  it: the same output on 86,914 files (real Kubernetes manifests, local
+  YAML, the fuzz corpus), at the same speed. The one difference: an alias
+  to an unknown anchor is now reported before an alias inside its own
+  anchor, as go-yaml v2 reports them.
+
+### Performance
+
+- Schemas index their rules by first byte, so typing a scalar tries only
+  the rules that could accept it: for text starting with `n`, go-yaml v2's
+  schema tries `null`, `n` and `no`, not all 30 rules. Building a tree is
+  about 8% faster for it.
+
 ### Fixed
 
 - `oyl_parser_new` and `oyl_scanner_new` read NULL input of length 0 as

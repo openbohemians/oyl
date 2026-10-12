@@ -5,9 +5,10 @@
  * values (merging, expanding aliases), turns the keys into strings, and
  * has Go's encoding/json write the result, which sorts the keys and
  * formats numbers and strings its own way. To give the same bytes, a
- * document's events are read into a flat array of nodes first, so that a
- * mapping's keys can be sorted and its merges and duplicates settled
- * before it is written.
+ * document is read into a tree first (oyl_tree.c), so that a mapping's
+ * keys can be sorted and its merges and duplicates settled before it is
+ * written. The tree typed its scalars while building; with another
+ * schema, they're typed here.
  */
 
 #include "oyl_internal.h"
@@ -20,8 +21,6 @@
 #if defined(__SSE2__)
 #  include <emmintrin.h>
 #endif
-
-#define NONE UINT32_MAX
 
 static bool same(oyl_str a, oyl_str b) {
     return a.len == b.len && (a.len == 0 || memcmp(a.data, b.data, a.len) == 0);
@@ -76,33 +75,6 @@ static bool buf_int(buffer *b, int64_t i) {
 
 /* ── The document ────────────────────────────────────────── */
 
-typedef enum { N_SCALAR, N_SEQ, N_MAP, N_ALIAS } node_kind;
-
-/* 64 bytes: a large document has many */
-typedef struct {
-    oyl_str  text;         /* a scalar's value; an alias's anchor */
-    oyl_str  tag;
-    size_t   offset;       /* where it starts, for messages */
-    uint32_t line, col;
-    union {
-        uint32_t first;    /* a collection's first child */
-        uint32_t target;   /* an alias's node */
-    };
-    uint32_t next;         /* the next sibling */
-    uint8_t  kind;         /* node_kind */
-    uint8_t  style;        /* oyl_scalar_style */
-    bool     open;         /* a collection not yet closed */
-} node;
-
-static oyl_mark node_mark(const node *n) {
-    return (oyl_mark){ .offset = n->offset, .line = n->line, .col = n->col };
-}
-
-typedef struct {
-    oyl_str  name;
-    uint32_t node;
-} anchor;
-
 /* A mapping entry while its mapping is settled: the highest priority wins */
 typedef struct {
     union {
@@ -118,13 +90,11 @@ typedef struct {
 
 typedef struct {
     oyl_parser        *p;
-    const oyl_dialect *dialect;   /* the document's, read at its start */
+    oyl_tree          *t;         /* the document (oyl_tree.c) */
+    const oyl_node    *n;         /* its nodes */
     const oyl_schema  *schema;
+    bool               typed;     /* the tree's types are this schema's */
     unsigned          flags;
-    node             *nodes;
-    uint32_t          len, cap;
-    anchor           *anchors;   /* open addressing; name.data NULL is empty */
-    size_t            acap, alen;
     buffer            out;
     buffer            keys;
     buffer            bin;       /* a decoded !!binary */
@@ -136,6 +106,8 @@ typedef struct {
     int               alias_depth, depth, max_depth;
     oyl_status        status;    /* the first error */
 } doc;
+
+static oyl_mark node_mark(const doc *d, uint32_t i) { return oyl_node_mark(d->t, i); }
 
 static bool fail(doc *d, oyl_status status, oyl_mark mark, const char *fmt, ...) {
     if (d->status == OYL_OK) {
@@ -166,143 +138,20 @@ static const char *short_tag(oyl_str tag, int *len) {
     return tag.data;
 }
 
-/* ── Anchors ─────────────────────────────────────────────── */
+/* A node's text, and the tag written on it */
+static inline oyl_str text(const doc *d, uint32_t i) { return oyl_tree_text(d->t, &d->n[i]); }
 
-static size_t name_hash(oyl_str s) {
-    uint64_t h = 14695981039346656037u;
-    for (size_t i = 0; i < s.len; i++) h = (h ^ (unsigned char)s.data[i]) * 1099511628211u;
-    return (size_t)h;
+static inline oyl_str written_tag(const doc *d, uint32_t i) {
+    const oyl_node *n = &d->n[i];
+    if (n->kind == OYL_NODE_ALIAS || !n->props) return OYL_STR_NULL;
+    const oyl_node_props *pr = &d->t->props[n->props];
+    return pr->tag_len ? (oyl_str){ d->t->pool + pr->tag, pr->tag_len } : OYL_STR_NULL;
 }
 
-static anchor *anchor_slot(doc *d, oyl_str name) {
-    size_t i = name_hash(name) & (d->acap - 1);
-    while (d->anchors[i].name.data && !same(d->anchors[i].name, name)) i = (i + 1) & (d->acap - 1);
-    return &d->anchors[i];
-}
-
-/* Bind `name` to `n`; a later anchor of the same name replaces it, so an
- * alias binds to the closest one before it */
-static bool anchor_set(doc *d, oyl_str name, uint32_t n) {
-    if (2 * (d->alen + 1) > d->acap) {
-        size_t cap = d->acap ? d->acap * 2 : 64;
-        anchor *old = d->anchors;
-        size_t old_cap = d->acap;
-        d->anchors = calloc(cap, sizeof *d->anchors);
-        if (!d->anchors) { d->anchors = old; return out_of_memory(d); }
-        d->acap = cap;
-        for (size_t i = 0; i < old_cap; i++)
-            if (old[i].name.data) *anchor_slot(d, old[i].name) = old[i];
-        free(old);
-    }
-    anchor *a = anchor_slot(d, name);
-    if (!a->name.data) d->alen++;
-    *a = (anchor){ name, n };
-    return true;
-}
-
-static uint32_t anchor_get(doc *d, oyl_str name) {
-    if (!d->acap) return NONE;
-    anchor *a = anchor_slot(d, name);
-    return a->name.data ? a->node : NONE;
-}
-
-/* ── Reading a document ──────────────────────────────────── */
-
-static uint32_t add_node(doc *d, node n) {
-    if (d->len == d->cap) {
-        uint32_t cap = d->cap ? d->cap * 2 : 64;
-        node *nodes = cap > d->cap ? realloc(d->nodes, (size_t)cap * sizeof *nodes) : NULL;
-        if (!nodes) { out_of_memory(d); return NONE; }
-        d->nodes = nodes;
-        d->cap = cap;
-    }
-    d->nodes[d->len] = n;
-    return d->len++;
-}
-
-/* Read events up to the end of the next document into d->nodes. At the
- * end of the stream, sets *end. */
-static oyl_status read_document(doc *d, uint32_t *root, bool *end) {
-    const oyl_event *e;
-    oyl_status st;
-    for (;;) {
-        st = oyl_parse_next(d->p, &e);
-        if (st != OYL_OK) return st;
-        if (e->type == OYL_EVT_STREAM_START) continue;
-        if (e->type == OYL_EVT_STREAM_END || e->type == OYL_EVT_NONE) {
-            *end = true;
-            return OYL_OK;
-        }
-        if (e->type == OYL_EVT_DOC_START) {
-            d->dialect = oyl_parser_document_dialect(d->p);
-            break;
-        }
-        oyl_parser_fail(d->p, e->start, "oyl_parse_json: not at the start of a document");
-        return OYL_ERR_INPUT;
-    }
-
-    /* the open collections, each with its last child so far */
-    struct open { uint32_t node, last; } *stack = NULL;
-    size_t slen = 0, scap = 0;
-    *root = NONE;
-    while ((st = oyl_parse_next(d->p, &e)) == OYL_OK && e->type != OYL_EVT_DOC_END) {
-        if (e->type == OYL_EVT_SEQUENCE_END || e->type == OYL_EVT_MAPPING_END) {
-            if (slen) d->nodes[stack[--slen].node].open = false;
-            continue;
-        }
-        node n = { .first = NONE, .next = NONE, .tag = e->tag, .offset = e->start.offset,
-                   .line = (uint32_t)e->start.line, .col = (uint32_t)e->start.col };
-        switch (e->type) {
-        case OYL_EVT_SCALAR:
-            n.kind = N_SCALAR;
-            n.text = e->value;
-            n.style = e->scalar_style;
-            break;
-        case OYL_EVT_ALIAS:
-            n.kind = N_ALIAS;
-            n.text = e->value;
-            n.target = anchor_get(d, e->value);
-            if (n.target == NONE) {
-                fail(d, OYL_ERR_PARSE, e->start, "unknown anchor '%.*s' referenced",
-                     (int)e->value.len, e->value.data);
-            } else if (d->nodes[n.target].open) {
-                fail(d, OYL_ERR_PARSE, e->start, "anchor '%.*s' value contains itself",
-                     (int)e->value.len, e->value.data);
-            }
-            break;
-        case OYL_EVT_SEQUENCE_START:
-        case OYL_EVT_MAPPING_START:
-            n.kind = e->type == OYL_EVT_SEQUENCE_START ? N_SEQ : N_MAP;
-            n.open = true;
-            break;
-        default:
-            continue;
-        }
-        if (d->status != OYL_OK) break;
-        uint32_t i = add_node(d, n);
-        if (i == NONE) break;
-        if (e->anchor.len && !anchor_set(d, e->anchor, i)) break;
-        if (slen) {
-            struct open *parent = &stack[slen - 1];
-            if (parent->last == NONE) d->nodes[parent->node].first = i;
-            else d->nodes[parent->last].next = i;
-            parent->last = i;
-        } else if (*root == NONE) {
-            *root = i;
-        }
-        if (n.kind == N_SEQ || n.kind == N_MAP) {
-            if (slen == scap) {
-                size_t cap = scap ? scap * 2 : 32;
-                struct open *s = realloc(stack, cap * sizeof *s);
-                if (!s) { out_of_memory(d); break; }
-                stack = s;
-                scap = cap;
-            }
-            stack[slen++] = (struct open){ i, NONE };
-        }
-    }
-    free(stack);
-    return d->status != OYL_OK ? d->status : st;
+/* Is alias i inside the node it refers to? */
+static bool contains_itself(const doc *d, uint32_t i) {
+    uint32_t to = d->n[i].props;
+    return to < i && i < to + d->n[to].span;
 }
 
 /* ── Go's number formatting ──────────────────────────────── */
@@ -603,21 +452,34 @@ static bool base64_decode(oyl_str in, buffer *out) {
 
 /* A scalar node's value, with a !!binary decoded into d->bin */
 static bool scalar_value(doc *d, uint32_t i, oyl_value *v) {
-    const node *n = &d->nodes[i];
-    if (same(n->tag, OYL_TAG_BINARY)) {
-        if (!base64_decode(n->text, &d->bin))
-            return fail(d, OYL_ERR_PARSE, node_mark(n), "!!binary value contains invalid base64 data");
+    const oyl_node *n = &d->n[i];
+    oyl_str t = text(d, i);
+    if (d->typed && !n->props) {   /* untagged, typed while the tree was built */
+        if (n->type == 0) {
+            *v = (oyl_value){ .kind = OYL_VALUE_STR, .as = { .s = t } };
+            return true;
+        }
+        int r = n->type < 255 ? oyl_schema_rule_value(d->schema, n->type - 1, t, v) : 0;
+        if (r > 0) return true;
+        if (r < 0) return fail(d, OYL_ERR_MEMORY, node_mark(d, i), "out of memory");
+    }
+    oyl_str tag = written_tag(d, i);
+    if (same(tag, OYL_TAG_BINARY)) {
+        if (!base64_decode(t, &d->bin))
+            return fail(d, OYL_ERR_PARSE, node_mark(d, i), "!!binary value contains invalid base64 data");
         *v = (oyl_value){ .kind = OYL_VALUE_STR, .as = { .s = { d->bin.data, d->bin.len } } };
         return true;
     }
-    oyl_status st = oyl_schema_value_of(d->schema, n->text, n->style, n->tag, v);
+    /* the tree typed its scalars by the document's schema while building */
+    oyl_status st = d->typed ? oyl_node_value(d->t, i, v)
+                             : oyl_schema_value_of(d->schema, t, (oyl_scalar_style)d->n[i].style, tag, v);
     if (st == OYL_ERR_PARSE) {
         int tl;
-        const char *t = short_tag(n->tag, &tl);
-        return fail(d, OYL_ERR_PARSE, node_mark(n), "cannot decode `%.*s` as !!%.*s",
-                    (int)n->text.len, n->text.data, tl, t);
+        const char *ts = short_tag(tag, &tl);
+        return fail(d, OYL_ERR_PARSE, node_mark(d, i), "cannot decode `%.*s` as !!%.*s",
+                    (int)t.len, t.data, tl, ts);
     }
-    if (st != OYL_OK) return fail(d, st, node_mark(n), "out of memory");
+    if (st != OYL_OK) return fail(d, st, node_mark(d, i), "out of memory");
     return true;
 }
 
@@ -641,7 +503,7 @@ static bool write_scalar(doc *d, uint32_t i) {
         break;
     case OYL_VALUE_FLOAT:
         if (isnan(v.as.f) || isinf(v.as.f))
-            return fail(d, OYL_ERR_PARSE, node_mark(&d->nodes[i]), "json: unsupported value: %s",
+            return fail(d, OYL_ERR_PARSE, node_mark(d, i), "json: unsupported value: %s",
                         isnan(v.as.f) ? "NaN" : v.as.f > 0 ? "+Inf" : "-Inf");
         ok = put_json_float(b, v.as.f);
         break;
@@ -664,14 +526,14 @@ static bool count_decode(doc *d, uint32_t i) {
                      : d->decodes >= 4000000   ? 0.10
                      : 0.99 - 0.89 * ((double)(d->decodes - 400000) / 3600000.0);
         if ((double)d->aliased / (double)d->decodes > ratio)
-            return fail(d, OYL_ERR_LIMIT, node_mark(&d->nodes[i]), "document contains excessive aliasing");
+            return fail(d, OYL_ERR_LIMIT, node_mark(d, i), "document contains excessive aliasing");
     }
     return true;
 }
 
 static bool enter(doc *d, uint32_t i) {
     if (d->max_depth && ++d->depth > d->max_depth)
-        return fail(d, OYL_ERR_LIMIT, node_mark(&d->nodes[i]), "nesting depth limit exceeded");
+        return fail(d, OYL_ERR_LIMIT, node_mark(d, i), "nesting depth limit exceeded");
     if (!d->max_depth) d->depth++;
     return true;
 }
@@ -684,18 +546,17 @@ static bool write_node(doc *d, uint32_t i);
 static bool key_string(doc *d, uint32_t k, entry *e) {
     if (!count_decode(d, k)) return false;
     uint32_t i = k;
-    int aliases = 0;
-    while (d->nodes[i].kind == N_ALIAS) {
+    if (d->n[i].kind == OYL_NODE_ALIAS) {   /* an alias's target is never an alias */
         d->alias_depth++;
-        aliases++;
-        i = d->nodes[i].target;
-        if (!count_decode(d, i)) { d->alias_depth -= aliases; return false; }
+        i = d->n[i].props;
+        bool ok = count_decode(d, i);
+        d->alias_depth--;
+        if (!ok) return false;
     }
-    d->alias_depth -= aliases;
-    const node *n = &d->nodes[i];
-    if (n->kind != N_SCALAR)
-        return fail(d, OYL_ERR_PARSE, node_mark(&d->nodes[k]), "invalid map key: a %s",
-                    n->kind == N_MAP ? "mapping" : "sequence");
+    const oyl_node *n = &d->n[i];
+    if (n->kind != OYL_NODE_SCALAR)
+        return fail(d, OYL_ERR_PARSE, node_mark(d, k), "invalid map key: a %s",
+                    n->kind == OYL_NODE_MAPPING ? "mapping" : "sequence");
     oyl_value v;
     if (!scalar_value(d, i, &v)) return false;
     buffer *b = &d->keys;
@@ -705,13 +566,13 @@ static bool key_string(doc *d, uint32_t k, entry *e) {
         e->key_at.ptr = v.as.s.data;
         e->key_len = (uint32_t)v.as.s.len;
         e->in_keys = false;
-        return v.as.s.len <= UINT32_MAX || fail(d, OYL_ERR_LIMIT, node_mark(&d->nodes[k]), "key too long");
+        return v.as.s.len <= UINT32_MAX || fail(d, OYL_ERR_LIMIT, node_mark(d, k), "key too long");
     }
     switch (v.kind) {
     case OYL_VALUE_NULL:
-        return fail(d, OYL_ERR_PARSE, node_mark(&d->nodes[k]), "unsupported map key: null");
+        return fail(d, OYL_ERR_PARSE, node_mark(d, k), "unsupported map key: null");
     case OYL_VALUE_UINT:   /* sigs.k8s.io/yaml takes int, int64, float64, bool and string keys */
-        return fail(d, OYL_ERR_PARSE, node_mark(&d->nodes[k]), "unsupported map key of type: uint64");
+        return fail(d, OYL_ERR_PARSE, node_mark(d, k), "unsupported map key of type: uint64");
     case OYL_VALUE_BOOL:
         ok = buf_puts(b, v.as.b ? "true" : "false");
         break;
@@ -749,25 +610,23 @@ static bool push_entry(doc *d, entry e) {
 }
 
 /* Is key node k a merge key? As go-yaml v2 sees it: << untagged and plain,
- * or tagged !!merge. A schema on the parser may have tagged it already. */
+ * or tagged !!merge. (A tag the parser's schema gave isn't in the tree.) */
 static bool is_merge(doc *d, uint32_t k) {
-    const node *n = &d->nodes[k];
-    if (n->kind != N_SCALAR || n->text.len != 2 || memcmp(n->text.data, "<<", 2) != 0) return false;
-    if (same(n->tag, OYL_TAG_MERGE)) return true;
-    if (n->style != OYL_SCALAR_PLAIN) return false;
-    if (n->tag.len == 0) return true;
-    const oyl_schema *ps = oyl_parser_schema(d->p);
-    return ps && same(n->tag, oyl_schema_resolve(ps, n->text, OYL_SCALAR_PLAIN));
+    const oyl_node *n = &d->n[k];
+    if (n->kind != OYL_NODE_SCALAR || n->len != 2 || memcmp(text(d, k).data, "<<", 2) != 0) return false;
+    oyl_str tag = written_tag(d, k);
+    if (tag.len) return same(tag, OYL_TAG_MERGE);
+    return n->style == OYL_SCALAR_PLAIN;
 }
 
 static bool collect(doc *d, uint32_t map, uint64_t *counter, bool written);
 
 /* The mapping a merge item stands for: a mapping, or an alias to one */
 static bool merge_item(doc *d, uint32_t item, uint32_t *map, bool *alias) {
-    *alias = d->nodes[item].kind == N_ALIAS;
-    *map = *alias ? d->nodes[item].target : item;
-    if (d->nodes[*map].kind != N_MAP)
-        return fail(d, OYL_ERR_PARSE, node_mark(&d->nodes[item]),
+    *alias = d->n[item].kind == OYL_NODE_ALIAS;
+    *map = *alias ? d->n[item].props : item;
+    if (d->n[*map].kind != OYL_NODE_MAPPING)
+        return fail(d, OYL_ERR_PARSE, node_mark(d, item),
                     "map merge requires map or sequence of maps as the value");
     return true;
 }
@@ -779,14 +638,13 @@ static bool merge_ordered(doc *d, uint32_t value, uint64_t *counter) {
     uint32_t *list = items;
     size_t count = 1;
     uint32_t *seq = NULL;
-    if (d->nodes[value].kind == N_SEQ) {
+    if (d->n[value].kind == OYL_NODE_SEQUENCE) {
         if (!count_decode(d, value)) return false;
-        count = 0;
-        for (uint32_t c = d->nodes[value].first; c != NONE; c = d->nodes[c].next) count++;
+        count = d->n[value].len;
         seq = malloc((count ? count : 1) * sizeof *seq);
         if (!seq) return out_of_memory(d);
-        size_t j = 0;
-        for (uint32_t c = d->nodes[value].first; c != NONE; c = d->nodes[c].next) seq[j++] = c;
+        uint32_t c = value + 1;
+        for (size_t j = 0; j < count; j++, c += d->n[c].span) seq[j] = c;
         list = seq;
     }
     bool ok = true;
@@ -813,11 +671,10 @@ static bool merge_ordered(doc *d, uint32_t value, uint64_t *counter) {
 static bool settle(doc *d, size_t base, size_t *count);
 
 static bool merge_by_yaml(doc *d, uint32_t value, uint64_t *group) {
-    uint32_t single = value;
-    uint32_t first = d->nodes[value].kind == N_SEQ ? d->nodes[value].first : single;
-    bool is_seq = d->nodes[value].kind == N_SEQ;
+    bool is_seq = d->n[value].kind == OYL_NODE_SEQUENCE;
     if (is_seq && !count_decode(d, value)) return false;
-    for (uint32_t item = first; item != NONE; item = is_seq ? d->nodes[item].next : NONE) {
+    uint32_t items = is_seq ? d->n[value].len : 1, item = is_seq ? value + 1 : value;
+    for (uint32_t c = 0; c < items; c++, item += d->n[item].span) {
         uint32_t map;
         bool alias;
         if (!merge_item(d, item, &map, &alias)) return false;
@@ -850,16 +707,16 @@ static bool collect(doc *d, uint32_t map, uint64_t *counter, bool written) {
     uint64_t group = 0;
     uint32_t pending_merges[64];
     size_t npending = 0;
-    for (uint32_t k = d->nodes[map].first; k != NONE; k = d->nodes[d->nodes[k].next].next) {
-        uint32_t v = d->nodes[k].next;
-        if (v == NONE) break;
+    uint32_t k = map + 1, v;
+    for (uint32_t c = 0; c < d->n[map].len; c++, k = v + d->n[v].span) {
+        v = k + d->n[k].span;
         if (merging && is_merge(d, k)) {
             if (ordered) {
                 if (!merge_ordered(d, v, counter)) return false;
             } else if (npending < sizeof pending_merges / sizeof pending_merges[0]) {
                 pending_merges[npending++] = v;
             } else {
-                return fail(d, OYL_ERR_LIMIT, node_mark(&d->nodes[k]), "too many merge keys in one mapping");
+                return fail(d, OYL_ERR_LIMIT, node_mark(d, k), "too many merge keys in one mapping");
             }
             continue;
         }
@@ -927,7 +784,7 @@ static bool settle(doc *d, size_t base, size_t *count) {
                (e[i].key_len == 0 || memcmp(key_bytes(d, &e[j]), key_bytes(d, &e[i]), e[i].key_len) == 0))
             written += e[j++].written;
         if (strict && (any_counts ? j - i > 1 : written > 1))
-            return fail(d, OYL_ERR_PARSE, node_mark(&d->nodes[e[j - 1].key]), "key \"%.*s\" already set in map",
+            return fail(d, OYL_ERR_PARSE, node_mark(d, e[j - 1].key), "key \"%.*s\" already set in map",
                         (int)e[i].key_len, key_bytes(d, &e[i]));
         if (any_counts && written && !e[j - 1].written) {
             /* a merge won over a key written in the mapping: go-yaml v2's
@@ -938,7 +795,7 @@ static bool settle(doc *d, size_t base, size_t *count) {
             snprintf(msg, sizeof msg, "key \"%.*s\" is overridden by a later << merge, as go-yaml v2 "
                      "reads it; YAML's merge keeps it", (int)(e[w].key_len > 100 ? 100 : e[w].key_len),
                      key_bytes(d, &e[w]));
-            oyl_parser_warn(d->p, OYL_WARN_MERGE_ORDER, node_mark(&d->nodes[e[w].key]), msg);
+            oyl_parser_warn(d->p, OYL_WARN_MERGE_ORDER, node_mark(d, e[w].key), msg);
         }
         e[out++] = e[j - 1];   /* the highest priority */
         i = j;
@@ -972,28 +829,29 @@ static bool write_mapping(doc *d, uint32_t m) {
 
 static bool write_node(doc *d, uint32_t i) {
     if (!count_decode(d, i)) return false;
-    const node *n = &d->nodes[i];
+    const oyl_node *n = &d->n[i];
     switch (n->kind) {
-    case N_ALIAS: {
+    case OYL_NODE_ALIAS: {
         d->alias_depth++;
-        bool ok = write_node(d, n->target);
+        bool ok = write_node(d, n->props);
         d->alias_depth--;
         return ok;
     }
-    case N_SCALAR:
+    case OYL_NODE_SCALAR:
         return write_scalar(d, i);
-    case N_SEQ: {
+    case OYL_NODE_SEQUENCE: {
         if (!enter(d, i)) return false;
         if (!buf_putc(&d->out, '[')) return out_of_memory(d);
-        for (uint32_t c = n->first; c != NONE; c = d->nodes[c].next) {
-            if (c != n->first && !buf_putc(&d->out, ',')) return out_of_memory(d);
+        uint32_t c = i + 1;
+        for (uint32_t j = 0; j < n->len; j++, c += d->n[c].span) {
+            if (j && !buf_putc(&d->out, ',')) return out_of_memory(d);
             if (!write_node(d, c)) return false;
         }
         if (!buf_putc(&d->out, ']')) return out_of_memory(d);
         d->depth--;
         return true;
     }
-    case N_MAP:
+    case OYL_NODE_MAPPING:
         return write_mapping(d, i);
     }
     return false;
@@ -1017,28 +875,36 @@ oyl_status oyl_parse_json(oyl_parser *p, const oyl_schema *schema, unsigned flag
         free(d.keys.data);
         return OYL_ERR_MEMORY;
     }
-    uint32_t root = NONE;
-    bool end = false;
-    oyl_status st = read_document(&d, &root, &end);
-    if (st == OYL_OK && !end && !schema) {   /* the document's dialect */
-        d.schema = oyl_dialect_schema(d.dialect);
-        oyl_merge_order m = oyl_dialect_merge(d.dialect);
-        d.flags = (flags & ~(unsigned)(OYL_JSON_MERGE | OYL_JSON_MERGE_ORDER)) |
-                  (m == OYL_MERGE_YAML ? OYL_JSON_MERGE
-                   : m == OYL_MERGE_ORDERED ? OYL_JSON_MERGE | OYL_JSON_MERGE_ORDER : 0);
-    }
-    if (st == OYL_OK && !end) {
-        bool ok = root == NONE ? buf_puts(&d.out, "null") || out_of_memory(&d)
-                               : write_node(&d, root);
-        if (ok) {
+    oyl_status st = oyl_parse_tree(p, &d.t);
+    if (st == OYL_OK && d.t) {
+        uint32_t count;
+        d.n = oyl_tree_nodes(d.t, &count);
+        const oyl_dialect *dialect = oyl_tree_dialect(d.t);
+        const oyl_schema *typed_by = oyl_dialect_schema(dialect);
+        if (!schema) {   /* the document's dialect */
+            d.schema = typed_by;
+            oyl_merge_order m = oyl_dialect_merge(dialect);
+            d.flags = (flags & ~(unsigned)(OYL_JSON_MERGE | OYL_JSON_MERGE_ORDER)) |
+                      (m == OYL_MERGE_YAML ? OYL_JSON_MERGE
+                       : m == OYL_MERGE_ORDERED ? OYL_JSON_MERGE | OYL_JSON_MERGE_ORDER : 0);
+        }
+        d.typed = d.schema == typed_by;
+        /* go-yaml v2 decodes every node, so an alias inside its own anchor
+         * fails wherever it is */
+        for (uint32_t i = 0; i < count && d.status == OYL_OK; i++)
+            if (d.n[i].kind == OYL_NODE_ALIAS && contains_itself(&d, i)) {
+                oyl_str name = text(&d, i);
+                fail(&d, OYL_ERR_PARSE, node_mark(&d, i), "anchor '%.*s' value contains itself",
+                     (int)name.len, name.data);
+            }
+        if (d.status == OYL_OK && write_node(&d, 0)) {
             char *s = oyl_arena_dup(oyl_parser_arena(p), d.out.data ? d.out.data : "", d.out.len);
             if (s) *json = (oyl_str){ s, d.out.len };
             else out_of_memory(&d);
         }
         st = d.status;
     }
-    free(d.nodes);
-    free(d.anchors);
+    oyl_tree_free(d.t);
     free(d.out.data);
     free(d.keys.data);
     free(d.bin.data);

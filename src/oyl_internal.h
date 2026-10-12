@@ -48,6 +48,11 @@ struct oyl_schema {
     /* the first bytes any rule could accept: a plain scalar starting with
      * another byte is the default at once (NULL: no shortcut) */
     const bool            *first;
+    /* by first byte c, the rules that may accept the text, in order:
+     * cand[cand_at[c]] up to cand[cand_at[c + 1]], with c 256 for empty
+     * text. Every rule is tried when cand_at is NULL or cand_at[257] 0. */
+    const uint16_t        *cand_at;
+    const uint8_t         *cand;
 };
 
 /* ── Dialects and warnings ───────────────────────────────── */
@@ -103,6 +108,33 @@ const oyl_schema *oyl_parser_schema(const oyl_parser *p);       /* NULL: none */
 /* Report a warning found after parsing (no re-reading to guard against) */
 void              oyl_parser_warn(oyl_parser *p, oyl_warning code, oyl_mark mark,
                                   const char *msg);
+
+/* ── Trees, for oyl_json.c ───────────────────────────────── */
+
+struct oyl_tree {
+    const char        *input;       /* the whole input */
+    size_t             input_len;
+    size_t             base;        /* where the document starts in it */
+    oyl_node          *nodes;
+    uint32_t           len, cap;
+    oyl_node_props    *props;       /* props[0] is unused: 0 means none */
+    uint32_t           plen, pcap;
+    char              *pool;
+    size_t             pool_len, pool_cap;
+    oyl_mark          *marks;       /* marks[k]: node k * MARK_EVERY's start */
+    uint32_t           mlen, mcap;
+    oyl_mark           doc_mark;    /* the document's start */
+    const oyl_dialect *dialect;
+    const oyl_schema  *schema;
+    oyl_merge_order    merge;
+};
+
+/* A scalar's or alias's text */
+static inline oyl_str oyl_tree_text(const oyl_tree *t, const oyl_node *n) {
+    if (!n->len) return (oyl_str){ "", 0 };
+    return n->flags & OYL_NODE_POOLED ? (oyl_str){ t->pool + n->text, n->len }
+                                      : (oyl_str){ t->input + t->base + n->text, n->len };
+}
 
 /* For small helpers on the per-token path that GCC may otherwise decline
  * to inline once they grow a little. */

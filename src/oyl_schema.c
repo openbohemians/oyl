@@ -513,6 +513,74 @@ static int rule_parse(const oyl_schema_rule *r, oyl_str text, oyl_value *out) {
     return 0;
 }
 
+/* Can rule r accept text starting with byte c (256: empty text)? As the
+ * first-byte table and word_misses decide */
+static bool may_start(const oyl_schema_rule *r, int c) {
+    switch (r->kind) {
+    case RULE_WORD:
+    case RULE_WORD_ICASE: {
+        if (c == 256 || r->plen == 0) return c == 256 && r->plen == 0;
+        int p = (unsigned char)r->pattern[0];
+        return c == p || (r->kind == RULE_WORD_ICASE &&
+                          (c == (unsigned char)tolower(p) || c == (unsigned char)toupper(p)));
+    }
+    case RULE_INT:
+    case RULE_FLOAT:
+    case RULE_TIMESTAMP:
+        return c == 256 || (c >= '0' && c <= '9') || c == '+' || c == '-' || c == '.';
+    case RULE_CUSTOM:
+        return true;
+    case RULE_NONE:
+        break;
+    }
+    return false;
+}
+
+/* Fill a schema's candidate rules by first byte (into `cand`, `cap` long,
+ * or with cand NULL just count them). Returns how many, or -1 if there
+ * are too many rules or candidates. */
+static long fill_cand(const oyl_schema_rule *rules, int n, uint16_t *at, uint8_t *cand, size_t cap) {
+    if (n > 255) return -1;
+    size_t k = 0;
+    for (int c = 0; c <= 256; c++) {
+        if (at) at[c] = (uint16_t)k;
+        for (int i = 0; i < n; i++) {
+            if (!may_start(&rules[i], c)) continue;
+            if (cand && k >= cap) return -1;
+            if (cand) cand[k] = (uint8_t)i;
+            k++;
+        }
+    }
+    if (k > UINT16_MAX) return -1;
+    if (at) at[257] = (uint16_t)k;
+    return (long)k;
+}
+
+/* The first rule that accepts untagged plain `text`: its index, -1 for
+ * none, or -2 if a rule ran out of memory giving its value in `out` */
+static int match(const oyl_schema *s, oyl_str text, oyl_value *out) {
+    if (text.len && s->first && !s->first[(unsigned char)text.data[0]]) return -1;
+    if (s->cand_at && s->cand_at[257]) {
+        int c = text.len ? (unsigned char)text.data[0] : 256;
+        for (unsigned j = s->cand_at[c]; j < s->cand_at[c + 1]; j++) {
+            const oyl_schema_rule *r = &s->rules[s->cand[j]];
+            if (word_misses(r, text)) continue;
+            int x = rule_parse(r, text, out);
+            if (x > 0) return s->cand[j];
+            if (x < 0 && out) return -2;
+        }
+        return -1;
+    }
+    for (int i = 0; i < s->rule_count; i++) {
+        const oyl_schema_rule *r = &s->rules[i];
+        if (word_misses(r, text)) continue;
+        int x = rule_parse(r, text, out);
+        if (x > 0) return i;
+        if (x < 0 && out) return -2;
+    }
+    return -1;
+}
+
 /* ── Resolution and values ───────────────────────────────── */
 
 oyl_str oyl_schema_resolve(const oyl_schema *schema, oyl_str value,
@@ -520,25 +588,14 @@ oyl_str oyl_schema_resolve(const oyl_schema *schema, oyl_str value,
     /* quoted scalars always resolve to default_quoted_tag (str) */
     if (style != OYL_SCALAR_PLAIN)
         return schema->default_quoted_tag;
-    if (value.len && schema->first && !schema->first[(unsigned char)value.data[0]])
-        return schema->default_plain_tag;
-    for (int i = 0; i < schema->rule_count; i++) {
-        const oyl_schema_rule *r = &schema->rules[i];
-        /* resolution never needs memory: a float is only copied when its
-         * range decides, and then a failed copy declines */
-        if (!word_misses(r, value) && rule_parse(r, value, NULL) == 1)
-            return r->tag;
-    }
-    return schema->default_plain_tag;
+    /* resolution never needs memory: a float is only copied when its range
+     * decides, and then a failed copy declines */
+    int i = match(schema, value, NULL);
+    return i >= 0 ? schema->rules[i].tag : schema->default_plain_tag;
 }
 
 int oyl_schema_rule_of(const oyl_schema *schema, oyl_str text) {
-    if (text.len && schema->first && !schema->first[(unsigned char)text.data[0]]) return -1;
-    for (int i = 0; i < schema->rule_count; i++) {
-        const oyl_schema_rule *r = &schema->rules[i];
-        if (!word_misses(r, text) && rule_parse(r, text, NULL) == 1) return i;
-    }
-    return -1;
+    return match(schema, text, NULL);
 }
 
 int oyl_schema_rule_value(const oyl_schema *schema, int rule, oyl_str text, oyl_value *out) {
@@ -558,14 +615,10 @@ oyl_status oyl_schema_value(const oyl_schema *schema, const oyl_event *scalar,
 oyl_status oyl_schema_value_of(const oyl_schema *schema, oyl_str text, oyl_scalar_style style,
                                oyl_str tag, oyl_value *out) {
     if (tag.len == 0) {
-        if (style == OYL_SCALAR_PLAIN &&
-            !(text.len && schema->first && !schema->first[(unsigned char)text.data[0]])) {
-            for (int i = 0; i < schema->rule_count; i++) {
-                if (word_misses(&schema->rules[i], text)) continue;
-                int r = rule_parse(&schema->rules[i], text, out);
-                if (r < 0) return OYL_ERR_MEMORY;
-                if (r) return OYL_OK;
-            }
+        if (style == OYL_SCALAR_PLAIN) {
+            int i = match(schema, text, out);
+            if (i == -2) return OYL_ERR_MEMORY;
+            if (i >= 0) return OYL_OK;
         }
         text_value(out, text);
         return OYL_OK;
@@ -605,7 +658,17 @@ oyl_status oyl_schema_value_of(const oyl_schema *schema, oyl_str text, oyl_scala
     .default_seq_tag    = TAG(SEQ), \
     .default_map_tag    = TAG(MAP)
 
-#define PRESET(r, f) { .rules = r, .rule_count = sizeof(r) / sizeof(r[0]), DEFAULT_TAGS, .first = f }
+/* The presets' candidate rules by first byte are filled in when the library
+ * loads, where the compiler can arrange it; until then (cand_at[257] 0),
+ * and elsewhere, every rule is tried */
+#if defined(__GNUC__) || defined(__clang__)
+#  define CAND(r) static uint16_t r##_at[258]; static uint8_t r##_cand[512];
+#  define PRESET(r, f) { .rules = r, .rule_count = sizeof(r) / sizeof(r[0]), DEFAULT_TAGS, \
+                         .first = f, .cand_at = r##_at, .cand = r##_cand }
+#else
+#  define CAND(r)
+#  define PRESET(r, f) { .rules = r, .rule_count = sizeof(r) / sizeof(r[0]), DEFAULT_TAGS, .first = f }
+#endif
 
 /* The first bytes the presets' rules accept, for the shortcut in
  * resolution: numbers start with a digit, sign or dot, the rest are words */
@@ -636,6 +699,7 @@ static const oyl_schema_rule json_rules[] = {
     FLOAT_RULE(OYL_FLOAT_CORE),
 };
 
+CAND(json_rules)
 static const oyl_schema json_schema = PRESET(json_rules, json_first);
 
 const oyl_schema *oyl_schema_json(void) {
@@ -650,6 +714,7 @@ static const oyl_schema_rule core_rules[] = {
     FLOAT_RULE(OYL_FLOAT_CORE),
 };
 
+CAND(core_rules)
 static const oyl_schema core_schema = PRESET(core_rules, core_first);
 
 const oyl_schema *oyl_schema_core(void) {
@@ -675,6 +740,7 @@ static const oyl_schema_rule yaml11_rules[] = {
     TIMESTAMP11_RULE,
 };
 
+CAND(yaml11_rules)
 static const oyl_schema yaml11_schema = PRESET(yaml11_rules, yaml11_first);
 
 const oyl_schema *oyl_schema_yaml11(void) {
@@ -704,7 +770,18 @@ static const oyl_schema_rule goyaml2_rules[] = {
     FLOAT_RULE(GOYAML2_FLOAT),
 };
 
+CAND(goyaml2_rules)
 static const oyl_schema goyaml2_schema = PRESET(goyaml2_rules, goyaml2_first);
+
+#if defined(__GNUC__) || defined(__clang__)
+#  define FILL(r) fill_cand(r, (int)(sizeof(r) / sizeof(r[0])), r##_at, r##_cand, sizeof r##_cand)
+__attribute__((constructor)) static void fill_preset_cands(void) {
+    FILL(json_rules);
+    FILL(core_rules);
+    FILL(yaml11_rules);
+    FILL(goyaml2_rules);
+}
+#endif
 
 const oyl_schema *oyl_schema_goyaml2(void) {
     return &goyaml2_schema;
@@ -883,6 +960,15 @@ const oyl_schema *oyl_schema_builder_finish(oyl_schema_builder *b) {
         }
     }
     *schema = (oyl_schema){ .rules = stable, .rule_count = b->len, DEFAULT_TAGS, .first = first };
+    long ncand = fill_cand(stable, b->len, NULL, NULL, 0);
+    if (ncand > 0) {
+        uint16_t *at = oyl_arena_alloc(b->arena, 258 * sizeof *at, _Alignof(uint16_t));
+        uint8_t *cand = oyl_arena_alloc(b->arena, (size_t)ncand, 1);
+        if (at && cand && fill_cand(stable, b->len, at, cand, (size_t)ncand) == ncand) {
+            schema->cand_at = at;
+            schema->cand = cand;
+        }
+    }
     return schema;
 }
 
