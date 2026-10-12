@@ -6,7 +6,8 @@
 **Step 1 built 2026-10-12** on the `tree` branch (from `schema-parsers`),
 `632b7f2`, with fixes `3a04c83` and `5e56930` that CI's clang 18 found
 (NULL plus zero, which local clang 22 doesn't report in C); CI green.
-See "Step 1 as built" at the end. **Next:** step 2, JSON on the tree. Roadmap
+See "Step 1 as built" at the end. **Step 2 built 2026-10-12** (`480bf4d`,
+CI green): see "Step 2 as built". **Next:** step 3, `oyl_emit_tree`. Roadmap
 step 5 (roadmap.md). It replaces the sketch in ideas.md. The user agreed
 on 2026-10-11 to build the tree before parallel parsing, designed so
 that parallel building can be added later without a rewrite. The
@@ -306,5 +307,34 @@ result must be byte for byte the tree one thread builds: an exact test.
   descriptions are multi-line plain scalars, folded into new text).
 - **Open for step 6 (Go):** typed values without cgo calls. The `type`
   byte is a rule number, opaque outside C. Likely an optional side array
-  of 8-byte values per node, filled while building; the node layout
-  doesn't change.
+  filled while building: per node an 8-byte value plus a kind byte (one
+  int rule can give an int, a uint, or text past 64 bits), ~28% more
+  memory, only for bindings that ask; the node layout doesn't change.
+  Explained to the user 2026-10-12.
+
+## Step 2 as built (2026-10-12, `480bf4d`)
+
+- `oyl_parse_json` = `oyl_parse_tree` + writing from the tree. oyl_json.c
+  keeps its own key rules (keys as JSON strings), go-yaml v2's aliasing
+  ratio, both merge orders and strict mode; it reads `struct oyl_tree`
+  directly (moved to oyl_internal.h) and uses the tree's types when the
+  JSON schema is the document's.
+- **Output:** identical to before on 86,914 files (866 Kubernetes
+  manifests, YAML on this machine, the fuzz corpus; outputs, errors with
+  positions, warnings), except 34 fuzz inputs with both an alias inside
+  its own anchor and an unknown anchor: the unknown anchor is now
+  reported first, which is what sigs.k8s.io/yaml reports (checked with
+  the k8sjson oracle; go-yaml v2 fails unknown anchors while parsing).
+- **Speed:** first 334 against 365 MB/s. Instruction counts (own PMU)
+  showed the tree reader at ~360 instructions per node beyond parsing
+  against the old reader's 89; typing was 130 of them. Fixed by:
+  - a first-byte index of each schema's rules (`cand_at`/`cand` in
+    `struct oyl_schema`, filled by a constructor for presets, by
+    `oyl_schema_builder_finish` for custom schemas; every rule is tried
+    when absent): 3 of go-yaml v2's 30 rules for text starting with `n`.
+    Identical tags and values for 826,578 scalars under all presets.
+  - checking offsets once per document, the writer reading the struct
+    inline, the per-event function inlined.
+  Now JSON 362 against 365 MB/s (parity), trees 508 MB/s (was 470).
+- **oyl.go:** its vendored sources need a wrapper .c for `oyl_tree.c` (one
+  per source file) when it vendors a release with trees.
