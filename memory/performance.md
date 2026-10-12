@@ -88,6 +88,39 @@ To verify any of these, diff the event streams of old vs new over the fuzz
 corpus (plus shifted copies to move 16- and 64-byte boundaries), and
 compare instruction counts.
 
+## Parallel parsing on real files (measured 2026-10-11)
+
+The user asked for single-thread against multi-thread on real-world
+input. `bench_parallel run -n 7` (from `bench/parallel`, built against
+`schema-parsers`), Core Ultra 7 155H (6 P-cores with HT + 10 E-cores, 22
+threads). Sequential is plain Oyl, one thread; speedups include choosing
+the splitter, chunking and in-order delivery.
+
+| Input | sequential | 1 thread | 4 threads | best |
+|---|---|---|---|---|
+| travis.yml x10 MB (rapidyaml's case, repeated as documents) | 465 MB/s | 0.78x | 2.30x | 3.06x (16 thr) |
+| appveyor.yml x10 MB | 426 MB/s | 0.77x | 2.26x | 3.12x (22) |
+| compile_commands.json x10 MB | 1943 MB/s | 0.67x | 1.89x | 2.60x (16) |
+| 865 Kubernetes documents, 6.9 MB, one stream | 629 MB/s | 0.78x | 1.67x | 1.67x (4), worse beyond |
+| largest of them alone (Argo CD CRD, 1.3 MB) | 637 MB/s | 0.26x | 0.22x | no split found |
+
+Windowed (`-k 64 -w 9`, at most ~4 MB of events waiting): travis 2.66x,
+appveyor 3.13x, compile_commands 1.81x, Kubernetes 1.06x.
+
+Why the natural case (the Kubernetes stream) gains little:
+- a few huge documents dominate (largest 19% of the stream, top 10 85%),
+  and the prototype splits a multi-document stream only between
+  documents, capping it near 5x in theory, 1.7x with uneven chunks
+- its in-document splitter runs only on single-document input, and
+  refuses Kubernetes' indentless sequences (`containers:` then `- name:`
+  at the key's column): the largest CRD got no split, after ~6 ms of
+  looking (0.26x)
+- delivery is serial, so even ideal inputs saturate near 3x
+The repeated rapidyaml files (many identical small documents) are the
+best case. A library version would need in-document splits within a
+stream, indentless sequences, a cheaper split search, and faster
+delivery.
+
 ## YAMLToJSON toward 10x (noted 2026-10-11, not planned)
 
 `oyl_parse_json` is 7.3x `sigs.k8s.io/yaml` through Go on real Kubernetes
