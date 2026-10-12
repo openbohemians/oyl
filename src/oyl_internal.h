@@ -70,6 +70,11 @@ typedef struct {
 /* oyl_schema_value from a scalar's parts (for oyl_json.c) */
 oyl_status oyl_schema_value_of(const oyl_schema *schema, oyl_str text, oyl_scalar_style style,
                                oyl_str tag, oyl_value *out);
+/* The rule that resolves untagged plain `text`, or -1 for the default (for
+ * oyl_tree.c, which keeps it per node) */
+int oyl_schema_rule_of(const oyl_schema *schema, oyl_str text);
+/* Rule `rule`'s value of `text`: 1 accepted, 0 declined, -1 out of memory */
+int oyl_schema_rule_value(const oyl_schema *schema, int rule, oyl_str text, oyl_value *out);
 
 /* Report a warning from parsing, once (see oyl_warn_state) */
 void oyl_warn(oyl_warn_state *w, oyl_warning code, oyl_mark mark, const char *msg);
@@ -86,12 +91,13 @@ void oyl_scanner_set_syntax(oyl_scanner *s, unsigned syntax, oyl_warn_state *w);
  * checkpoint at a document start). */
 bool oyl_scanner_copy(oyl_scanner *dst, const oyl_scanner *src);
 
-/* ── Parser, for oyl_json.c ──────────────────────────────── */
+/* ── Parser, for oyl_json.c and oyl_tree.c ──────────────────────────────── */
 
 /* Report an error found after parsing (a converter's), as parse errors
  * are: oyl_parser_error() and oyl_parser_error_mark() return it. */
 void oyl_parser_fail(oyl_parser *p, oyl_mark mark, const char *msg);
 oyl_arena        *oyl_parser_arena(const oyl_parser *p);
+const char       *oyl_parser_input(const oyl_parser *p, size_t *len);
 int               oyl_parser_depth_limit(const oyl_parser *p);   /* 0: none */
 const oyl_schema *oyl_parser_schema(const oyl_parser *p);       /* NULL: none */
 /* Report a warning found after parsing (no re-reading to guard against) */

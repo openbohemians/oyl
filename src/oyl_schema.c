@@ -532,6 +532,19 @@ oyl_str oyl_schema_resolve(const oyl_schema *schema, oyl_str value,
     return schema->default_plain_tag;
 }
 
+int oyl_schema_rule_of(const oyl_schema *schema, oyl_str text) {
+    if (text.len && schema->first && !schema->first[(unsigned char)text.data[0]]) return -1;
+    for (int i = 0; i < schema->rule_count; i++) {
+        const oyl_schema_rule *r = &schema->rules[i];
+        if (!word_misses(r, text) && rule_parse(r, text, NULL) == 1) return i;
+    }
+    return -1;
+}
+
+int oyl_schema_rule_value(const oyl_schema *schema, int rule, oyl_str text, oyl_value *out) {
+    return rule_parse(&schema->rules[rule], text, out);
+}
+
 static void text_value(oyl_value *out, oyl_str text) {
     *out = (oyl_value){ .kind = OYL_VALUE_STR, .as = { .s = text } };
 }

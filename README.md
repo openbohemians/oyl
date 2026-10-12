@@ -170,6 +170,7 @@ oyl_scanner_free(scanner);
 | `oyl_event` | Parser output (`type`, `value`, `anchor`, `tag`, `scalar_style`, `flow`), owned by the parser |
 | `oyl_schema` | Opaque tag resolution schema (failsafe, JSON, core, or custom) |
 | `oyl_emitter` | Event-to-YAML emitter, configured with setters |
+| `oyl_tree` | A document in memory: an array of `oyl_node` in document order |
 
 Tokens and events are only ever allocated by the library and read through
 `const` pointers, and configuration goes through functions, so new fields
@@ -440,6 +441,48 @@ result is empty.
 The go-yaml v2 dialect takes on libyaml's leniencies that occur in real
 manifests. Others it doesn't copy: `?x` as an explicit key, anchor names
 cut at `:`, and everything after the first document's root node ignored.
+
+## Trees
+
+`oyl_parse_tree` reads a document into memory: lookups, iteration and
+typed values, without handling events yourself.
+
+```c
+oyl_parser *p = oyl_parser_new(yaml, len, arena);
+oyl_tree *t;
+if (oyl_parse_tree(p, &t) == OYL_OK && t) {
+    uint32_t spec = oyl_node_get(t, 0, OYL_STR_LIT("spec"));     /* 0 is the root */
+    uint32_t replicas = oyl_node_get(t, spec, OYL_STR_LIT("replicas"));
+    oyl_value v;
+    if (oyl_node_value(t, replicas, &v) == OYL_OK && v.kind == OYL_VALUE_INT)
+        printf("%lld replicas\n", (long long)v.as.i);
+    oyl_tree_free(t);
+}
+```
+
+A tree is one array of 32-byte nodes in document order. A collection
+records the size of its subtree, so its first child is the next node and
+the next sibling of node `i` is `i + span`; a mapping's children alternate
+key, value. Walking needs no function calls:
+
+```c
+uint32_t count;
+const oyl_node *n = oyl_tree_nodes(t, &count);
+for (uint32_t c = 0, k = m + 1; c < n[m].len; c++) {   /* the pairs of mapping m */
+    uint32_t v = k + n[k].span;                         /* n[k] is a key, n[v] its value */
+    k = v + n[v].span;
+}
+```
+
+Nodes hold offsets, not pointers: text stays in the input, except text
+the parser rewrote (escapes, folded lines), which goes into the tree's
+pool. So a binding can copy a tree's arrays whole, or read them in place.
+Each plain scalar is typed while the tree is built, by the document's
+dialect. Aliases and `<<` merge keys stay as written: `oyl_node_get`
+follows aliases and applies merges in the dialect's order, and
+`oyl_node_entries` gives a mapping's pairs with merges applied. A finished
+tree is read-only, so threads can share it. Each call reads one document;
+at the end of the stream the tree is NULL.
 
 ## Architecture
 

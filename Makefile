@@ -52,10 +52,11 @@ TEST_ERRORS := $(OBJDIR)/test_errors
 TEST_FLOW := $(OBJDIR)/test_flow
 TEST_JSON := $(OBJDIR)/test_json
 TEST_DIALECT := $(OBJDIR)/test_dialect
+TEST_TREE := $(OBJDIR)/test_tree
 
 .PHONY: all static shared pkgconfig install uninstall dist version \
         clean test test-suite test-schema test-emitter test-merge \
-        test-resolve test-errors test-flow test-json test-dialect test-all bench bench-parser bench-cmp bench-parser-cmp bench-compare bench-classify bench-oracle bench-parallel
+        test-resolve test-errors test-flow test-json test-dialect test-tree test-all bench bench-parser bench-cmp bench-parser-cmp bench-compare bench-classify bench-oracle bench-parallel
 
 all: $(LIB) $(TEST)
 
@@ -171,6 +172,9 @@ $(TEST_JSON): $(TESTDIR)/test_json.c $(LIB)
 $(TEST_DIALECT): $(TESTDIR)/test_dialect.c $(LIB)
 	$(CC) $(OYL_CFLAGS) $< $(LIB) -lm -o $@
 
+$(TEST_TREE): $(TESTDIR)/test_tree.c $(LIB)
+	$(CC) $(OYL_CFLAGS) $< $(LIB) -lm -o $@
+
 test: $(TEST)
 	@echo "─── Running scanner tests ───"
 	@./$(TEST)
@@ -211,7 +215,11 @@ test-dialect: $(TEST_DIALECT)
 	@echo "─── Running dialect tests ───"
 	@./$(TEST_DIALECT)
 
-test-all: test test-suite test-schema test-emitter test-merge test-resolve test-errors test-flow test-json test-dialect
+test-tree: $(TEST_TREE)
+	@echo "─── Running tree tests ───"
+	@./$(TEST_TREE)
+
+test-all: test test-suite test-schema test-emitter test-merge test-resolve test-errors test-flow test-json test-dialect test-tree
 
 bench: $(OBJDIR)/bench_scanner $(OBJDIR)/bench_parser
 	@./$(OBJDIR)/bench_scanner $(SIZE)

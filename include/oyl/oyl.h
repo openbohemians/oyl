@@ -32,7 +32,9 @@ extern "C" {
  * are only ever allocated by the library and handed out by const pointer,
  * so fields can be appended in later versions without breaking compiled
  * callers. Configuration and schemas are opaque, set through functions.
- * oyl_str and oyl_mark are plain value types and will not change. */
+ * oyl_str and oyl_mark are plain value types and will not change, nor
+ * will the layouts of a tree's arrays (oyl_node, oyl_node_props,
+ * oyl_pair), which programs and bindings index directly. */
 
 /* ── Version ─────────────────────────────────────────────── */
 
@@ -599,6 +601,148 @@ enum {
  *  OYL_ERR_PARSE, or OYL_ERR_LIMIT for too much aliasing or nesting. */
 OYL_API oyl_status oyl_parse_json(oyl_parser *p, const oyl_schema *schema,
                                   unsigned flags, oyl_str *json);
+
+/* ── Trees ───────────────────────────────────────────────── */
+
+/* A document in memory. Its nodes are in document order, the order of the
+ * parser's events, and a collection records how many nodes its subtree
+ * holds instead of links to its children:
+ *   - a collection's first child is the node after it
+ *   - the next sibling of node i is node i + span
+ *   - a mapping's children alternate: key, value, key, value
+ * A tree holds offsets, not pointers: text is in the input (from the
+ * document's start) or in the tree's pool, so a binding can copy the
+ * arrays whole or read them in place. A finished tree is read-only, and
+ * threads may share it. Aliases and << merge keys stay as written:
+ * lookups follow aliases and apply merges in the order of the document's
+ * dialect. */
+
+typedef struct oyl_tree oyl_tree;
+
+/** No node: what a lookup returns when it finds nothing. */
+#define OYL_NO_NODE UINT32_MAX
+
+/** What a node is. */
+typedef enum {
+    OYL_NODE_SCALAR = 1,
+    OYL_NODE_SEQUENCE,
+    OYL_NODE_MAPPING,
+    OYL_NODE_ALIAS,
+} oyl_node_kind;
+
+/** oyl_node flags */
+enum {
+    OYL_NODE_POOLED = 1 << 0,  /**< its text is in the pool, not the input */
+    OYL_NODE_KEY    = 1 << 1,  /**< it is a mapping key */
+    OYL_NODE_FLOW   = 1 << 2,  /**< a flow collection: [ ] or { } */
+};
+
+/** A node: 32 bytes, laid out for good, so that bindings can read arrays
+ *  of them directly. Positions are offsets in the input from the
+ *  document's start (oyl_tree_base), except text in the pool. */
+typedef struct {
+    uint32_t text;     /**< scalar: where its text starts; alias: its anchor's name */
+    uint32_t len;      /**< scalar, alias: the text's length; sequence: its items;
+                            mapping: its pairs */
+    uint32_t span;     /**< the nodes in its subtree, itself included */
+    uint32_t parent;   /**< how far back its parent is (0: the root) */
+    uint32_t props;    /**< its tag and anchor: an index into oyl_tree_props (0: none);
+                            an alias: the node it refers to */
+    uint32_t start;    /**< where it starts */
+    uint32_t end;      /**< where it ends */
+    uint8_t  kind;     /**< oyl_node_kind */
+    uint8_t  style;    /**< a scalar's oyl_scalar_style */
+    uint8_t  type;     /**< an untagged plain scalar's type, as the document's schema
+                            resolved it (0: the default); read it with oyl_node_tag()
+                            and oyl_node_value() */
+    uint8_t  flags;    /**< OYL_NODE_ flags */
+} oyl_node;
+
+/** A node's tag and anchor, both in the pool (length 0: none). The tag is
+ *  as written, its handle expanded. */
+typedef struct {
+    uint32_t tag, tag_len;
+    uint32_t anchor, anchor_len;
+} oyl_node_props;
+
+/** A mapping's key and its value. */
+typedef struct {
+    uint32_t key, value;
+} oyl_pair;
+
+/** Read the parser's next document into a tree. At the end of the stream,
+ *  returns OYL_OK with @p *tree NULL. Free the tree with oyl_tree_free();
+ *  the input must outlive it. The parser's settings apply (dialects,
+ *  limits, warnings); leave its merge and alias resolution off. Errors
+ *  (the parser's, an alias to an unknown anchor, a document over 4 GB) are
+ *  reported by oyl_parser_error() and oyl_parser_error_mark(). */
+OYL_API oyl_status oyl_parse_tree(oyl_parser *p, oyl_tree **tree);
+
+/** Free a tree. */
+OYL_API void oyl_tree_free(oyl_tree *t);
+
+/** The nodes in document order; the root is node 0. */
+OYL_API const oyl_node *oyl_tree_nodes(const oyl_tree *t, uint32_t *count);
+
+/** The tags and anchors that nodes' props refer to (entry 0 is unused). */
+OYL_API const oyl_node_props *oyl_tree_props(const oyl_tree *t, uint32_t *count);
+
+/** The pool: text the parser rewrote (escapes, folded lines), tags and
+ *  anchor names. */
+OYL_API oyl_str oyl_tree_pool(const oyl_tree *t);
+
+/** Where the document starts in the input: node positions count from here. */
+OYL_API size_t oyl_tree_base(const oyl_tree *t);
+
+/** The document's dialect, which typed its scalars. */
+OYL_API const oyl_dialect *oyl_tree_dialect(const oyl_tree *t);
+
+/** A scalar's text, or an alias's anchor name (empty for a collection). */
+OYL_API oyl_str oyl_node_text(const oyl_tree *t, uint32_t i);
+
+/** A node's tag: the one written, else the one its dialect resolves
+ *  (empty for an alias). */
+OYL_API oyl_str oyl_node_tag(const oyl_tree *t, uint32_t i);
+
+/** A node's anchor name, or empty. */
+OYL_API oyl_str oyl_node_anchor(const oyl_tree *t, uint32_t i);
+
+/** A scalar's value in the document's schema, through aliases. As
+ *  oyl_schema_value(): OYL_ERR_PARSE if its explicit tag rejects it,
+ *  OYL_ERR_INPUT if it isn't a scalar. */
+OYL_API oyl_status oyl_node_value(const oyl_tree *t, uint32_t i, oyl_value *v);
+
+/** Where a node starts: offset, line and column, as the parser's events
+ *  give them. */
+OYL_API oyl_mark oyl_node_mark(const oyl_tree *t, uint32_t i);
+
+/** The node an alias refers to, through any chain of aliases; any other
+ *  node is itself. An alias may refer to a collection that contains it. */
+OYL_API uint32_t oyl_node_target(const oyl_tree *t, uint32_t i);
+
+/** The value of @p key in mapping @p map (or an alias to one), or
+ *  OYL_NO_NODE. Keys are scalars matched by their text, plain or quoted;
+ *  a key written twice gives its last value; << merges apply in the
+ *  order of the document's dialect. A << whose value can't be merged (not
+ *  a mapping, an alias to one, or a sequence of those) is an ordinary key. */
+OYL_API uint32_t oyl_node_get(const oyl_tree *t, uint32_t map, oyl_str key);
+
+/** Item @p k of sequence @p seq (or an alias to one), or OYL_NO_NODE. */
+OYL_API uint32_t oyl_node_at(const oyl_tree *t, uint32_t seq, uint32_t k);
+
+/** Options for oyl_node_entries. */
+enum {
+    OYL_ENTRIES_STRICT = 1 << 0,   /**< a key written twice in a mapping is an error */
+};
+
+/** A mapping's pairs as a program sees it, by the rules of oyl_node_get():
+ *  merges applied and each key once, in the order keys first appear. The
+ *  array is allocated in @p a. Keys are matched by text, so collection
+ *  keys are all kept. Returns OYL_ERR_PARSE under OYL_ENTRIES_STRICT for a
+ *  repeated key, with @p *n its node; OYL_ERR_LIMIT for merges nested too
+ *  deep or too costly; OYL_ERR_INPUT if @p map isn't a mapping. */
+OYL_API oyl_status oyl_node_entries(const oyl_tree *t, uint32_t map, unsigned flags,
+                                    oyl_arena *a, const oyl_pair **pairs, size_t *n);
 
 /* ── Emitter ─────────────────────────────────────────────── */
 

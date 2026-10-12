@@ -464,6 +464,86 @@ timestamps as strings.
 
 ---
 
+## Trees
+
+```c
+oyl_tree *tree;
+oyl_status st = oyl_parse_tree(parser, &tree);   /* NULL at the end of the stream */
+...
+oyl_tree_free(tree);
+```
+
+`oyl_parse_tree(p, &tree)` reads the parser's next document into memory.
+The parser's settings apply (dialects, limits, warnings); leave its own
+merge and alias resolution off. Errors are reported like parse errors:
+the parser's own, `OYL_ERR_PARSE` for an alias to an unknown anchor, and
+`OYL_ERR_LIMIT` for a document over 4 GB or 4 billion nodes. The input
+must outlive the tree. A finished tree is read-only; threads may share it.
+
+### Nodes
+
+A tree's nodes are in document order (the order of the parser's events);
+the root is node 0. A collection stores the size of its subtree instead of
+links: its first child is the next node, the next sibling of node `i` is
+`i + span`, and a mapping's children alternate key, value. The layout is
+fixed, so programs and bindings can read the array directly.
+
+| Field | Meaning |
+|-------|---------|
+| `text` | scalar: where its text starts; alias: its anchor's name |
+| `len` | scalar, alias: the text's length; sequence: items; mapping: pairs |
+| `span` | nodes in its subtree, itself included |
+| `parent` | how far back its parent is (0 for the root) |
+| `props` | its tag and anchor, an index into `oyl_tree_props` (0: none); an alias: the node it refers to |
+| `start`, `end` | where it starts and ends; a block collection ends where its last child does |
+| `kind` | `OYL_NODE_SCALAR`, `_SEQUENCE`, `_MAPPING`, `_ALIAS` |
+| `style` | a scalar's `oyl_scalar_style` |
+| `type` | an untagged plain scalar's type in the document's schema; read it through `oyl_node_tag` and `oyl_node_value` |
+| `flags` | `OYL_NODE_POOLED` (text in the pool), `OYL_NODE_KEY` (a mapping key), `OYL_NODE_FLOW` |
+
+Positions are offsets from the document's start (`oyl_tree_base`), in the
+input, except text in the pool (`oyl_tree_pool`): what the parser rewrote
+(escapes, folded lines), tags and anchor names.
+
+### Functions
+
+| Function | Returns |
+|----------|---------|
+| `oyl_tree_nodes(t, &count)` | the node array |
+| `oyl_tree_props(t, &count)` | tags and anchors (`oyl_node_props`: pool offsets and lengths; entry 0 unused) |
+| `oyl_tree_pool(t)` | the pool |
+| `oyl_tree_base(t)` | where the document starts in the input |
+| `oyl_tree_dialect(t)` | the document's dialect, which typed its scalars |
+| `oyl_node_text(t, i)` | a scalar's text, or an alias's anchor name |
+| `oyl_node_tag(t, i)` | the tag written, else the one the dialect resolves |
+| `oyl_node_anchor(t, i)` | the anchor name, or empty |
+| `oyl_node_value(t, i, &v)` | a scalar's value, through aliases (as `oyl_schema_value`) |
+| `oyl_node_mark(t, i)` | where it starts: offset, line and column |
+| `oyl_node_target(t, i)` | the node an alias refers to; any other node is itself |
+| `oyl_node_get(t, map, key)` | the value of a key, or `OYL_NO_NODE` |
+| `oyl_node_at(t, seq, k)` | item `k`, or `OYL_NO_NODE` |
+| `oyl_node_entries(t, map, flags, arena, &pairs, &n)` | a mapping's pairs as a program sees them |
+
+`oyl_node_get` and `oyl_node_at` follow an alias given as the collection.
+Keys are scalars matched by their text, plain or quoted; a key written
+twice gives its last value. `<<` merges apply in the order of the
+document's dialect: in YAML's, keys written in the mapping win, then the
+merges in order; in go-yaml v2's, a merge overrides the keys before it.
+A `<<` whose value can't be merged (not a mapping, an alias to one, or a
+sequence of those, or the mapping itself) is an ordinary key.
+
+`oyl_node_entries` gives the same view as an array of `oyl_pair` (`key`,
+`value`) allocated in `arena`: merges applied, each key once, in the
+order keys first appear. Collection keys are all kept.
+`OYL_ENTRIES_STRICT` makes a key written twice an error (`OYL_ERR_PARSE`,
+with `*n` the repeated key's node). Merges nested more than 256 deep, or
+too costly to expand, give `OYL_ERR_LIMIT`.
+
+An alias may refer to a collection that contains it (YAML allows cycles):
+code that expands aliases has to check (`target <= i < target + span`).
+
+---
+
 ## Scanner
 
 Low-level tokenizer. Most users should use the parser instead.

@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.0 (unreleased)
+
+### Added
+
+- **Trees.** `oyl_parse_tree` reads a document into memory: one array of
+  32-byte nodes in document order, each collection with the size of its
+  subtree instead of links. Text stays in the input except what the
+  parser rewrote, which goes into a pool, so a tree holds offsets, not
+  pointers, and bindings can copy or read it whole. Plain scalars are
+  typed while building, by the document's dialect. `oyl_node_get`,
+  `oyl_node_at` and `oyl_node_entries` follow aliases and apply `<<`
+  merges in the dialect's order; `oyl_node_value`, `oyl_node_tag` and
+  `oyl_node_mark` read a node. Every valid YAML Test Suite case's tree
+  replays the parser's events exactly, and the fuzzer checks the same.
+
 ## 1.1.0 (unreleased)
 
 ### Added
