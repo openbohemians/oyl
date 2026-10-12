@@ -31,7 +31,9 @@ tree came first; YAMLToJSON needs no tree, so it moved ahead):
 5. **Tree API in C** (ideas.md), designed to cross into other languages
    cheaply: one call builds a flat node array in one arena, and a binding
    reads it with one copy or in place. **Design agreed 2026-10-12**
-   (tree-design.md); building on the `tree` branch.
+   (tree-design.md); building on the `tree` branch: steps 1-3 (trees,
+   JSON from trees, `oyl_emit_tree`) done 2026-10-12, then benchmarks
+   and the 1.2.0 release (ask first).
 6. **The full Go library** (decoding into Go values, on the tree).
 7. **Parallel parsing in the library** (performance.md). Kubernetes streams
    are many small documents that Go callers can already parse on separate
