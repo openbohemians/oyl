@@ -28,7 +28,7 @@ was split from that history. Older citations such as
 | [dialects-design.md](dialects-design.md) | Agreed: %YAML sets the standard schema version, %TAG !! the dialect; dialects, warnings |
 | [yamltojson-design.md](yamltojson-design.md) | oyl_parse_json: identical to sigs.k8s.io/yaml, results, libyaml syntax gaps (decision open) |
 | [goyaml2-oracle/](goyaml2-oracle/README.md) | Tools comparing the go-yaml v2 preset with go-yaml v2 itself |
-| [tree-design.md](tree-design.md) | Proposed: the tree API (32-byte nodes in document order, offsets, parallel-ready join), decisions open |
+| [tree-design.md](tree-design.md) | Agreed 2026-10-12: the tree API (32-byte nodes in document order, offsets, parallel-ready join); building on `tree` |
 | [roadmap.md](roadmap.md) | The agreed order after 1.0 (schemas, YAMLToJSON, Go, tree, parallel), and the Go plan |
 | [outreach.md](outreach.md) | GitHub Sponsors, and the plan to reach heavy YAML users |
 | [perdoc-fallback-prototype.patch](perdoc-fallback-prototype.patch) | Prototype of per-document eager fallback (release.md issue 3), against `d6b8afb` |

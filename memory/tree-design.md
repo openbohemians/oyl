@@ -1,8 +1,9 @@
 # Tree API: design for review
 
-*Updated 2026-10-11*
+*Updated 2026-10-12*
 
-**Proposed 2026-10-11, for the user's review; nothing built.** Roadmap
+**Agreed with the user 2026-10-12: all six decisions below as recommended.**
+Building on the `tree` branch (from `schema-parsers`), step 1 first. Roadmap
 step 5 (roadmap.md). It replaces the sketch in ideas.md. The user agreed
 on 2026-10-11 to build the tree before parallel parsing, designed so
 that parallel building can be added later without a rewrite. The
@@ -244,7 +245,7 @@ result must be byte for byte the tree one thread builds: an exact test.
 5. Release as 1.2.0 (additive). Then the Go library, then parallel
    building.
 
-## Decisions for the user
+## Decisions (the user agreed to all six, 2026-10-12)
 
 1. **Read-only first.** No editing API in the first version. Edits that
    keep formatting go through source spans (`start`, `end`), and an
