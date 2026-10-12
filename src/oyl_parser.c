@@ -4592,6 +4592,10 @@ static oyl_status parser_step(oyl_parser *p) {
 /* ── Public API ──────────────────────────────────────────── */
 
 oyl_parser *oyl_parser_new(const char *input, size_t len, oyl_arena *a) {
+    if (!input) {   /* as in oyl_scanner_new */
+        if (len) return NULL;
+        input = "";
+    }
     oyl_parser *p = calloc(1, sizeof(oyl_parser));
     if (!p) return NULL;
 

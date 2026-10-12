@@ -36,6 +36,8 @@ sanitize:
         printf '%s\n' "$out" | tail -2
         if [ "$hits" -gt 0 ]; then
             printf '  ⚠ %d sanitizer hit(s)\n' "$hits"
+            printf '%s\n' "$out" | grep -v 'AddressSanitizer failed to allocate' |
+                grep -E -A3 'AddressSanitizer|UndefinedBehaviorSanitizer|LeakSanitizer|runtime error' | head -40
             fail=1
         fi
     done

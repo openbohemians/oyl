@@ -208,7 +208,8 @@ OYL_API oyl_str     oyl_read_file(const char *path, oyl_arena *a);
 typedef struct oyl_scanner oyl_scanner;
 
 /** Create a scanner over the given input buffer. The buffer must remain
- *  valid for the scanner's lifetime and is not copied. */
+ *  valid for the scanner's lifetime and is not copied. NULL with @p len 0
+ *  is empty input. */
 OYL_API oyl_scanner *oyl_scanner_new(const char *input, size_t len, oyl_arena *a);
 
 /** Retrieve the next token. On OYL_OK, @p *tok points to a token owned by
@@ -428,8 +429,10 @@ OYL_API extern const oyl_str OYL_TAG_BINARY;      /**< tag:yaml.org,2002:binary 
 typedef struct oyl_parser oyl_parser;
 
 /** Create a parser over the given input buffer. The buffer must remain
- *  valid for the parser's lifetime and is not copied.
- *  @return Parser instance, or NULL on allocation failure. */
+ *  valid for the parser's lifetime and is not copied. NULL with @p len 0
+ *  is empty input.
+ *  @return Parser instance, or NULL on allocation failure (or NULL input
+ *          with a length). */
 OYL_API oyl_parser *oyl_parser_new(const char *input, size_t len, oyl_arena *a);
 
 /** Retrieve the next event. On OYL_OK, @p *evt points to an event owned

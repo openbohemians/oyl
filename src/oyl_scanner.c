@@ -1020,6 +1020,10 @@ static bool at_doc_indicator(oyl_scanner *s, char ch) {
 /* ── Main scan function ──────────────────────────────────── */
 
 oyl_scanner *oyl_scanner_new(const char *input, size_t len, oyl_arena *a) {
+    if (!input) {   /* no input is empty text, so offsets aren't taken from NULL */
+        if (len) return NULL;
+        input = "";
+    }
     oyl_scanner *s = (oyl_scanner *)malloc(sizeof(oyl_scanner));
     if (!s) return NULL;
 

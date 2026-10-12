@@ -15,6 +15,12 @@
   `oyl_node_mark` read a node. Every valid YAML Test Suite case's tree
   replays the parser's events exactly, and the fuzzer checks the same.
 
+### Fixed
+
+- `oyl_parser_new` and `oyl_scanner_new` read NULL input of length 0 as
+  empty text; before, the scanner took offsets from the NULL pointer. NULL
+  with a length gives NULL.
+
 ## 1.1.0 (unreleased)
 
 ### Added
