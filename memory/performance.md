@@ -117,9 +117,28 @@ Why the natural case (the Kubernetes stream) gains little:
   looking (0.26x)
 - delivery is serial, so even ideal inputs saturate near 3x
 The repeated rapidyaml files (many identical small documents) are the
-best case. A library version would need in-document splits within a
-stream, indentless sequences, a cheaper split search, and faster
-delivery.
+best case. A library version would need, all of them fixable (discussed
+with the user, 2026-10-11):
+- **in-document splits within a stream:** a prototype shortcut (one
+  splitter per input, chosen from the first MB; the in-document one
+  refuses document markers). A document start resets all context, so cut
+  at `---` near targets and inside big documents with the same rules,
+  bounded to the document.
+- **indentless sequences:** only the splitter lacks them (the parser
+  handles them). Rule: a `- ` line at column c under a key at column c
+  with an empty value is an entry of that key's sequence, which ends at
+  the next key at column c.
+- **a cheaper split search:** one forward pass with a stack of open
+  indentation levels instead of backward ancestor walks per candidate
+  (the largest CRD: ~6 ms of searching against 2 ms of parsing); the
+  structural index would make it nearly free.
+- **less serial delivery:** consumers that don't need events can skip
+  it: `oyl_parse_json` workers write their documents' JSON in parallel
+  and only join (Kubernetes documents convert independently), the tree
+  API builds its parts in parallel; the event API could hand out
+  pointers into worker buffers with smaller events.
+Estimate, not measured: big real streams maybe 4-6x on this machine
+(6 P-cores, 10 E-cores, memory bandwidth).
 
 ## YAMLToJSON toward 10x (noted 2026-10-11, not planned)
 
