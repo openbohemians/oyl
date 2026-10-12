@@ -1,8 +1,8 @@
 /*
  * test_tree.c — Tests for trees (oyl_parse_tree): structure, text, types
- * and values, aliases, lookups with merges, entries, marks and errors.
- * test_yaml_suite.c also checks that every valid suite case's tree
- * replays the parser's events.
+ * and values, aliases, lookups with merges, entries, marks, emitting and
+ * errors. test_yaml_suite.c also checks that every valid suite case's tree
+ * replays the parser's events and emits as they do.
  */
 
 #include "oyl/oyl.h"
@@ -441,6 +441,72 @@ static void test_documents(void) {
     ASSERT(oyl_tree_nodes(NULL, NULL) == NULL && oyl_tree_pool(NULL).len == 0, "no tree");
 }
 
+/* Every document of `yaml` emitted from its tree, in `buf` */
+static const char *emit_trees(const char *yaml, oyl_emit_style style, const oyl_schema *schema,
+                              char *buf, size_t cap) {
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_parser *p = oyl_parser_new(yaml, strlen(yaml), a);
+    if (schema) oyl_parser_set_schema(p, schema);
+    oyl_emitter *e = oyl_emitter_new(a);
+    oyl_emitter_set_style(e, style);
+    oyl_tree *t;
+    oyl_status st = oyl_emit_stream_start(e);
+    while (st == OYL_OK && (st = oyl_parse_tree(p, &t)) == OYL_OK && t) {
+        st = oyl_emit_tree(e, t);
+        oyl_tree_free(t);
+    }
+    if (st == OYL_OK) st = oyl_emit_stream_end(e);
+    oyl_str out = oyl_emitter_output(e);
+    if (st != OYL_OK) snprintf(buf, cap, "ERROR %d", st);
+    else snprintf(buf, cap, "%.*s", (int)out.len, out.data ? out.data : "");
+    oyl_emitter_free(e);
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+    return buf;
+}
+
+static void check_emit(const char *yaml, oyl_emit_style style, const oyl_schema *schema,
+                       const char *want, const char *msg) {
+    char got[512];
+    emit_trees(yaml, style, schema, got, sizeof got);
+    if (strcmp(got, want) != 0) printf("    got: \"%s\"\n", got);
+    ASSERT(strcmp(got, want) == 0, msg);
+}
+
+static void test_emit(void) {
+    printf("test_emit:\n");
+    const char *y = "a: 1\nb: [x, {y: z}]\nc:\n  - &k k\n  - *k\n  - \"q\"\n";
+    check_emit(y, OYL_EMIT_BLOCK, NULL, y, "as written");
+    check_emit(y, OYL_EMIT_FLOW, NULL, "{a: 1, b: [x, {y: z}], c: [&k k, *k, \"q\"]}\n", "in flow style");
+    check_emit("a:\n  b:\n    c: [d]\ne:\n  - f: []\n    g: {}\n", OYL_EMIT_BLOCK, NULL,
+               "a:\n  b:\n    c: [d]\ne:\n  - f: []\n    g: {}\n", "subtrees that end together");
+    check_emit("[[[]]]", OYL_EMIT_BLOCK, NULL, "[[[]]]\n", "collections that end at the end");
+    check_emit("base: &b {x: 1}\nm:\n  <<: *b\n  y: 2\n", OYL_EMIT_BLOCK, NULL,
+               "base: &b {x: 1}\nm:\n  <<: *b\n  y: 2\n", "merges as written");
+    check_emit("a\n--- b\n...\n---\n...\n", OYL_EMIT_BLOCK, NULL, "a\n---\nb\n...\n---\n...\n",
+               "document markers where they were written");
+    check_emit("", OYL_EMIT_BLOCK, NULL, "", "no documents");
+    /* a parser with a schema tags every node; a tree keeps the tags written */
+    check_emit("a: 1\nb: !!str 2\nc: !!int 3\n", OYL_EMIT_BLOCK, oyl_schema_core(),
+               "a: 1\nb: !!str \"2\"\nc: 3\n", "only the tags that change a type");
+
+    /* what a tree writes reads back as the same tree */
+    char once[512], twice[512];
+    const char *z = "--- &r\n? [a, b]\n: |\n  text\nk: !t {x: 'y'}\n...\n";
+    emit_trees(z, OYL_EMIT_BLOCK, NULL, once, sizeof once);
+    emit_trees(once, OYL_EMIT_BLOCK, NULL, twice, sizeof twice);
+    ASSERT(strcmp(once, twice) == 0, "emitting what was emitted changes nothing");
+
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_emitter *e = oyl_emitter_new(a);
+    doc x = load("a");
+    ASSERT(oyl_emit_tree(e, NULL) == OYL_ERR_INPUT && oyl_emit_tree(NULL, x.t) == OYL_ERR_INPUT,
+           "no tree, no emitter");
+    unload(&x);
+    oyl_emitter_free(e);
+    oyl_arena_free(a);
+}
+
 static void test_errors(void) {
     printf("test_errors:\n");
     doc x = load("a: [1, 2\n");
@@ -511,6 +577,7 @@ int main(void) {
     test_entries();
     test_marks();
     test_documents();
+    test_emit();
     test_errors();
     printf("\n--- Tree tests: %d / %d passed ---\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;

@@ -169,7 +169,7 @@ oyl_scanner_free(scanner);
 | `oyl_token` | Scanner output (`type`, `value`, `scalar_style`, `start`, `end`), owned by the scanner |
 | `oyl_event` | Parser output (`type`, `value`, `anchor`, `tag`, `scalar_style`, `flow`), owned by the parser |
 | `oyl_schema` | Opaque tag resolution schema (failsafe, JSON, core, or custom) |
-| `oyl_emitter` | Event-to-YAML emitter, configured with setters |
+| `oyl_emitter` | Writes YAML from events or trees, configured with setters |
 | `oyl_tree` | A document in memory: an array of `oyl_node` in document order |
 
 Tokens and events are only ever allocated by the library and read through
@@ -483,6 +483,9 @@ follows aliases and applies merges in the dialect's order, and
 `oyl_node_entries` gives a mapping's pairs with merges applied. A finished
 tree is read-only, so threads can share it. Each call reads one document;
 at the end of the stream the tree is NULL.
+
+`oyl_emit_tree` writes a tree back out as YAML, as emitting its
+document's events would.
 
 ## Architecture
 

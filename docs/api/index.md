@@ -250,6 +250,7 @@ written as `!!str`) or local tags (`!foo`).
 | `oyl_emit_alias(e, name)` | Alias (`*name`). |
 | `oyl_emit_mapping_start(e, anchor, tag, flow)` / `oyl_emit_mapping_end(e)` | Mapping; `flow` forces `{...}`. |
 | `oyl_emit_sequence_start(e, anchor, tag, flow)` / `oyl_emit_sequence_end(e)` | Sequence; `flow` forces `[...]`. |
+| `oyl_status oyl_emit_tree(e, tree)` | A tree as one document (see [Trees](#trees)). |
 | `oyl_str oyl_emitter_output(e)` | Get output buffer. |
 | `void oyl_emitter_free(e)` | Free emitter (not the arena). |
 
@@ -541,6 +542,26 @@ too costly to expand, give `OYL_ERR_LIMIT`.
 
 An alias may refer to a collection that contains it (YAML allows cycles):
 code that expands aliases has to check (`target <= i < target + span`).
+
+### Writing a tree
+
+`oyl_emit_tree(e, tree)` emits a tree as one document, between
+`oyl_emit_stream_start` and `oyl_emit_stream_end`:
+
+```c
+oyl_emit_stream_start(e);
+while (oyl_parse_tree(p, &tree) == OYL_OK && tree) {
+    oyl_emit_tree(e, tree);
+    oyl_tree_free(tree);
+}
+oyl_emit_stream_end(e);
+```
+
+It writes what emitting the document's events writes: the same styles,
+anchors, aliases and `<<` keys, and `---` and `...` where the document
+had them. The one difference is a parser with a schema
+(`oyl_parser_set_schema`): its events tag every node, and the tree keeps
+only the tags written, so `a: !!int 1` comes out as `a: 1`.
 
 ---
 

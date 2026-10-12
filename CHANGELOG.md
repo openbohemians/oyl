@@ -14,6 +14,10 @@
   merges in the dialect's order; `oyl_node_value`, `oyl_node_tag` and
   `oyl_node_mark` read a node. Every valid YAML Test Suite case's tree
   replays the parser's events exactly, and the fuzzer checks the same.
+- `oyl_emit_tree` writes a tree as one document, exactly as emitting its
+  events would (checked on the suite in every style, and by the fuzzer).
+  From a parser with a schema, whose events tag every node, the tree
+  writes only the tags in the input.
 
 ### Changed
 

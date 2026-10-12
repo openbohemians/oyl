@@ -809,6 +809,13 @@ OYL_API oyl_status   oyl_emit_sequence_start(oyl_emitter *e, oyl_str anchor,
                                              oyl_str tag, bool flow);
 OYL_API oyl_status   oyl_emit_sequence_end(oyl_emitter *e);
 
+/** Emit a tree as one document, with "---" and "..." where they were
+ *  written; call it between oyl_emit_stream_start() and
+ *  oyl_emit_stream_end(). The output is what the document's events give,
+ *  but for a parser with a schema (oyl_parser_set_schema()): its events
+ *  tag every node, and the tree keeps only the tags written. */
+OYL_API oyl_status   oyl_emit_tree(oyl_emitter *e, const oyl_tree *t);
+
 /** Retrieve the emitter's output buffer. Valid until the arena is freed. */
 OYL_API oyl_str      oyl_emitter_output(oyl_emitter *e);
 

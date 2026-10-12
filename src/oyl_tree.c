@@ -306,6 +306,7 @@ oyl_status oyl_parse_tree(oyl_parser *p, oyl_tree **tree) {
     t->dialect = oyl_parser_document_dialect(p);
     t->schema = oyl_dialect_schema(t->dialect);
     t->merge = oyl_dialect_merge(t->dialect);
+    t->implicit_start = e->implicit;
     t->plen = 1;
     builder b = { .p = p, .t = t, .parser_schema = oyl_parser_schema(p), .base = t->base,
                   .lo = (uintptr_t)t->input + t->base, .hi = (uintptr_t)t->input + t->input_len,
@@ -317,6 +318,7 @@ oyl_status oyl_parse_tree(oyl_parser *p, oyl_tree **tree) {
     t->props[0] = (oyl_node_props){ 0, 0, 0, 0 };
     while ((st = oyl_parse_next(p, &e)) == OYL_OK && e->type != OYL_EVT_DOC_END)
         if (!add_event(&b, e)) break;
+    if (st == OYL_OK) t->implicit_end = e->implicit;
     if (st == OYL_OK && b.status == OYL_OK && t->len == 0) {
         /* no node: the document is an empty scalar */
         oyl_event empty = { .type = OYL_EVT_SCALAR, .start = t->doc_mark, .end = t->doc_mark };
@@ -738,5 +740,56 @@ oyl_status oyl_node_entries(const oyl_tree *t, uint32_t map, unsigned flags, oyl
     }
     free(c.e);
     free(c.tmp);
+    return st;
+}
+
+/* ── Writing ─────────────────────────────────────────────── */
+
+/* The event that read node i */
+static oyl_event node_event(const oyl_tree *t, uint32_t i) {
+    const oyl_node *n = &t->nodes[i];
+    oyl_event e = { .type = n->kind == OYL_NODE_SCALAR   ? OYL_EVT_SCALAR
+                          : n->kind == OYL_NODE_ALIAS    ? OYL_EVT_ALIAS
+                          : n->kind == OYL_NODE_SEQUENCE ? OYL_EVT_SEQUENCE_START
+                                                         : OYL_EVT_MAPPING_START };
+    if (n->kind == OYL_NODE_SCALAR || n->kind == OYL_NODE_ALIAS) {
+        e.value = oyl_tree_text(t, n);
+        e.scalar_style = (oyl_scalar_style)n->style;
+    }
+    e.flow = (n->flags & OYL_NODE_FLOW) != 0;
+    if (n->kind != OYL_NODE_ALIAS && n->props) {
+        const oyl_node_props *pr = &t->props[n->props];
+        e.tag = pooled(t, pr->tag, pr->tag_len);
+        e.anchor = pooled(t, pr->anchor, pr->anchor_len);
+    }
+    return e;
+}
+
+/* End the collections from node j up through its ancestors, stopping at
+ * `stop` (still open; NONE ends them all) */
+static oyl_status end_up_to(oyl_emitter *e, const oyl_tree *t, uint32_t j, uint32_t stop) {
+    const oyl_node *n = t->nodes;
+    oyl_status st = OYL_OK;
+    while (j != stop && st == OYL_OK) {
+        if (n[j].kind == OYL_NODE_SEQUENCE) st = oyl_emit_sequence_end(e);
+        else if (n[j].kind == OYL_NODE_MAPPING) st = oyl_emit_mapping_end(e);
+        if (j == 0) break;
+        j -= n[j].parent;
+    }
+    return st;
+}
+
+oyl_status oyl_emit_tree(oyl_emitter *e, const oyl_tree *t) {
+    if (!e || !t) return OYL_ERR_INPUT;
+    oyl_status st = oyl_emit_document_start(e, t->implicit_start);
+    for (uint32_t i = 0; i < t->len && st == OYL_OK; i++) {
+        /* node i's parent is node i-1 or one of its ancestors: the
+         * collections between them have ended */
+        if (i) st = end_up_to(e, t, i - 1, i - t->nodes[i].parent);
+        oyl_event ev = node_event(t, i);
+        if (st == OYL_OK) st = oyl_emit(e, &ev);
+    }
+    if (st == OYL_OK) st = end_up_to(e, t, t->len - 1, NONE);
+    if (st == OYL_OK) st = oyl_emit_document_end(e, t->implicit_end);
     return st;
 }

@@ -127,6 +127,7 @@ struct oyl_tree {
     const oyl_dialect *dialect;
     const oyl_schema  *schema;
     oyl_merge_order    merge;
+    bool               implicit_start, implicit_end;   /* no "---", no "..." */
 };
 
 /* A scalar's or alias's text */

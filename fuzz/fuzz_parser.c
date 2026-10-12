@@ -268,9 +268,20 @@ static bool same_value(oyl_value a, oyl_value b) {
     }
 }
 
-/* One tree against the events of its document, read from `pe` */
-static void check_one_tree(oyl_parser *pe, const oyl_tree *t, const char *yaml, size_t len,
-                           bool lines, oyl_arena *a) {
+/* The next event from `p`, which must come; emitted to `em`, with the
+ * first failure kept in `*st` */
+static const oyl_event *next_event(oyl_parser *p, oyl_emitter *em, oyl_status *st) {
+    const oyl_event *e;
+    if (oyl_parse_next(p, &e) != OYL_OK) __builtin_trap();
+    oyl_status s = oyl_emit(em, e);
+    if (*st == OYL_OK) *st = s;
+    return e;
+}
+
+/* One tree against the events of its document, read from `pe` and
+ * emitted to `ee` */
+static void check_one_tree(oyl_parser *pe, oyl_emitter *ee, oyl_status *est, const oyl_tree *t,
+                           const char *yaml, size_t len, bool lines, oyl_arena *a) {
     uint32_t count;
     const oyl_node *n = oyl_tree_nodes(t, &count);
     size_t base = oyl_tree_base(t);
@@ -280,7 +291,7 @@ static void check_one_tree(oyl_parser *pe, const oyl_tree *t, const char *yaml, 
     for (uint32_t i = 0; i <= count; i++) {
         while (sp && stack[sp - 1] + n[stack[sp - 1]].span == i) {
             uint32_t c = stack[--sp];
-            if (oyl_parse_next(pe, &e) != OYL_OK) __builtin_trap();
+            e = next_event(pe, ee, est);
             if (e->type != (n[c].kind == OYL_NODE_MAPPING ? OYL_EVT_MAPPING_END : OYL_EVT_SEQUENCE_END))
                 __builtin_trap();   /* a subtree's size is wrong */
             if (n[c].len != (n[c].kind == OYL_NODE_MAPPING ? kids[sp] / 2 : kids[sp])) __builtin_trap();
@@ -289,7 +300,7 @@ static void check_one_tree(oyl_parser *pe, const oyl_tree *t, const char *yaml, 
                 oyl_node_at(t, c, n[c].len) != OYL_NO_NODE) __builtin_trap();
         }
         if (i == count) break;
-        if (oyl_parse_next(pe, &e) != OYL_OK) __builtin_trap();
+        e = next_event(pe, ee, est);
         const oyl_node *x = &n[i];
         oyl_event_type want = x->kind == OYL_NODE_SCALAR ? OYL_EVT_SCALAR
                             : x->kind == OYL_NODE_ALIAS ? OYL_EVT_ALIAS
@@ -330,7 +341,7 @@ static void check_one_tree(oyl_parser *pe, const oyl_tree *t, const char *yaml, 
         kids[sp] = 0;
         stack[sp++] = i;
     }
-    if (oyl_parse_next(pe, &e) != OYL_OK || e->type != OYL_EVT_DOC_END) __builtin_trap();
+    if (next_event(pe, ee, est)->type != OYL_EVT_DOC_END) __builtin_trap();
     /* lookups agree with entries (for the first mappings: entries cost) */
     int checked = 0;
     for (uint32_t i = 0; i < count && checked < 64; i++) {
@@ -351,12 +362,18 @@ static void check_one_tree(oyl_parser *pe, const oyl_tree *t, const char *yaml, 
     (void)yaml; (void)len;
 }
 
-/* Trees for every document, against the events */
-static void check_tree(const char *yaml, size_t len, bool dialect) {
+/* Trees for every document, against the events; emitted in `style`,
+ * they must write what the events write */
+static void check_tree(const char *yaml, size_t len, bool dialect, oyl_emit_style style) {
     oyl_arena *ae = oyl_arena_new(4096), *at = oyl_arena_new(4096), *aw = oyl_arena_new(4096);
     oyl_parser *pe = ae ? oyl_parser_new(yaml, len, ae) : NULL;
     oyl_parser *pt = at ? oyl_parser_new(yaml, len, at) : NULL;
-    if (pe && pt && aw) {
+    oyl_emitter *ee = ae ? oyl_emitter_new(ae) : NULL, *et = at ? oyl_emitter_new(at) : NULL;
+    if (pe && pt && aw && ee && et) {
+        oyl_emitter_set_style(ee, style);
+        oyl_emitter_set_style(et, style);
+        oyl_status est = OYL_OK, tst = oyl_emit_stream_start(et);
+        bool done = false;
         oyl_parser_set_max_events(pe, MAX_EVENTS);
         oyl_parser_set_max_events(pt, MAX_EVENTS);
         if (dialect) {
@@ -367,7 +384,10 @@ static void check_tree(const char *yaml, size_t len, bool dialect) {
         for (;;) {
             const oyl_event *e;
             oyl_status se;
-            do se = oyl_parse_next(pe, &e); while (se == OYL_OK && e->type == OYL_EVT_STREAM_START);
+            do {
+                se = oyl_parse_next(pe, &e);
+                if (se == OYL_OK && est == OYL_OK) est = oyl_emit(ee, e);
+            } while (se == OYL_OK && e->type == OYL_EVT_STREAM_START);
             oyl_tree *t = NULL;
             oyl_status st = oyl_parse_tree(pt, &t);
             if (st != OYL_OK) {
@@ -383,13 +403,23 @@ static void check_tree(const char *yaml, size_t len, bool dialect) {
             if (se != OYL_OK) __builtin_trap();   /* events failed, the tree didn't */
             if (e->type == OYL_EVT_STREAM_END || e->type == OYL_EVT_NONE) {
                 if (t) __builtin_trap();
+                done = true;
                 break;
             }
             if (!t || e->type != OYL_EVT_DOC_START) __builtin_trap();
-            check_one_tree(pe, t, yaml, len, lines, aw);
+            check_one_tree(pe, ee, &est, t, yaml, len, lines, aw);
+            if (tst == OYL_OK) tst = oyl_emit_tree(et, t);
             oyl_tree_free(t);
         }
+        if (tst == OYL_OK) tst = oyl_emit_stream_end(et);
+        if (done && est == OYL_OK) {
+            if (tst != OYL_OK && tst != OYL_ERR_MEMORY) __builtin_trap();   /* the tree didn't emit */
+            oyl_str x = oyl_emitter_output(ee), y = oyl_emitter_output(et);
+            if (tst == OYL_OK && !same_str(x, y)) __builtin_trap();   /* it wrote something else */
+        }
     }
+    if (ee) oyl_emitter_free(ee);
+    if (et) oyl_emitter_free(et);
     if (pe) oyl_parser_free(pe);
     if (pt) oyl_parser_free(pt);
     oyl_arena_free(ae);
@@ -443,7 +473,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     }
 
     check_json(buf, size);
-    check_tree(buf, size, flags & 32);
+    int style = (flags >> 3) & 3;
+    check_tree(buf, size, flags & 32, style == 1 ? OYL_EMIT_FLOW
+                                    : style == 2 ? OYL_EMIT_MINIMAL : OYL_EMIT_BLOCK);
 
     free(before);
     free(after);

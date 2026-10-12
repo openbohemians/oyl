@@ -959,6 +959,42 @@ done:
     return ok;
 }
 
+/* ── Trees emit as their events do ───────────────────────── */
+
+static int temit_passed = 0, temit_failed = 0;
+
+/* Emitting each document's tree must write exactly what emitting the
+ * parser's events writes */
+static bool tree_emits(const test_case *tc, oyl_emit_style style, bool verbose) {
+    static char events[65536];
+    size_t len = strlen(tc->yaml);
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_emitter *ee = oyl_emitter_new(a), *et = oyl_emitter_new(a);
+    oyl_emitter_set_style(ee, style);
+    oyl_emitter_set_style(et, style);
+    bool ok = canon_parse(tc->yaml, len, false, ee, events, sizeof events);
+    oyl_parser *p = oyl_parser_new(tc->yaml, len, a);
+    oyl_tree *t;
+    oyl_status st = oyl_emit_stream_start(et);
+    while (ok && st == OYL_OK && (st = oyl_parse_tree(p, &t)) == OYL_OK && t) {
+        st = oyl_emit_tree(et, t);
+        oyl_tree_free(t);
+    }
+    if (st == OYL_OK) st = oyl_emit_stream_end(et);
+    oyl_str x = oyl_emitter_output(ee), y = oyl_emitter_output(et);
+    ok = ok && st == OYL_OK && str_eq(x, y);
+    if (!ok && verbose) {
+        printf("    tree emit (%s): %s\n", style_name(style), st == OYL_OK ? "differs" : oyl_status_str(st));
+        printf("      events: %.*s\n", (int)(x.len > 300 ? 300 : x.len), x.data ? x.data : "");
+        printf("      tree:   %.*s\n", (int)(y.len > 300 ? 300 : y.len), y.data ? y.data : "");
+    }
+    oyl_parser_free(p);
+    oyl_emitter_free(ee);
+    oyl_emitter_free(et);
+    oyl_arena_free(a);
+    return ok;
+}
+
 /* ── Main ────────────────────────────────────────────────── */
 
 int main(int argc, char **argv) {
@@ -1076,6 +1112,16 @@ int main(int argc, char **argv) {
                     trees_failed++;
                     printf("  %-8s tree " RED "DIFFERS" RESET "  %s\n", label, tc->name);
                 }
+                const oyl_emit_style styles[] = { OYL_EMIT_BLOCK, OYL_EMIT_FLOW, OYL_EMIT_MINIMAL };
+                for (int si = 0; si < 3; si++) {
+                    if (tree_emits(tc, styles[si], verbose)) {
+                        temit_passed++;
+                    } else {
+                        temit_failed++;
+                        printf("  %-8s tree emit %-8s " RED "DIFFERS" RESET "  %s\n", label,
+                               style_name(styles[si]), tc->name);
+                    }
+                }
             }
 
             switch (result) {
@@ -1118,8 +1164,11 @@ int main(int argc, char **argv) {
            RED "Fail: %d" RESET, paths_passed, paths_failed);
     printf("\n  Trees replay the events: " GREEN "Pass: %d  " RESET RED "Fail: %d" RESET,
            trees_passed, trees_failed);
+    printf("\n  Trees emit as their events do: " GREEN "Pass: %d  " RESET RED "Fail: %d" RESET,
+           temit_passed, temit_failed);
     printf("\n\n");
 
     return (failed > 0 || errors > 0 || xpassed > 0 ||
-            rt_failed > 0 || rt_xpassed > 0 || paths_failed > 0 || trees_failed > 0) ? 1 : 0;
+            rt_failed > 0 || rt_xpassed > 0 || paths_failed > 0 || trees_failed > 0 ||
+            temit_failed > 0) ? 1 : 0;
 }
