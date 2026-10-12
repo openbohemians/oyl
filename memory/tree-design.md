@@ -7,7 +7,8 @@
 `632b7f2`, with fixes `3a04c83` and `5e56930` that CI's clang 18 found
 (NULL plus zero, which local clang 22 doesn't report in C); CI green.
 See "Step 1 as built" at the end. **Step 2 built 2026-10-12** (`480bf4d`,
-CI green): see "Step 2 as built". **Next:** step 3, `oyl_emit_tree`. Roadmap
+CI green): see "Step 2 as built". **Step 3 built 2026-10-12** (`d79fde8`):
+see "Step 3 as built". **Next:** step 4, the benchmarks. Roadmap
 step 5 (roadmap.md). It replaces the sketch in ideas.md. The user agreed
 on 2026-10-11 to build the tree before parallel parsing, designed so
 that parallel building can be added later without a rewrite. The
@@ -338,3 +339,33 @@ result must be byte for byte the tree one thread builds: an exact test.
   Now JSON 362 against 365 MB/s (parity), trees 508 MB/s (was 470).
 - **oyl.go:** its vendored sources need a wrapper .c for `oyl_tree.c` (one
   per source file) when it vendors a release with trees.
+
+## Step 3 as built (2026-10-12, `d79fde8`)
+
+- `oyl_emit_tree(e, t)` emits one document (`---`/`...` as written; the
+  tree now keeps `implicit_start`/`implicit_end`, internal only) between
+  the caller's stream start and end. A walk in node order builds each
+  node's event for `oyl_emit`; collections end by walking parent
+  distances from node i-1 up to node i's parent, so no stack.
+- **Output = emitting the parser's events**, byte for byte: suite check
+  "Trees emit as their events do" (308 cases × 3 styles), and
+  `check_tree` in the fuzzer emits both ways per input (corpus replayed,
+  1.8M new runs). Breaking the flow flag or the `...` marker on purpose
+  failed 64 and 48 suite checks, and trapped the fuzzer.
+- **By design, one difference:** a parser with a schema tags every node
+  in its events (`!!map`, `!!str a: !!int 1`); a tree keeps only tags
+  that differ from the schema's resolution, so it writes `a: 1`.
+- **Speed (866 manifests, CPU 3):** a built tree emits at ~600 MB/s;
+  the emitter fed recorded events ~640. The walk adds ~83 instructions
+  per event over the emitter's ~738 (own PMU count). Parse to tree +
+  emit 267 MB/s against parse + emit events 317 (the tree build is
+  extra work: stream events to reformat).
+- **Open, for step 4:** the emitter is Oyl's slowest part (~738
+  instructions per event: each scalar is scanned several times by
+  `needs_escape`/`needs_quoting`/`has_break`, `buf_puts` rescans for
+  newlines, `in_any_flow` walks the stack). Not yet compared with other
+  emitters. Also seen: a block sequence inside a block sequence is
+  written `- ` + newline, leaving a trailing space (valid YAML).
+- **Not built:** the sketch's public `oyl_tree_json` (JSON from a tree
+  you hold); `oyl_parse_json` does it internally. Add it when the Go
+  library or parallel JSON needs it.
