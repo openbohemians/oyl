@@ -3,7 +3,8 @@
 *Updated 2026-10-12*
 
 **Agreed with the user 2026-10-12: all six decisions below as recommended.**
-Building on the `tree` branch (from `schema-parsers`), step 1 first. Roadmap
+**Step 1 built 2026-10-12** on the `tree` branch (from `schema-parsers`),
+`632b7f2`; see "Step 1 as built" at the end. Roadmap
 step 5 (roadmap.md). It replaces the sketch in ideas.md. The user agreed
 on 2026-10-11 to build the tree before parallel parsing, designed so
 that parallel building can be added later without a rewrite. The
@@ -262,3 +263,46 @@ result must be byte for byte the tree one thread builds: an exact test.
    Recommended.
 6. **Names:** `oyl_tree`, `oyl_node` and `oyl_parse_tree`. libyaml calls
    it a document (`yaml_document_t`).
+
+## Step 1 as built (2026-10-12, `632b7f2`)
+
+- `src/oyl_tree.c` builds from `oyl_parse_next`; API as sketched, plus
+  `oyl_tree_props` and `oyl_tree_base` (bindings need both), with
+  `OYL_ENTRIES_STRICT` for entries. Tested by `test/test_tree.c` (109
+  checks); every valid suite case's tree replays the parser's events,
+  marks included (308 of 308); the fuzzer's `check_tree` compares trees
+  with events, typed values with `oyl_schema_value`, and get with
+  entries. Sanitizers clean; 54,260 corpus inputs and 838,617 new runs
+  (5 minutes, one process) found nothing.
+- Choices made while building (not yet shown to the user):
+  - **Keys match by text** (plain or quoted, through aliases), in get and
+    entries alike, as go-yaml v3 decodes into `map[string]`. Collection
+    keys are all kept in entries. The JSON writer keeps its own key rules.
+  - **A `<<` that can't merge is an ordinary key** (not a mapping, an
+    alias to one, or a sequence of those): valid YAML 1.2 with a `<<` key
+    still builds, and lookups never fail. Also not mergeable: the mapping
+    itself or one containing it. Since aliases refer backwards, that rule
+    alone keeps merges acyclic (each merge's source ends before the
+    mapping merging it), so results don't depend on the path taken.
+  - Limits: merges nested over 256 deep, and a work budget (16 per node
+    plus 100,000): get returns no node, entries `OYL_ERR_LIMIT`. get
+    memoizes sources, so doubling merge chains stay linear.
+  - A parser with a schema tags every node; a tag equal to what it would
+    resolve isn't kept (an explicit `!!int 12` then looks implicit).
+  - An alias to an unknown anchor fails the tree (`OYL_ERR_PARSE`), as
+    YAML requires; events don't check it.
+  - Block collections end at their last child's end (their end events
+    come at the next token, past comments); flow ones past `]`/`}`.
+  - Line and column: a mark kept every 64 nodes, lines counted from there
+    (`\n`, `\r\n`, lone `\r`). The fuzzer compares lines only for input
+    without `\r`: the scanner counts a lone `\r` as a column in places.
+- **Speed (one core, the 866 Kubernetes documents):** events 654 MB/s,
+  trees 470, JSON 377. Typing scalars while building is ~13% of tree
+  time (the go-yaml v2 schema has many rules); pool and marks ~0. The
+  remaining ~15 ns per node is spread over the per-node work; profile in
+  step 4. Memory 1.10 MB per MB of YAML: nodes 0.85, pool 0.25 (CRD
+  descriptions are multi-line plain scalars, folded into new text).
+- **Open for step 6 (Go):** typed values without cgo calls. The `type`
+  byte is a rule number, opaque outside C. Likely an optional side array
+  of 8-byte values per node, filled while building; the node layout
+  doesn't change.
