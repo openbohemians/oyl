@@ -4,7 +4,9 @@
 
 **Agreed with the user 2026-10-12: all six decisions below as recommended.**
 **Step 1 built 2026-10-12** on the `tree` branch (from `schema-parsers`),
-`632b7f2`; see "Step 1 as built" at the end. Roadmap
+`632b7f2`, with fixes `3a04c83` and `5e56930` that CI's clang 18 found
+(NULL plus zero, which local clang 22 doesn't report in C); CI green.
+See "Step 1 as built" at the end. **Next:** step 2, JSON on the tree. Roadmap
 step 5 (roadmap.md). It replaces the sketch in ideas.md. The user agreed
 on 2026-10-11 to build the tree before parallel parsing, designed so
 that parallel building can be added later without a rewrite. The
