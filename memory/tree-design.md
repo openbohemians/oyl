@@ -368,4 +368,4 @@ result must be byte for byte the tree one thread builds: an exact test.
   written `- ` + newline, leaving a trailing space (valid YAML).
 - **Not built:** the sketch's public `oyl_tree_json` (JSON from a tree
   you hold); `oyl_parse_json` does it internally. Add it when the Go
-  library or parallel JSON needs it.
+  library or parallel JSON needs it. Tracked in todo.md.
