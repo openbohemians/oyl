@@ -17,6 +17,16 @@ Larger features go in ideas.md, and the order of work in roadmap.md.
   inside a block sequence is written `- ` + newline. That's valid YAML,
   but it leaves trailing whitespace. Seen 2026-10-12 while testing
   `oyl_emit_tree`. Possibly write the compact form instead (`- - x`).
+- **Trimming finished trees** (**Open; tried and not adopted
+  2026-10-13**). Reallocating a finished tree's arrays to their contents
+  cut the memory a tree holds by 30-48% (block.yaml 8.1 → 5.7 MB per MB
+  of YAML, the largest CRD 1.53 → 1.06), but slowed repeated parsing of
+  large documents by 4-14% (the CRD 500 → 447 MB/s): glibc's heap is
+  reused less well by the next parse (with a fixed mmap threshold, trim
+  and no trim run alike). No cost on the Kubernetes manifests (small
+  documents). Not adopted, because Oyl already holds 2-10x less than
+  rapidyaml, libyaml and libfyaml. If programs that hold many trees
+  want it, make it opt-in rather than the default.
 - **oyl.go: a wrapper .c for `oyl_tree.c`** (**Open**). oyl.go needs one
   wrapper per vendored source file. Add it when oyl.go vendors a release
   with trees (1.2.0).
