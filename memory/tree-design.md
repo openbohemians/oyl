@@ -8,7 +8,8 @@
 (NULL plus zero, which local clang 22 doesn't report in C); CI green.
 See "Step 1 as built" at the end. **Step 2 built 2026-10-12** (`480bf4d`,
 CI green): see "Step 2 as built". **Step 3 built 2026-10-12** (`d79fde8`):
-see "Step 3 as built". **Next:** step 4, the benchmarks. Roadmap
+see "Step 3 as built". **Step 4 in progress** (harness `1cd2e15`, one
+pass measured; see "Step 4 so far"): resume there. Roadmap
 step 5 (roadmap.md). It replaces the sketch in ideas.md. The user agreed
 on 2026-10-11 to build the tree before parallel parsing, designed so
 that parallel building can be added later without a rewrite. The
@@ -369,3 +370,57 @@ result must be byte for byte the tree one thread builds: an exact test.
 - **Not built:** the sketch's public `oyl_tree_json` (JSON from a tree
   you hold); `oyl_parse_json` does it internally. Add it when the Go
   library or parallel JSON needs it. Tracked in todo.md.
+
+## Step 4 so far (2026-10-13, harness `1cd2e15`)
+
+**Paused 2026-10-13 by the user** (machine short of memory, swap nearly
+full): passes 2 and 3 were stopped. Resume in the morning, one run at a
+time, only when the user says resources are free.
+
+- `make bench-compare-tree` (`MODE=tree bench/compare/run.sh`): Oyl,
+  libyaml 0.2.5, libfyaml 0.9.6 (duplicate keys allowed), rapidyaml
+  0.16.0 fresh and with buffers reused; then memory held / peak per MB
+  of input (`CMP_MEM`). Run as
+  `MODE=tree RYML_SRC=<rapidyaml-0.16.0> CASES=<dir> bench/compare/run.sh 10 11`.
+- **Inputs** (CASES): from rapidyaml's source release `bm/cases/`
+  (travis.yml, appveyor.yml, compile_commands.json, the five
+  `scalar_*_multiline.yml`), plus the Kubernetes manifests (the 866
+  documents in one file, 7.3 MB) and the largest CRD (1.4 MB). The
+  release archive and both files are in old session scratchpads, which a
+  reboot wipes: re-download rapidyaml-0.16.0 and rebuild the two files
+  from the k8s corpus if they're gone.
+- **Pass 1 of 3** (10 MB, median of 11, CPU 3), preliminary:
+
+  | Input | Oyl | libyaml | libfyaml | ryml | ryml reuse |
+  |---|---:|---:|---:|---:|---:|
+  | block | 98 | 39 | 32 | 65 | 166 |
+  | mixed | 131 | 50 | 40 | 72 | 192 |
+  | JSON | 126 | 42 | 34 | 80 | 196 |
+  | config | 228 | 82 | 63 | 120 | 277 |
+  | appveyor | 331 | 88 | 87 | 150 | 299 |
+  | compile_commands | 1723 | 179 | 248 | 802 | 1093 |
+  | k8s manifests | 496 | fails | 133 | fails | fails |
+  | largest CRD | 503 | 159 | 146 | 310 | 392 |
+  | literal | 2613 | 255 | 266 | 864 | 965 |
+  | folded | 1766 | 255 | 264 | 784 | 885 |
+  | dquot | 2509 | 200 | 301 | 337 | 358 |
+  | squot | 2307 | 203 | 302 | 351 | 362 |
+  | plain multiline | 813 | 189 | 385 | 289 | 299 |
+  | travis | 389 | 101 | 108 | 143 | 294 |
+
+  libyaml fails the manifests at `...` followed by a document without
+  `---` (YAML 1.1 forbids it); rapidyaml at `config: {{config_data}}`
+  (a Helm template: a mapping as a key, which its trees can't hold).
+- **Memory held / peak per MB:** Oyl least on structured input (block
+  6.5 against ryml 14.4, libyaml 33, libfyaml 74; CRD 1.5 / 3.4 / 7.6 /
+  15; config about equal with ryml, 7.1 / 7.2). On long scalars Oyl holds
+  more (1.1-2.0 against ryml 0.22, libfyaml 0.96): it copies rewritten
+  text into its pool, while ryml rewrites the input in place and libfyaml
+  decodes on access. Oyl's peak there is up to 3.4: the parser's arena
+  and the pool hold the text at once (a possible improvement).
+- Trimming finished trees: measured and not adopted (todo.md).
+- **Left:** passes 2 and 3 (agree within ~6%?), then the README "Trees"
+  table with methodology; the emitter comparison (tools written in the
+  scratchpad `emitcmp/`: oyl_emit_tree, libyaml dump, libfyaml
+  emit-to-string, ryml emitrs_yaml; trees built untimed); then the
+  emitter's own cost (~738 instructions per event).

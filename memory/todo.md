@@ -24,9 +24,10 @@ Larger features go in ideas.md, and the order of work in roadmap.md.
   large documents by 4-14% (the CRD 500 → 447 MB/s): glibc's heap is
   reused less well by the next parse (with a fixed mmap threshold, trim
   and no trim run alike). No cost on the Kubernetes manifests (small
-  documents). Not adopted, because Oyl already holds 2-10x less than
-  rapidyaml, libyaml and libfyaml. If programs that hold many trees
-  want it, make it opt-in rather than the default.
+  documents). Not adopted: on structured input Oyl already holds 2-11x
+  less than rapidyaml, libyaml and libfyaml (on long scalars rapidyaml
+  and libfyaml hold less; tree-design.md, "Step 4 so far"). If programs
+  that hold many trees want it, make it opt-in rather than the default.
 - **oyl.go: a wrapper .c for `oyl_tree.c`** (**Open**). oyl.go needs one
   wrapper per vendored source file. Add it when oyl.go vendors a release
   with trees (1.2.0).
