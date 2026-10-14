@@ -1,7 +1,6 @@
 # Settings for AI agents, and tools, working in this project.
 # See the dot-ai skill's references/config.md.
-arcana:
-  handle: "@oyl"    # this project's agent on the Arcana bus
-  description: >    # what that agent does, shown to other agents
-    The agent for Oyl, the optimized YAML library: a YAML 1.2 parser and
-    emitter in C11, and its Crystal and Rust bindings, oyl.cr and oyl.rs.
+handle: oyl       # this project's handle: other agents write to @oyl
+description: >    # what this project's agent does, shown to other agents
+  The agent for Oyl, the optimized YAML library: a YAML 1.2 parser and
+  emitter in C11, and its Crystal and Rust bindings, oyl.cr and oyl.rs.
