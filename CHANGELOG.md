@@ -109,6 +109,11 @@
   blanks before its `:` and a quoted value ending in a comma
   (`['' :',']: v`), was a key to the eager parser and a value to the
   incremental one, which then failed. Found by fuzzing.
+- A comment ended by a lone carriage return (`\r`, a line break in YAML)
+  inside a flow collection made the incremental parser take the rest of
+  the input for comment, so a flow collection used as a key after it
+  (`[a #x\r, [b]: c]`) was an error; the eager parser read it correctly.
+  Found by fuzzing.
 
 ### Documentation
 

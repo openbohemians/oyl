@@ -187,6 +187,13 @@ static void test_flow_keys(void) {
     check("[[x] :'a,']: v\n", "{ [ { [ x ] a, } ] v }");
     check("{'a' :'b,'}: v\n", "{ { a b, } v }");
     check("['a'\t:'b,']: v\n", "{ [ { a b, } ] v }");
+    /* a comment ends at a lone \r as at \n: run on to the next \n, the
+     * lookahead would take what follows for comment, the collections
+     * there for unclosed, and so not keys */
+    check("[a #x\r, [b]: c]", "[ a { [ b ] c } ]");
+    check("[a #x\r\n, [b]: c]", "[ a { [ b ] c } ]");
+    check("{a: [b #x\r, [c]: d]}", "{ a [ b { [ c ] d } ] }");
+    check("[a #x\r, [b]: c]\n", "[ a { [ b ] c } ]");
     /* a '?' entry ends at ',' or its collection's close: a later ':' at the
      * same depth belongs to an implicit key, which must be on one line */
     check("[? a, [b\n]: c]", "[ { a ~ } [ b ] ERR");
