@@ -555,6 +555,52 @@ static void test_self_merge(void) {
     ASSERT(s > 0 && find_key_value(&el, s, "<<") > 0, "its << is an ordinary key, as in trees");
 }
 
+/* ── Test: Keys a mapping has, by tag and value ──────────── */
+
+/* How many keys of the mapping at events[map] are written `key` */
+static int count_keys(const event_list *el, int map, const char *key) {
+    int n = 0, depth = 0;
+    bool is_key = true;
+    for (int i = map + 1; i < el->len; i++) {
+        const oyl_event *e = &el->events[i];
+        if (depth == 0) {
+            if (e->type == OYL_EVT_MAPPING_END) break;
+            if (is_key && e->type == OYL_EVT_SCALAR && e->value.len == strlen(key) &&
+                memcmp(e->value.data, key, e->value.len) == 0)
+                n++;
+            is_key = !is_key;
+        }
+        if (e->type == OYL_EVT_MAPPING_START || e->type == OYL_EVT_SEQUENCE_START) depth++;
+        else if (e->type == OYL_EVT_MAPPING_END || e->type == OYL_EVT_SEQUENCE_END) depth--;
+    }
+    return n;
+}
+
+static void test_keys_by_value(void) {
+    printf("test_keys_by_value:\n");
+    const char *yaml =
+        "b: &b {1: a, 0x2: b, true: c}\n"
+        "m:\n"
+        "  <<: *b\n"
+        "  \"1\": c\n"
+        "  2: d\n"
+        "  True: e\n";
+    event_list el = parse_yaml(yaml, true);
+    int m = find_key_value(&el, 0, "m");
+    ASSERT(m > 0 && count_keys(&el, m, "1") == 2, "1 is merged beside \"1\"");
+    ASSERT(m > 0 && count_keys(&el, m, "0x2") == 0, "0x2 isn't: 2 is written");
+    ASSERT(m > 0 && count_keys(&el, m, "true") == 0, "true isn't: True is written");
+
+    yaml = "b: &b {yes: a, n: b}\nm: {<<: *b, on: c, no: d}\n";
+    el = parse_with(yaml, true, oyl_dialect_yaml11());
+    m = find_key_value(&el, 0, "m");
+    ASSERT(m > 0 && count_keys(&el, m, "yes") == 0, "yes is on, in YAML 1.1");
+    ASSERT(m > 0 && count_keys(&el, m, "n") == 1, "n is a string, to PyYAML");
+    el = parse_yaml(yaml, true);
+    m = find_key_value(&el, 0, "m");
+    ASSERT(m > 0 && count_keys(&el, m, "yes") == 1, "yes is a string, in YAML 1.2");
+}
+
 /* ── Main ────────────────────────────────────────────────── */
 
 int main(void) {
@@ -576,6 +622,7 @@ int main(void) {
     test_sources_merged_first();
     test_merge_tags();
     test_self_merge();
+    test_keys_by_value();
 
     printf("\n--- Merge tests: %d / %d passed ---\n", tests_passed, tests_run);
     if (tests_failed > 0) printf("    %d FAILED\n", tests_failed);

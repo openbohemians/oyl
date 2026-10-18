@@ -353,10 +353,26 @@ static void check_one_tree(oyl_parser *pe, oyl_emitter *ee, oyl_status *est, con
         if (st == OYL_ERR_PARSE && (i & 1)) continue;
         if (st == OYL_ERR_LIMIT) continue;
         if (st != OYL_OK) __builtin_trap();
-        for (size_t j = 0; j < np; j++) {
+        /* a string key's text finds its value, as does a key's value when
+         * its tag is its kind's; any key's text finds one of the entries */
+        for (size_t j = 0; j < np && j < 256; j++) {
             uint32_t k = oyl_node_target(t, pairs[j].key);
-            if (n[k].kind != OYL_NODE_SCALAR) continue;
-            if (oyl_node_get(t, i, oyl_node_text(t, k)) != pairs[j].value) __builtin_trap();
+            oyl_value v;
+            if (n[k].kind != OYL_NODE_SCALAR || oyl_node_value(t, k, &v) != OYL_OK) continue;
+            oyl_str tag = oyl_node_tag(t, k);
+            bool typed = same_str(tag, v.kind == OYL_VALUE_NULL  ? OYL_TAG_NULL
+                                     : v.kind == OYL_VALUE_BOOL  ? OYL_TAG_BOOL
+                                     : v.kind == OYL_VALUE_INT || v.kind == OYL_VALUE_UINT ? OYL_TAG_INT
+                                     : v.kind == OYL_VALUE_FLOAT ? OYL_TAG_FLOAT : OYL_TAG_STR);
+            if (typed && oyl_node_get_value(t, i, &v) != pairs[j].value) __builtin_trap();
+            uint32_t got = oyl_node_get(t, i, oyl_node_text(t, k));
+            if (typed && v.kind == OYL_VALUE_STR) {
+                if (got != pairs[j].value) __builtin_trap();
+            } else {
+                size_t x = 0;
+                while (x < np && pairs[x].value != got) x++;
+                if (x == np) __builtin_trap();
+            }
         }
     }
     (void)yaml; (void)len;

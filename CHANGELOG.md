@@ -12,8 +12,14 @@
   typed while building, by the document's dialect. `oyl_node_get`,
   `oyl_node_at` and `oyl_node_entries` follow aliases and apply `<<`
   merges in the dialect's order; `oyl_node_value`, `oyl_node_tag` and
-  `oyl_node_mark` read a node. Every valid YAML Test Suite case's tree
-  replays the parser's events exactly, and the fuzzer checks the same.
+  `oyl_node_mark` read a node. Keys are equal as YAML compares them, by
+  tag and value: `0x1` and `1` are one key, `1` and `"1"` two, and
+  `OYL_ENTRIES_STRICT` reports a repeat by the same rule, the first in
+  the document. `oyl_node_get`
+  takes a key's text (the string, else the key so written: `"80"` finds
+  `80`), `oyl_node_get_value` its value. Every valid YAML Test Suite
+  case's tree replays the parser's events exactly, and the fuzzer checks
+  the same.
 - `oyl_schema_value_of` gives a scalar's value from its parts (text,
   style, tag), as `oyl_schema_value` does from an event: for bindings,
   which shouldn't make events of their own.
@@ -137,6 +143,11 @@
   type has it; it was an error. A `<<` tagged `!!merge` merges even when
   quoted, and one tagged `!!str` doesn't, under a schema that gives `<<`
   the merge tag (YAML 1.1's). Found by comparing with PyYAML.
+- `oyl_parser_set_merge` compared keys by their text. A merged key equal
+  to one already set but written otherwise (`0x1` for `1`, or `yes` for
+  `on` in YAML 1.1) was added again, and one written the same but of
+  another type (`1` for `"1"`) was left out. Keys are compared by tag and
+  value, in the document's schema, as YAML compares them.
 
 ### Documentation
 

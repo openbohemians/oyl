@@ -525,12 +525,20 @@ input, except text in the pool (`oyl_tree_pool`): what the parser rewrote
 | `oyl_node_mark(t, i)` | where it starts: offset, line and column |
 | `oyl_node_target(t, i)` | the node an alias refers to; any other node is itself |
 | `oyl_node_get(t, map, key)` | the value of a key, or `OYL_NO_NODE` |
+| `oyl_node_get_value(t, map, &v)` | the same, the key given by its value |
 | `oyl_node_at(t, seq, k)` | item `k`, or `OYL_NO_NODE` |
 | `oyl_node_entries(t, map, flags, arena, &pairs, &n)` | a mapping's pairs as a program sees them |
 
 `oyl_node_get` and `oyl_node_at` follow an alias given as the collection.
-Keys are scalars matched by their text, plain or quoted; a key written
-twice gives its last value. `<<` merges apply in the order of the
+Keys are equal when their tags and values are, as YAML compares them
+(YAML 1.2.2 §3.2.1.3): `0x50` and `80` are one key, `80` and `"80"` two,
+and so are `true` and `True` one. `oyl_node_get` looks `key` up as a
+string, and when the mapping has no such string, as the key a scalar
+written `key` is, so `"80"` finds `80`. `oyl_node_get_value` takes the
+key as an `oyl_value`, a scalar of its kind's tag (`!!null`, `!!bool`,
+`!!int`, `!!float`, or for text `!!str`), so the int 80 finds `80` and
+`0x50` but not `"80"`. A key written twice gives its last value. `<<`
+merges apply in the order of the
 document's dialect: in YAML's, keys written in the mapping win, then the
 merges, a later `<<` over an earlier one and a sequence's earlier items
 over its later ones, as in PyYAML; in go-yaml v2's, a merge overrides the
@@ -541,9 +549,10 @@ through an alias; or the mapping itself) is an ordinary key.
 `oyl_node_entries` gives the same view as an array of `oyl_pair` (`key`,
 `value`) allocated in `arena`: merges applied, each key once, in the
 order keys first appear. Collection keys are all kept.
-`OYL_ENTRIES_STRICT` makes a key written twice an error (`OYL_ERR_PARSE`,
-with `*n` the repeated key's node). Merges nested more than 256 deep, or
-too costly to expand, give `OYL_ERR_LIMIT`.
+`OYL_ENTRIES_STRICT` makes a key written twice an error, as YAML has it
+(`OYL_ERR_PARSE`, with `*n` the first key written again): `true` and
+`True` are a repeat, `1` and `"1"` aren't. Merges nested more than 256
+deep, or too costly to expand, give `OYL_ERR_LIMIT`.
 
 An alias may refer to a collection that contains it (YAML allows cycles):
 code that expands aliases has to check (`target <= i < target + span`).

@@ -6,6 +6,7 @@
  */
 
 #include "oyl/oyl.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -324,7 +325,21 @@ static void check_entries(const doc *x, const char *key, unsigned flags, const c
     else tests_passed++;
 }
 
-/* Whether entries and get agree on every key of every mapping */
+/* The tag oyl_node_get_value gives a value of this kind */
+static const char *kind_tag(oyl_value_kind kind) {
+    switch (kind) {
+    case OYL_VALUE_NULL:  return "tag:yaml.org,2002:null";
+    case OYL_VALUE_BOOL:  return "tag:yaml.org,2002:bool";
+    case OYL_VALUE_INT:
+    case OYL_VALUE_UINT:  return "tag:yaml.org,2002:int";
+    case OYL_VALUE_FLOAT: return "tag:yaml.org,2002:float";
+    default:              return "tag:yaml.org,2002:str";
+    }
+}
+
+/* Whether entries and the lookups agree on every key of every mapping: a
+ * string key's text finds its value, as does a key's value when its tag
+ * is its kind's, and any key's text finds one of the entries */
 static bool entries_agree(const doc *x) {
     oyl_arena *a = oyl_arena_new(1024);
     bool agree = true;
@@ -333,9 +348,21 @@ static bool entries_agree(const doc *x) {
         const oyl_pair *pairs;
         size_t n;
         if (oyl_node_entries(x->t, m, 0, a, &pairs, &n) != OYL_OK) { agree = false; continue; }
-        for (size_t i = 0; i < n; i++)
-            if (oyl_node_get(x->t, m, oyl_node_text(x->t, oyl_node_target(x->t, pairs[i].key))) != pairs[i].value)
-                agree = false;
+        for (size_t i = 0; i < n; i++) {
+            uint32_t k = oyl_node_target(x->t, pairs[i].key);
+            oyl_value v;
+            if (x->n[k].kind != OYL_NODE_SCALAR || oyl_node_value(x->t, k, &v) != OYL_OK) continue;
+            bool typed = str_is(oyl_node_tag(x->t, k), kind_tag(v.kind));
+            if (typed && oyl_node_get_value(x->t, m, &v) != pairs[i].value) agree = false;
+            uint32_t got = oyl_node_get(x->t, m, oyl_node_text(x->t, k));
+            if (typed && v.kind == OYL_VALUE_STR) {
+                if (got != pairs[i].value) agree = false;
+            } else {
+                bool found = false;
+                for (size_t j = 0; j < n; j++) found |= got == pairs[j].value;
+                if (!found) agree = false;
+            }
+        }
     }
     oyl_arena_free(a);
     return agree;
@@ -385,6 +412,140 @@ static void test_entries(void) {
         ASSERT(entries_agree(&x), "entries and get agree (go-yaml v2's)");
         unload(&x);
     }
+}
+
+/* Keys compared as YAML compares them, by tag and value */
+static const char *KEYS =
+    "ints:\n  1: int\n  \"1\": str\n"
+    "bools:\n  true: a\n  True: b\n"
+    "bases:\n  0x1: a\n  1: b\n  0o1: c\n"
+    "nulls:\n  ~: a\n  null: b\n"
+    "floats:\n  1.0: a\n  1.00: b\n  1e0: c\n"
+    "num:\n  1: a\n  1.0: b\n"
+    "nans:\n  .nan: a\n  .NaN: b\n"
+    "tags:\n  !!str 1: a\n  \"1\": b\n  ! 1: c\n  !!int \"1\": d\n  1: e\n"
+    "base: &b {1: a, 0x2: b}\n"
+    "merged:\n  <<: *b\n  \"1\": c\n  2: d\n";
+
+static const char *KEYS_YAML11 =
+    "b:\n  yes: a\n  on: b\n  true: c\n  y: d\n"
+    "o:\n  0777: a\n  511: b\n"
+    "s:\n  1:00: a\n  60: b\n";
+
+static oyl_status entries_status(const doc *x, const char *key, unsigned flags) {
+    oyl_arena *a = oyl_arena_new(1024);
+    const oyl_pair *pairs;
+    size_t n;
+    oyl_status st = oyl_node_entries(x->t, oyl_node_get(x->t, 0, (oyl_str){ key, strlen(key) }),
+                                     flags, a, &pairs, &n);
+    oyl_arena_free(a);
+    return st;
+}
+
+/* The text of the value of `key` in the mapping at `map`, looked up by value */
+static oyl_str text_by_value(const doc *x, const char *map, oyl_value key) {
+    uint32_t i = oyl_node_get_value(x->t, oyl_node_get(x->t, 0, (oyl_str){ map, strlen(map) }), &key);
+    return i == OYL_NO_NODE ? (oyl_str){ "<none>", 6 } : oyl_node_text(x->t, oyl_node_target(x->t, i));
+}
+
+#define INT(x)   ((oyl_value){ .kind = OYL_VALUE_INT, .as = { .i = (x) } })
+#define FLOAT(x) ((oyl_value){ .kind = OYL_VALUE_FLOAT, .as = { .f = (x) } })
+#define BOOL(x)  ((oyl_value){ .kind = OYL_VALUE_BOOL, .as = { .b = (x) } })
+
+static void test_keys(void) {
+    printf("test_keys:\n");
+    doc x = load(KEYS);
+    /* a key of each value, the last written winning, where the first was */
+    check_entries(&x, "ints", 0, "1=int 1=str");
+    check_entries(&x, "bools", 0, "True=b");
+    check_entries(&x, "bases", 0, "0o1=c");
+    check_entries(&x, "nulls", 0, "null=b");
+    check_entries(&x, "floats", 0, "1e0=c");
+    check_entries(&x, "num", 0, "1=a 1.0=b");
+    check_entries(&x, "nans", 0, ".NaN=b");
+    check_entries(&x, "tags", 0, "1=c 1=e");
+    check_entries(&x, "merged", 0, "1=a 2=d 1=c");
+    /* a repeat is YAML's error; 1 and "1" aren't one */
+    ASSERT(entries_status(&x, "ints", OYL_ENTRIES_STRICT) == OYL_OK, "1 and \"1\" aren't repeats");
+    ASSERT(entries_status(&x, "num", OYL_ENTRIES_STRICT) == OYL_OK, "1 and 1.0 aren't repeats");
+    ASSERT(entries_status(&x, "bools", OYL_ENTRIES_STRICT) == OYL_ERR_PARSE, "true and True repeat");
+    ASSERT(entries_status(&x, "bases", OYL_ENTRIES_STRICT) == OYL_ERR_PARSE, "0x1 and 1 repeat");
+    ASSERT(entries_status(&x, "nulls", OYL_ENTRIES_STRICT) == OYL_ERR_PARSE, "~ and null repeat");
+    ASSERT(entries_status(&x, "merged", OYL_ENTRIES_STRICT) == OYL_OK, "a merged key isn't a repeat");
+    unload(&x);
+    /* the repeat reported is the first in the document: 2 (node 3), not True */
+    x = load("0x2: a\n2: b\ntrue: c\nTrue: d\n2: e\n");
+    char got[64];
+    render_entries(&x, 0, OYL_ENTRIES_STRICT, got, sizeof got);
+    ASSERT(strcmp(got, "ERROR 4 at 3") == 0, "the first repeat");
+    unload(&x);
+    x = load(KEYS);
+    /* by text: the string, else the key a scalar so written is */
+    ASSERT(str_is(text_at(&x, "ints.1"), "str"), "\"1\" before 1");
+    ASSERT(str_is(text_at(&x, "bases.1"), "c"), "1 is 0o1");
+    ASSERT(str_is(text_at(&x, "bases.0x1"), "c"), "0x1 is 0o1");
+    ASSERT(str_is(text_at(&x, "bools.true"), "b"), "true is True");
+    ASSERT(str_is(text_at(&x, "num.1"), "a"), "1 isn't 1.0");
+    ASSERT(str_is(text_at(&x, "num.1.0"), "<none>"), "a path splits at dots");
+    ASSERT(str_is(text_at(&x, "nans..nan"), "<none>"), "a path splits at dots");
+    ASSERT(str_is(text_at(&x, "tags.1"), "c"), "the string 1");
+    ASSERT(str_is(text_at(&x, "merged.1"), "c"), "the string 1, written");
+    ASSERT(str_is(text_at(&x, "merged.0x2"), "d"), "0x2 is the 2 written");
+    ASSERT(str_is(text_at(&x, "missing"), "<none>"), "no such key");
+    /* by value */
+    ASSERT(str_is(text_by_value(&x, "ints", INT(1)), "int"), "the int 1");
+    ASSERT(str_is(text_by_value(&x, "bases", INT(1)), "c"), "the int 1, last");
+    ASSERT(str_is(text_by_value(&x, "num", FLOAT(1.0)), "b"), "the float 1");
+    ASSERT(str_is(text_by_value(&x, "nans", FLOAT(NAN)), "b"), "NaN");
+    ASSERT(str_is(text_by_value(&x, "bools", BOOL(true)), "b"), "true");
+    ASSERT(str_is(text_by_value(&x, "bools", BOOL(false)), "<none>"), "no false");
+    ASSERT(str_is(text_by_value(&x, "nulls", (oyl_value){ .kind = OYL_VALUE_NULL }), "b"), "null");
+    ASSERT(str_is(text_by_value(&x, "tags", INT(1)), "e"), "the int 1, tagged or not");
+    ASSERT(str_is(text_by_value(&x, "merged", INT(1)), "a"), "the int 1, merged");
+    ASSERT(str_is(text_by_value(&x, "ints", (oyl_value){ .kind = OYL_VALUE_STR, .as = { .s = S("1") } }), "str"),
+           "the string 1");
+    ASSERT(oyl_node_get_value(x.t, 0, NULL) == OYL_NO_NODE, "no key");
+    ASSERT(entries_agree(&x), "entries and lookups agree on keys");
+    unload(&x);
+
+    /* past the entries' first buffers: 100 keys, every int written twice */
+    char big[4096];
+    size_t len = 0;
+    len += (size_t)snprintf(big + len, sizeof big - len, "base: &b {");
+    for (int i = 0; i < 50; i++) len += (size_t)snprintf(big + len, sizeof big - len, "%sm%d: %d", i ? ", " : "", i, i);
+    len += (size_t)snprintf(big + len, sizeof big - len, "}\nbig:\n  <<: *b\n");
+    for (int i = 0; i < 50; i++) len += (size_t)snprintf(big + len, sizeof big - len, "  %d: a\n  0x%x: b\n", i, i);
+    x = load(big);
+    const oyl_pair *pairs;
+    size_t np;
+    oyl_arena *pa = oyl_arena_new(1024);
+    ASSERT(oyl_node_entries(x.t, oyl_node_get(x.t, 0, S("big")), 0, pa, &pairs, &np) == OYL_OK && np == 100,
+           "100 entries from 150 pairs");
+    ASSERT(str_is(text_at(&x, "big.49"), "b") && str_is(text_at(&x, "big.m49"), "49"), "found past the buffers");
+    ASSERT(entries_status(&x, "big", OYL_ENTRIES_STRICT) == OYL_ERR_PARSE, "a repeat past the buffers");
+    ASSERT(entries_agree(&x), "entries and lookups agree past the buffers");
+    oyl_arena_free(pa);
+    unload(&x);
+
+    /* YAML 1.1's types make more keys one */
+    x = load_with(KEYS_YAML11, oyl_dialect_yaml11());
+    check_entries(&x, "b", 0, "true=c y=d");
+    check_entries(&x, "o", 0, "511=b");
+    check_entries(&x, "s", 0, "60=b");
+    ASSERT(str_is(text_at(&x, "b.on"), "c"), "on is true in YAML 1.1");
+    ASSERT(str_is(text_by_value(&x, "b", BOOL(true)), "c"), "true in YAML 1.1");
+    ASSERT(entries_agree(&x), "entries and lookups agree on YAML 1.1's keys");
+    unload(&x);
+
+    /* and the failsafe schema's are all strings */
+    oyl_arena *a = oyl_arena_new(1024);
+    const oyl_dialect *failsafe = oyl_dialect_new(a, oyl_schema_failsafe(),
+                                                  oyl_dialect_syntax(oyl_dialect_yaml12()), OYL_MERGE_YAML);
+    x = load_with(KEYS, failsafe);
+    check_entries(&x, "ints", 0, "1=str");
+    check_entries(&x, "bools", 0, "true=a True=b");
+    unload(&x);
+    oyl_arena_free(a);
 }
 
 /* Every node's mark against its event's */
@@ -628,6 +789,7 @@ int main(void) {
     test_aliases();
     test_merges();
     test_entries();
+    test_keys();
     test_marks();
     test_documents();
     test_emit();
