@@ -34,7 +34,7 @@ a human security audit (OSTIF, OpenSSF Alpha-Omega) once 1.2.0 is used.
   lines, 85.4% of branches (tests alone 92.9% and 76.3%). 337 lines never
   run.
 
-## Open (not fixed; for the user to decide)
+## Findings (each marked fixed or open)
 
 - **Lines over 2 GiB: fixed in `518519a`.** Columns and indentation
   were ints narrowed from `size_t` marks (signed for the -1 top level);
