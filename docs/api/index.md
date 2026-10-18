@@ -296,6 +296,8 @@ scalar (no schema on the parser, which keeps the faster incremental
 parser) is resolved first; a tagged one, resolved or explicit, is parsed
 by its tag's rules, and `OYL_ERR_PARSE` means none accepts it
 (`!!int "abc"`). A tag with no rules (`!!str`, `!foo`) gives the text.
+`oyl_schema_value_of(schema, text, style, tag, &v)` does the same for a
+scalar given by its parts (an empty tag for untagged), for bindings.
 
 | Kind | Field | Holds |
 |------|-------|-------|

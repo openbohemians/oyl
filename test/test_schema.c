@@ -500,6 +500,18 @@ static void test_values_core(void) {
     oyl_event seq = { .type = OYL_EVT_SEQUENCE_START };
     ASSERT(oyl_schema_value(s, &seq, &v) == OYL_ERR_INPUT, "not a scalar");
     ASSERT(oyl_schema_value(NULL, &seq, &v) == OYL_ERR_INPUT, "no schema");
+
+    /* the same from a scalar's parts */
+    ASSERT(oyl_schema_value_of(s, OYL_STR_LIT("2.5"), OYL_SCALAR_PLAIN, OYL_STR_NULL, &v) == OYL_OK &&
+           v.kind == OYL_VALUE_FLOAT && v.as.f == 2.5, "parts: 2.5");
+    ASSERT(oyl_schema_value_of(s, OYL_STR_LIT("2.5"), OYL_SCALAR_SINGLE_QUOTED, OYL_STR_NULL, &v) == OYL_OK &&
+           is_text(v, "2.5"), "parts: '2.5'");
+    ASSERT(oyl_schema_value_of(s, OYL_STR_LIT("abc"), OYL_SCALAR_PLAIN, OYL_TAG_INT, &v) == OYL_ERR_PARSE,
+           "parts: !!int abc");
+    ASSERT(oyl_schema_value_of(NULL, OYL_STR_LIT("1"), OYL_SCALAR_PLAIN, OYL_STR_NULL, &v) == OYL_ERR_INPUT,
+           "parts: no schema");
+    ASSERT(oyl_schema_value_of(s, (oyl_str){ NULL, 3 }, OYL_SCALAR_PLAIN, OYL_STR_NULL, &v) == OYL_ERR_INPUT,
+           "parts: no text");
 }
 
 static void test_values_goyaml2(void) {
