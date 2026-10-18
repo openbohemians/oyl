@@ -27,7 +27,8 @@ the same lookahead with a comment ended by a lone `\r` (`ae8d609`, found
 2026-10-16 21:44 UTC by the UBSan batch run on `e1fedf2`, the only failure
 in 5 days of runs: `[a #x\r, [b]: c]` was a key to the eager parser, an
 error to the incremental one). **The clean-fuzz clock restarted at
-`ae8d609`;** batch runs dispatched 2026-10-18 00:25 UTC. **Tag only after
+`ae8d609`;** batch runs dispatched 2026-10-18 00:25 UTC, both clean
+(1 ASan, 1 UBSan; 1.0.0 waited for 8). **Tag only after
 clean batch runs on `ae8d609` or later, with the user's go-ahead.**
 Merged into `schema-parsers` (`d09556e`) and `tree` (`df34496`).
 
