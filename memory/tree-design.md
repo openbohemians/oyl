@@ -9,8 +9,10 @@
 See "Step 1 as built" at the end. **Step 2 built 2026-10-12** (`480bf4d`,
 CI green): see "Step 2 as built". **Step 3 built 2026-10-12** (`d79fde8`):
 see "Step 3 as built". **Step 4 measured and published** (README tree
-tables `2bcc6a4`, harness `1cd2e15`); the emitter comparison showed
-Oyl's emitter trailing rapidyaml's: see "Step 4 so far". Roadmap
+tables `2bcc6a4`, harness `1cd2e15`). **Emitter speed pass done**
+(`5115554`, `685b7a6`; the user chose it before the release, 2026-10-17):
+1.5-7x faster, same output. **Next:** step 5, release 1.2.0 (ask first).
+See "Step 4 so far". Roadmap
 step 5 (roadmap.md). It replaces the sketch in ideas.md. The user agreed
 on 2026-10-11 to build the tree before parallel parsing, designed so
 that parallel building can be added later without a rewrite. The
@@ -406,8 +408,19 @@ result must be byte for byte the tree one thread builds: an exact test.
   check: four byte-by-byte passes over each scalar, dominant on long
   scalars), output writes ~10% (`buf_puts` rescans for a newline to keep
   the column; `buf_ensure` per write), per-event dispatch ~15%.
-- **Next (proposed to the user 2026-10-17, not yet agreed):** an emitter
-  speed pass with byte-identical output: one classification pass per
-  scalar (SIMD for long text), column tracking without rescans, batched
-  writes in quoted scalars, a flow-depth counter for `in_any_flow`, and
-  emitting tree nodes without building an `oyl_event` each.
+- **Emitter speed pass, done 2026-10-17** (the user chose it before
+  1.2.0): `5115554` (one table-driven pass classifies a scalar; quoted
+  scalars written a chunk at a time; the never-read output column
+  dropped; a flow-depth counter) and `685b7a6` (one function per event
+  kind taking fields; oyl_emit, the building functions and
+  oyl_emit_tree call them, no event per node). Output byte-identical on
+  73,430 files x 4 settings x events and trees (the `emitdump` tool in
+  the scratchpad: fuzz corpus, the k8s documents, the benchmark inputs,
+  local YAML), plus tests, sanitizers, corpus replay and 1.88M fuzz runs.
+  Result, MB/s of input emitting held trees (2 passes): 1.5-7.1x the
+  old emitter; faster than libyaml and libfyaml everywhere; against
+  rapidyaml ahead on 8 of 13 (JSON 396/368, travis 1097/895, dquot
+  1469/612), behind on block 339/381, appveyor 674/759, the CRD
+  1518/1769, folded 1663/1744, literal 1400/1422. What's left is spread
+  over many small per-node costs (no hotspot). Emitter numbers are not in
+  the README (offered to the user).
