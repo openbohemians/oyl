@@ -112,6 +112,17 @@ static void test_merges(void) {
     /* a quoted << is a key */
     check("a: {\"<<\": {x: 1}}\n", "{\"a\":{\"\\u003c\\u003c\":{\"x\":1}}}");
     check("a: {<<: 1}\n", err_parse);
+    /* two << in one mapping: the later wins, as in PyYAML and go-yaml v2 */
+    const char *two = "a: &a {x: 1, w: 1}\nb: &b {x: 2, z: 2}\nc:\n  <<: *a\n  <<: *b\n";
+    check(two, "{\"a\":{\"w\":1,\"x\":1},\"b\":{\"x\":2,\"z\":2},\"c\":{\"w\":1,\"x\":2,\"z\":2}}");
+    check_with(two, oyl_schema_core(), OYL_JSON_MERGE,
+               "{\"a\":{\"w\":1,\"x\":1},\"b\":{\"x\":2,\"z\":2},\"c\":{\"w\":1,\"x\":2,\"z\":2}}");
+    /* an alias to a sequence of mappings: YAML's merge takes it, go-yaml v2 doesn't */
+    const char *list = "a: &a {x: 1}\nb: &b {x: 2, z: 2}\nl: &l [*a, *b]\nc: {<<: *l}\n";
+    check_with(list, oyl_schema_core(), OYL_JSON_MERGE,
+               "{\"a\":{\"x\":1},\"b\":{\"x\":2,\"z\":2},\"c\":{\"x\":1,\"z\":2},"
+               "\"l\":[{\"x\":1},{\"x\":2,\"z\":2}]}");
+    check(list, err_parse);
 }
 
 static void test_strict(void) {

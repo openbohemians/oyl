@@ -233,6 +233,12 @@ static const char *MERGES =
     "plain:\n  <<: 5\n"
     "self: &s\n  x: 1\n  <<: *s\n";
 
+/* What PyYAML reads that the merges above don't cover */
+static const char *MORE_MERGES =
+    "a: &a {x: a, y: a}\nb: &b {x: b, z: b}\nl: &l [*a, *b]\n"
+    "two:\n  <<: *a\n  <<: *b\n"
+    "list:\n  <<: *l\n";
+
 static void test_merges(void) {
     printf("test_merges:\n");
     doc x = load(MERGES);   /* YAML 1.2's dialect: YAML's merge */
@@ -275,6 +281,18 @@ static void test_merges(void) {
            "but quoted is an ordinary key");
     ASSERT(oyl_node_get(x.t, oyl_node_get(x.t, 0, S("b")), S("<<")) != OYL_NO_NODE, "found as one");
     unload(&x);
+
+    x = load(MORE_MERGES);
+    ASSERT(str_is(text_at(&x, "two.x"), "b") && str_is(text_at(&x, "two.y"), "a"),
+           "YAML: a later << wins over an earlier one, as in PyYAML");
+    ASSERT(str_is(text_at(&x, "list.x"), "a") && str_is(text_at(&x, "list.z"), "b"),
+           "an alias to a sequence of mappings merges as the sequence");
+    unload(&x);
+    x = load_with(MORE_MERGES, oyl_dialect_goyaml2());
+    ASSERT(str_is(text_at(&x, "two.x"), "b"), "go-yaml v2: a later << wins too");
+    ASSERT(x.n[oyl_node_get(x.t, oyl_node_get(x.t, 0, S("list")), S("<<"))].kind == OYL_NODE_ALIAS,
+           "but takes no sequence through an alias: << is an ordinary key");
+    unload(&x);
 }
 
 /* "k=v k=v ..." for a mapping's entries */
@@ -306,6 +324,23 @@ static void check_entries(const doc *x, const char *key, unsigned flags, const c
     else tests_passed++;
 }
 
+/* Whether entries and get agree on every key of every mapping */
+static bool entries_agree(const doc *x) {
+    oyl_arena *a = oyl_arena_new(1024);
+    bool agree = true;
+    for (uint32_t m = 0; m < x->count; m++) {
+        if (x->n[m].kind != OYL_NODE_MAPPING) continue;
+        const oyl_pair *pairs;
+        size_t n;
+        if (oyl_node_entries(x->t, m, 0, a, &pairs, &n) != OYL_OK) { agree = false; continue; }
+        for (size_t i = 0; i < n; i++)
+            if (oyl_node_get(x->t, m, oyl_node_text(x->t, oyl_node_target(x->t, pairs[i].key))) != pairs[i].value)
+                agree = false;
+    }
+    oyl_arena_free(a);
+    return agree;
+}
+
 static void test_entries(void) {
     printf("test_entries:\n");
     doc x = load(MERGES);
@@ -335,22 +370,21 @@ static void test_entries(void) {
     ASSERT(strncmp(got, "ERROR 2", 7) == 0, "entries of a scalar");
     unload(&x);
 
-    /* entries and get agree on every key */
-    x = load_with(MERGES, oyl_dialect_goyaml2());
-    oyl_arena *a = oyl_arena_new(1024);
-    bool agree = true;
-    for (uint32_t m = 0; m < x.count; m++) {
-        if (x.n[m].kind != OYL_NODE_MAPPING) continue;
-        const oyl_pair *pairs;
-        size_t n;
-        if (oyl_node_entries(x.t, m, 0, a, &pairs, &n) != OYL_OK) { agree = false; continue; }
-        for (size_t i = 0; i < n; i++)
-            if (oyl_node_get(x.t, m, oyl_node_text(x.t, oyl_node_target(x.t, pairs[i].key))) != pairs[i].value)
-                agree = false;
-    }
-    ASSERT(agree, "entries and get agree");
-    oyl_arena_free(a);
+    x = load(MORE_MERGES);
+    check_entries(&x, "two", 0, "x=b y=a z=b");
+    check_entries(&x, "list", 0, "x=a y=a z=b");
     unload(&x);
+
+    /* entries and get agree on every key */
+    const char *docs[] = { MERGES, MORE_MERGES };
+    for (size_t i = 0; i < 2; i++) {
+        x = load(docs[i]);
+        ASSERT(entries_agree(&x), "entries and get agree (YAML's merge)");
+        unload(&x);
+        x = load_with(docs[i], oyl_dialect_goyaml2());
+        ASSERT(entries_agree(&x), "entries and get agree (go-yaml v2's)");
+        unload(&x);
+    }
 }
 
 /* Every node's mark against its event's */

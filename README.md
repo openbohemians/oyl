@@ -238,9 +238,10 @@ production:
 With merge enabled, `production` expands to contain `adapter`, `host`, and
 `database` as direct entries. Explicit keys override merged ones. The merge
 value can be an alias to a mapping, an inline mapping (`<<: {k: v}`), or a
-sequence of those, which merges all of them (first wins on conflicts). Any
-other value, or an alias to an undefined anchor, is a parse error. Quoted
-`"<<"` is treated as a normal key.
+sequence of those, also through an alias, which merges all of them (first
+wins on conflicts). Of two `<<` in one mapping, the later wins, as in
+PyYAML. Any other value, or an alias to an undefined anchor, is a parse
+error. Quoted `"<<"` is treated as a normal key.
 
 ## Alias Resolution
 
@@ -394,9 +395,10 @@ directives choose its dialect, among those the program allows:
 
 1. `%TAG !! <prefix>`: the dialect registered for that prefix types the
    document's explicit `!!` tags and its untagged values alike
-2. `%YAML <version>`: the version of the standard `!!` schema; `1.1` reads
-   as libyaml and PyYAML do (`yes` is true, `0777` is octal), `1.2` by the
-   Core schema
+2. `%YAML <version>`: the version of the standard `!!` schema; `1.1` with
+   PyYAML's types (`yes` is true, `0777` is octal) and merge, so a document
+   PyYAML reads gets the same values (`oyl.h` has the two exceptions),
+   `1.2` by the Core schema
 3. otherwise the parser's default dialect
 
 ```c
@@ -405,9 +407,9 @@ oyl_parser_add_dialect(p, my_dialect, NULL, "tag:acme.com,2026:");
 ```
 
 Built in: `oyl_dialect_yaml12()`, `oyl_dialect_yaml11()` and
-`oyl_dialect_goyaml2()` (go-yaml v2's types and merge order, with libyaml's
-leniencies: `\'` in double quotes, no line feed for a block scalar ending
-the input, `%YAML` 1.1 only). `oyl_dialect_new` builds one from any schema.
+`oyl_dialect_goyaml2()` (go-yaml v2's types and merge order, with its
+leniencies: `\'` in double quotes, `%YAML` 1.1 only, and no line feed for a
+block scalar ending the input, as in libyaml). `oyl_dialect_new` builds one from any schema.
 YAML 1.2 applies a `%TAG !!` prefix to explicit tags only; Oyl applies it
 to untagged values too, which is what `!!` was meant for in YAML 1.2's
 design: `!` for the application's types, `!!` for the underlying schema.
@@ -439,7 +441,7 @@ Core schema and `OYL_JSON_MERGE`, YAML's merge, where keys written in the
 mapping win. Each call reads one document; at the end of the stream the
 result is empty.
 
-The go-yaml v2 dialect takes on libyaml's leniencies that occur in real
+The go-yaml v2 dialect takes on go-yaml v2's leniencies that occur in real
 manifests. Others it doesn't copy: `?x` as an explicit key, anchor names
 cut at `:`, and everything after the first document's root node ignored.
 

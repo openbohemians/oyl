@@ -75,14 +75,14 @@
   `YAMLToJSON`, as Kubernetes reads manifests: go-yaml v2's merge order,
   sorted keys, Go's number and string formatting. Of 866 documents from
   public Kubernetes manifests, 857 convert identically and 5 fail alike;
-  the other 4 are where libyaml's syntax differs from YAML 1.2. About six
+  the other 4 are where go-yaml v2's syntax differs from YAML 1.2. About six
   times as fast. With the Core schema and `OYL_JSON_MERGE`, standard JSON.
 
 - **Dialects**: a schema, syntax leniencies and a merge order, chosen per
   document by its directives: a `%TAG !!` prefix the program registered,
   else its `%YAML` version (1.1 and 1.2 built in), else the parser's
   default (`oyl_parser_set_dialect`, `oyl_parser_add_dialect`). Built in:
-  YAML 1.2; YAML 1.1 as libyaml and PyYAML read it; and go-yaml v2 with
+  YAML 1.2; YAML 1.1 with PyYAML's types and merge; and go-yaml v2 with
   its leniencies, which makes `oyl_parse_json` identical to
   `sigs.k8s.io/yaml` on all 866 documents of the Kubernetes manifests it
   was checked on.
@@ -98,6 +98,9 @@
 - With a schema set, a document that says `%YAML 1.1` is typed with YAML
   1.1's types (`yes` is true), as the directive asks; before, with the
   parser's schema. Documents without the directive are unchanged.
+- Of two `<<` merge keys in one mapping, the later wins, as in PyYAML and
+  go-yaml v2; `oyl_parser_set_merge` let the earlier win. Keys written in
+  the mapping still win over both.
 
 ### Performance
 
@@ -126,6 +129,14 @@
   the input for comment, so a flow collection used as a key after it
   (`[a #x\r, [b]: c]`) was an error; the eager parser read it correctly.
   Found by fuzzing.
+- `oyl_parser_set_merge`: a merge's source that had merges of its own
+  took part without them when it was one of a sequence, so a later item
+  could win over what an earlier one merged (`<<: [*b, *c]`, with `b`
+  merging `x` and `c` writing it, gave `c`'s `x`). An alias to a sequence
+  of mappings (`<<: *list`) is merged as the sequence, as YAML's merge
+  type has it; it was an error. A `<<` tagged `!!merge` merges even when
+  quoted, and one tagged `!!str` doesn't, under a schema that gives `<<`
+  the merge tag (YAML 1.1's). Found by comparing with PyYAML.
 
 ### Documentation
 

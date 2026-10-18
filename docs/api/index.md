@@ -172,7 +172,7 @@ documents before an error are delivered before it.
 | `oyl_parser *oyl_parser_new(input, len, arena)` | Create parser. Input buffer must outlive parser. Returns NULL on alloc failure. |
 | `oyl_status oyl_parse_next(p, const oyl_event **evt)` | Get next event (owned by the parser). |
 | `void oyl_parser_set_schema(p, schema)` | Set tag schema for auto-resolution. The schema must outlive the parser. |
-| `void oyl_parser_set_merge(p, bool)` | Enable `<<` merge key expansion. The value must be a mapping, an alias to one, or a sequence of those. |
+| `void oyl_parser_set_merge(p, bool)` | Enable `<<` merge key expansion, in YAML's merge order. The value must be a mapping, an alias to one, or a sequence of those, also through an alias. |
 | `void oyl_parser_set_resolve(p, bool)` | Enable `*alias` inline expansion. An alias refers to the most recent preceding anchor in the same document; cyclic and unresolvable aliases are kept as ALIAS events. |
 | `void oyl_parser_set_max_events(p, max)` | Set event limit (default 10,000; 0 = unlimited). |
 | `void oyl_parser_set_max_depth(p, max)` | Set nesting depth limit (default 256; 0 = unlimited). |
@@ -403,7 +403,7 @@ oyl_parser_set_warn(p, on_warning, user);
 A dialect bundles a schema, syntax leniencies (`OYL_SYNTAX_`) and a merge
 order (`OYL_MERGE_NONE`, `_YAML`, `_ORDERED`). A document's dialect: the
 one registered for its `%TAG !!` prefix, else for its `%YAML` version
-(built in: 1.1 is `oyl_dialect_yaml11()`, as libyaml and PyYAML read it,
+(built in: 1.1 is `oyl_dialect_yaml11()`, with PyYAML's types and merge,
 1.2 `oyl_dialect_yaml12()`;
 other 1.x versions read as 1.2 with a warning), else the default. The
 default is `oyl_parser_set_dialect`'s, else YAML 1.2 with the schema of
@@ -532,9 +532,11 @@ input, except text in the pool (`oyl_tree_pool`): what the parser rewrote
 Keys are scalars matched by their text, plain or quoted; a key written
 twice gives its last value. `<<` merges apply in the order of the
 document's dialect: in YAML's, keys written in the mapping win, then the
-merges in order; in go-yaml v2's, a merge overrides the keys before it.
-A `<<` whose value can't be merged (not a mapping, an alias to one, or a
-sequence of those, or the mapping itself) is an ordinary key.
+merges, a later `<<` over an earlier one and a sequence's earlier items
+over its later ones, as in PyYAML; in go-yaml v2's, a merge overrides the
+keys before it. A `<<` whose value can't be merged (not a mapping, an
+alias to one, or a sequence of those, which YAML's merge also takes
+through an alias; or the mapping itself) is an ordinary key.
 
 `oyl_node_entries` gives the same view as an array of `oyl_pair` (`key`,
 `value`) allocated in `arena`: merges applied, each key once, in the
