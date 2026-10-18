@@ -557,10 +557,78 @@ Where the speed comes from:
 - Tags, schemas, merge keys and alias resolution use an eager parse of the
   whole document instead.
 
-Run `make bench` to measure Oyl alone. `make bench-compare` runs the table
-above with whichever libraries are installed; see `bench/compare/run.sh`
-for adding rapidyaml (`RYML_HEADER`, `RYML_SRC`) and your own files
-(`CASES`).
+### Building trees
+
+Throughput in MB/s building each library's tree, measured with
+`make bench-compare-tree` on the same machine and compiler, median of 11
+runs in each of 3 passes (passes agree within 8%, except rapidyaml's
+fresh tree on the CRD, 19%), October 2026:
+
+| Input | Oyl | libyaml 0.2.5 | libfyaml 0.9.6 | rapidyaml 0.16 | rapidyaml, reused |
+|---|---:|---:|---:|---:|---:|
+| **Generated, 10 MB** | | | | | |
+| block mappings and sequences | 110 | 47 | 32 | 108 | 167 |
+| mixed block, flow and quoted | 137 | 57 | 41 | 116 | 191 |
+| JSON | 130 | 48 | 34 | 122 | 195 |
+| config files (comments, block scalars, anchors) | 238 | 85 | 66 | 194 | 280 |
+| **Real files, repeated to ~10 MB** | | | | | |
+| travis.yml | 405 | 106 | 113 | 202 | 297 |
+| appveyor.yml | 342 | 94 | 91 | 205 | 302 |
+| compile_commands.json | 1831 | 188 | 257 | 854 | 1140 |
+| **Kubernetes** | | | | | |
+| 854 manifests in one stream, 7.3 MB | 524 | fails¹ | 142 | fails² | fails² |
+| the largest CRD, 1.4 MB | 504 | 168 | 154 | 275 | 410 |
+| **Scalar-heavy text** | | | | | |
+| literal block scalars (`\|`) | 2693 | 269 | 279 | 914 | 1022 |
+| folded block scalars (`>`) | 1842 | 271 | 277 | 823 | 930 |
+| multi-line double-quoted | 2628 | 210 | 318 | 358 | 375 |
+| multi-line single-quoted | 2408 | 213 | 320 | 368 | 381 |
+| multi-line plain | 853 | 199 | 407 | 304 | 317 |
+
+Each library builds its own tree: `oyl_parse_tree`, libyaml's
+`yaml_parser_load`, libfyaml's `fy_parse_load_document` (with duplicate
+keys allowed, as the others allow them), and rapidyaml's `parse_in_place`,
+with a new tree for each parse like the others, and with its parser and
+tree reused and reserved to size, its fastest mode. The Kubernetes inputs
+are public manifests (kubernetes/examples, the kubernetes.io examples, and
+the Argo CD, cert-manager and Prometheus Operator install bundles), one of
+them left out for an escape YAML 1.2 doesn't have (`\'`).
+
+¹ libyaml implements YAML 1.1, which doesn't allow a document to follow
+`...` without `---`. ² rapidyaml's trees can't hold a collection as a key,
+as in a Helm template's `config: {{config_data}}`.
+
+Oyl builds trees 2.3–12.5× faster than libyaml and 2.1–9.7× faster than
+libfyaml. Against rapidyaml building a new tree each time, it's about even
+on the generated block mappings and 1.1–7.3× faster on everything else.
+rapidyaml reusing its buffers leads on the generated inputs (1.2–1.5×);
+Oyl leads on the real files and long scalars (1.1–7×).
+
+The memory the trees hold after parsing, in MB per MB of YAML:
+
+| Input | Oyl | libyaml | libfyaml | rapidyaml |
+|---|---:|---:|---:|---:|
+| block mappings and sequences | 6.5 | 33 | 74 | 14 |
+| JSON | 6.5 | 32 | 67 | 14 |
+| config files | 7.1 | 15 | 37 | 7.2 |
+| travis.yml | 2.7 | 11 | 20 | 7.2 |
+| Kubernetes manifests | 1.9 | fails | 12 | fails |
+| the largest CRD | 1.5 | 7.6 | 15 | 3.4 |
+| literal block scalars | 2.0 | 1.9 | 1.0 | 0.22 |
+| multi-line plain | 1.1 | 1.9 | 1.0 | 0.22 |
+
+An Oyl node is 32 bytes and points into the input, so on structured input
+its trees are 2–3× smaller than rapidyaml's (the same on the config
+files), 2–5× smaller than libyaml's and 5–11× smaller than libfyaml's.
+Text the parser rewrites (escapes, folded lines) is copied into the tree,
+while rapidyaml rewrites the input buffer in place and libfyaml decodes
+text when it's read, so on long scalars they hold less. Measured from
+glibc's heap (`mallinfo2`) with the trees of the whole input kept.
+
+Run `make bench` to measure Oyl alone. `make bench-compare` runs the event
+table above with whichever libraries are installed, and
+`make bench-compare-tree` the tree tables; see `bench/compare/run.sh` for
+adding rapidyaml (`RYML_HEADER`, `RYML_SRC`) and your own files (`CASES`).
 
 ## Conformance and Testing
 
