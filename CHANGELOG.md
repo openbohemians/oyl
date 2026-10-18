@@ -1,5 +1,104 @@
 # Changelog
 
+## 1.2.0 (unreleased)
+
+### Added
+
+- **Trees.** `oyl_parse_tree` reads a document into memory: one array of
+  32-byte nodes in document order, each collection with the size of its
+  subtree instead of links. Text stays in the input except what the
+  parser rewrote, which goes into a pool, so a tree holds offsets, not
+  pointers, and bindings can copy or read it whole. Plain scalars are
+  typed while building, by the document's dialect. `oyl_node_get`,
+  `oyl_node_at` and `oyl_node_entries` follow aliases and apply `<<`
+  merges in the dialect's order; `oyl_node_value`, `oyl_node_tag` and
+  `oyl_node_mark` read a node. Every valid YAML Test Suite case's tree
+  replays the parser's events exactly, and the fuzzer checks the same.
+- `oyl_emit_tree` writes a tree as one document, exactly as emitting its
+  events would (checked on the suite in every style, and by the fuzzer).
+  From a parser with a schema, whose events tag every node, the tree
+  writes only the tags in the input.
+
+### Changed
+
+- `oyl_parse_json` reads each document into a tree, and writes JSON from
+  it: the same output on 86,914 files (real Kubernetes manifests, local
+  YAML, the fuzz corpus), at the same speed. The one difference: an alias
+  to an unknown anchor is now reported before an alias inside its own
+  anchor, as go-yaml v2 reports them.
+
+### Performance
+
+- Schemas index their rules by first byte, so typing a scalar tries only
+  the rules that could accept it: for text starting with `n`, go-yaml v2's
+  schema tries `null`, `n` and `no`, not all 30 rules. Building a tree is
+  about 8% faster for it.
+- The emitter is 1.5x to 7x faster, with the same output byte for byte:
+  it decides a scalar's style in one pass over it instead of up to four,
+  writes quoted scalars a chunk at a time, no longer counts output
+  columns it never used, and emits events and trees without building an
+  event per node. Writing held trees as YAML: block mappings 214 to 340
+  MB/s, the largest Kubernetes CRD 705 to 1531, multi-line plain scalars
+  334 to 2352.
+
+### Fixed
+
+- `oyl_parser_new` and `oyl_scanner_new` read NULL input of length 0 as
+  empty text; before, the scanner took offsets from the NULL pointer. NULL
+  with a length gives NULL.
+
+## 1.1.0 (unreleased)
+
+### Added
+
+- **Scalar values.** `oyl_schema_value` gives a scalar event's value as an
+  `oyl_value`: null, bool, int, uint, float, or text. A schema is now an
+  ordered list of tags bound to parsers, and the parser that types a
+  scalar also gives its value. It needs no schema on the parser, so the
+  faster incremental parser can stay on.
+- **Dialect flags** for the built-in int and float parsers
+  (`oyl_schema_builder_add_int_flags`, `oyl_schema_builder_add_float_flags`):
+  `0x`/`0o`/`0b` prefixes, leading-zero octal, underscores, range limits.
+- **Custom types:** `oyl_schema_builder_add_type` binds a tag to your own
+  parser. Binding a built-in tag such as `!!int` redefines it.
+- **`oyl_schema_goyaml2()`**, go-yaml v2's types as Kubernetes reads YAML:
+  `yes`/`no`/`on`/`off`/`y`/`n` booleans, `0777` octal, `0b` binary,
+  underscores, timestamps, and an int beyond 64 bits as a float. Checked
+  against go-yaml v2 itself on about 1.5 million generated and 55,000
+  real-world scalars, with no difference in tag or value.
+- `OYL_TAG_TIMESTAMP`.
+- **`oyl_parse_json`**: YAML documents as JSON. With the go-yaml v2 schema
+  and `OYL_JSON_KUBERNETES`, byte for byte `sigs.k8s.io/yaml`'s
+  `YAMLToJSON`, as Kubernetes reads manifests: go-yaml v2's merge order,
+  sorted keys, Go's number and string formatting. Of 866 documents from
+  public Kubernetes manifests, 857 convert identically and 5 fail alike;
+  the other 4 are where libyaml's syntax differs from YAML 1.2. About six
+  times as fast. With the Core schema and `OYL_JSON_MERGE`, standard JSON.
+
+- **Dialects**: a schema, syntax leniencies and a merge order, chosen per
+  document by its directives: a `%TAG !!` prefix the program registered,
+  else its `%YAML` version (1.1 and 1.2 built in), else the parser's
+  default (`oyl_parser_set_dialect`, `oyl_parser_add_dialect`). Built in:
+  YAML 1.2, YAML 1.1, and go-yaml v2 with libyaml's leniencies, which
+  makes `oyl_parse_json` identical to `sigs.k8s.io/yaml` on all 866
+  documents of the Kubernetes manifests it was checked on.
+- **`oyl_schema_yaml11()`**, YAML 1.1's types as the 1.1 spec has them
+  (base 60, 0-octal, y/n booleans, timestamps), with new int and float
+  flags for them.
+- **Warnings**, to a callback (`oyl_parser_set_warn`).
+- `oyl_parser_document_dialect`, `oyl_parser_yaml_version`, `OYL_TAG_VALUE`.
+
+### Changed
+
+- With a schema set, a document that says `%YAML 1.1` is typed with YAML
+  1.1's types (`yes` is true), as the directive asks; before, with the
+  parser's schema. Documents without the directive are unchanged.
+
+### Performance
+
+- Tag resolution is about 40% faster with the Core schema: a word rule
+  checks the length before anything else.
+
 ## 1.0.1 (unreleased)
 
 ### Fixed

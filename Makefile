@@ -50,10 +50,13 @@ TEST_MERGE := $(OBJDIR)/test_merge
 TEST_RESOLVE := $(OBJDIR)/test_resolve
 TEST_ERRORS := $(OBJDIR)/test_errors
 TEST_FLOW := $(OBJDIR)/test_flow
+TEST_JSON := $(OBJDIR)/test_json
+TEST_DIALECT := $(OBJDIR)/test_dialect
+TEST_TREE := $(OBJDIR)/test_tree
 
 .PHONY: all static shared pkgconfig install uninstall dist version \
         clean test test-suite test-schema test-emitter test-merge \
-        test-resolve test-errors test-flow test-all bench bench-parser bench-cmp bench-parser-cmp bench-compare bench-classify bench-oracle bench-parallel
+        test-resolve test-errors test-flow test-json test-dialect test-tree test-all bench bench-parser bench-cmp bench-parser-cmp bench-compare bench-compare-tree bench-compare-emit bench-classify bench-oracle bench-parallel
 
 all: $(LIB) $(TEST)
 
@@ -163,6 +166,15 @@ $(TEST_ERRORS): $(TESTDIR)/test_errors.c $(LIB)
 $(TEST_FLOW): $(TESTDIR)/test_flow.c $(LIB)
 	$(CC) $(OYL_CFLAGS) $< $(LIB) -o $@
 
+$(TEST_JSON): $(TESTDIR)/test_json.c $(LIB)
+	$(CC) $(OYL_CFLAGS) $< $(LIB) -lm -o $@
+
+$(TEST_DIALECT): $(TESTDIR)/test_dialect.c $(LIB)
+	$(CC) $(OYL_CFLAGS) $< $(LIB) -lm -o $@
+
+$(TEST_TREE): $(TESTDIR)/test_tree.c $(LIB)
+	$(CC) $(OYL_CFLAGS) $< $(LIB) -lm -o $@
+
 test: $(TEST)
 	@echo "─── Running scanner tests ───"
 	@./$(TEST)
@@ -195,7 +207,19 @@ test-flow: $(TEST_FLOW)
 	@echo "─── Running flow tests ───"
 	@./$(TEST_FLOW)
 
-test-all: test test-suite test-schema test-emitter test-merge test-resolve test-errors test-flow
+test-json: $(TEST_JSON)
+	@echo "─── Running JSON tests ───"
+	@./$(TEST_JSON)
+
+test-dialect: $(TEST_DIALECT)
+	@echo "─── Running dialect tests ───"
+	@./$(TEST_DIALECT)
+
+test-tree: $(TEST_TREE)
+	@echo "─── Running tree tests ───"
+	@./$(TEST_TREE)
+
+test-all: test test-suite test-schema test-emitter test-merge test-resolve test-errors test-flow test-json test-dialect test-tree
 
 bench: $(OBJDIR)/bench_scanner $(OBJDIR)/bench_parser
 	@./$(OBJDIR)/bench_scanner $(SIZE)
@@ -210,6 +234,14 @@ bench-cmp: $(OBJDIR)/bench_scanner_cmp
 # Compare with libyaml, libfyaml and rapidyaml; see bench/compare/run.sh
 bench-compare:
 	@bench/compare/run.sh $(SIZE)
+
+# The same with every library building its tree, and the memory trees hold
+bench-compare-tree:
+	@MODE=tree bench/compare/run.sh $(SIZE)
+
+# The same with every library writing its trees, built beforehand, as YAML
+bench-compare-emit:
+	@MODE=emit bench/compare/run.sh $(SIZE)
 
 # Compare plain-scalar classifiers inside the parser; see bench/classify/run.sh
 bench-classify:
