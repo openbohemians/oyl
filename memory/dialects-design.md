@@ -32,6 +32,25 @@ custom tags or unhashable keys, a loader matter.) Found on the way: libyaml 0.2.
 rejects `\'` and accepts `%YAML 1.2`, so `OYL_SYNTAX_LIBYAML` was renamed
 `OYL_SYNTAX_GOYAML2`: those leniencies are go-yaml v2's.
 
+**The claim is "PyYAML's types and merge" (the user agreed, 2026-10-18):**
+a document PyYAML reads gets the same values, with two exceptions (ints
+beyond 64 bits; key equality, below), and libyaml's malformed leniencies
+are errors, the converter's to fix. Merges checked the same day, in
+trees, JSON and `oyl_parser_set_merge`, on 34 cases and 4,000 random
+documents (nested, repeated and sequence merges, aliases to sequences);
+fixed in `5c12136` so all three give PyYAML's values: a later `<<` wins
+over an earlier one; an alias to a sequence of mappings merges as the
+sequence (YAML's merge only: go-yaml v2 rejects it); and in the parser's
+merge, sources' own merges first, tags (`!!merge "<<"` merges, `!!str <<`
+doesn't under YAML 1.1's schema), and a self-containing `<<` stays a key.
+Not matched, on purpose: PyYAML's key order (merged keys first, from the
+last source), since mappings are unordered. **Open: key equality.** Trees
+match keys by text, PyYAML by value: `yes`/`true`, `0x1`/`1`, `~`/`null`
+are one key to PyYAML and two to Oyl; `1`/`"1"` the reverse (and Python
+also folds `True`/`1`/`1.0`). No such pair in 10,541 real files
+(`keyclash.py`). Left as is and told the user; changing it would touch the
+tree design's text lookup.
+
 **Agreed with the user, 2026-10-11** (decisions at the end). **Built
 2026-10-11 on `schema-parsers`**: `a9d8fd5` (the YAML 1.1 schema), `8dc86a2`
 (dialects, warnings, oyl_parse_json with dialects); CI green. As built:
