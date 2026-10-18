@@ -1,6 +1,20 @@
 # Dialects: directives choose a document's behavior
 
-*Updated 2026-10-11*
+*Updated 2026-10-18*
+
+**YAML 1.1 means libyaml with PyYAML (the user, 2026-10-18):** "if we
+had to choose between the two, libyaml ... since that is the one in
+common usage" (between the 1.1 spec and libyaml). Built in `73c5f67`: the
+YAML 1.1 schema types exactly as PyYAML's resolver (y/Y/n/N text; no sign
+before a leading-dot float, `OYL_FLOAT_DOT_NO_SIGN`), and the YAML 1.1
+dialect takes `OYL_SYNTAX_EOF_NO_BREAK`. Checked against PyYAML 6.0.3,
+CSafeLoader and SafeLoader alike: 100 tricky scalars identical; 57,231
+distinct plain scalars from 11,058 local files, every tag identical
+(values differ only for ints beyond 64 bits, text in Oyl). Not taken on:
+libyaml's acceptance of invalid YAML (tabs as indentation, # after text:
+the converter's ground, ideas.md). Found on the way: libyaml 0.2.5
+rejects `\'` and accepts `%YAML 1.2`, so `OYL_SYNTAX_LIBYAML` was renamed
+`OYL_SYNTAX_GOYAML2`: those leniencies are go-yaml v2's.
 
 **Agreed with the user, 2026-10-11** (decisions at the end). **Built
 2026-10-11 on `schema-parsers`**: `a9d8fd5` (the YAML 1.1 schema), `8dc86a2`
