@@ -36,7 +36,8 @@ Clean so far: the two dispatched runs on `ec481e5` (1 ASan, 1 UBSan, the
 tree code's first batch runs), and a local 30-minute run on `ada453c`
 (2026-10-18, 5.7M inputs, the user asked for it). Since then main has
 `8b2a7e2` (a tree's dialect could point into a freed parser; found by
-the Rust binding).
+the Rust binding) and `78046aa` (`oyl_schema_value_of` public, for
+bindings).
 
 ## 1.0.1 (on main, not tagged; superseded by 1.2.0)
 
@@ -202,9 +203,18 @@ value, mark, span, raw_nodes; Send + Sync; `Emitter::tree`), `Value`,
 fixed in `8b2a7e2`: a tree's dialect pointed into the parser when only a
 schema was set. **To publish:** after Oyl 1.2.0 is tagged, re-vendor the
 tag (oyl-sys becomes 0.2.0+1.2.0), merge `oyl-1.2` into main, and ask
-the user before `cargo publish --workspace`. **Next (step 3, agreed in
-principle):** serde, `oyl::from_str` as a Deserializer over the tree,
-behind a feature (serde_yaml was archived in 2024).
+the user before `cargo publish --workspace`. **Step 3 done 2026-10-18
+(`e433cfa`):** the `serde` feature: `from_str`/`from_slice`/`from_reader`
+(YAML 1.2), `from_str_with`/`from_slice_with` (a dialect), `from_node`;
+strict duplicate keys (an error whatever the target type: serde_yaml
+only errors for its own Value and structs), any scalar's text into a
+string field but a null, enums as string / one-key map / `!Variant`
+(content typed as if untagged through `Schema::value`, which needed the
+new public C `oyl_schema_value_of`, `78046aa`), depth 128 and an alias
+budget (100 x nodes + 1M). 12 serde tests. Measured on 848 k8s manifests
+against serde_yaml 0.9.34 (scratch crate, not in the repo): 2.3x into a
+generic value, 4.2x into a typed struct; in the README. Not done: a
+Serializer (`to_string`), which would complete a serde_yaml replacement.
 
 ### Go
 
