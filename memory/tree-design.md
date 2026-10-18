@@ -422,5 +422,8 @@ result must be byte for byte the tree one thread builds: an exact test.
   rapidyaml ahead on 8 of 13 (JSON 396/368, travis 1097/895, dquot
   1469/612), behind on block 339/381, appveyor 674/759, the CRD
   1518/1769, folded 1663/1744, literal 1400/1422. What's left is spread
-  over many small per-node costs (no hotspot). Emitter numbers are not in
-  the README (offered to the user).
+  over many small per-node costs (no hotspot).
+- **Emitter table published** (the user asked, 2026-10-17): README
+  "Writing YAML" (`ec481e5`), from `make bench-compare-emit` (the emit
+  harnesses are now in bench/compare), 3 passes at 10 MB within 6%
+  (libfyaml on the CRD, 17%).
