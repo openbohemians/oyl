@@ -2854,10 +2854,9 @@ static bool fk_colon_follows(const char *input, size_t len, size_t i) {
     for (size_t j = i + 1; j < len; j++) {
         char nc = input[j];
         if (nc == ' ' || nc == '\t' || nc == '\n' || nc == '\r') continue;
-        if (nc == '#') {
-            const char *nl = memchr(input + j, '\n', len - j);
-            if (!nl) return false;
-            j = (size_t)(nl - input);
+        if (nc == '#') {   /* a comment runs to a line break: \n or \r */
+            while (j < len && input[j] != '\n' && input[j] != '\r') j++;
+            if (j == len) return false;
             continue;
         }
         return nc == ':';
@@ -2977,11 +2976,12 @@ static bool fk_scan(oyl_parser *p, size_t offset) {
             }
             break;
         case '#':
-            /* a comment runs to the next \n, which it consumes */
+            /* a comment runs to the next line break (\n or \r, which
+             * the scanner takes as one too), and consumes it */
             if (i > 0 && (input[i - 1] == ' ' || input[i - 1] == '\t' ||
                           input[i - 1] == '\n' || input[i - 1] == '\r')) {
                 size_t k;
-                while ((k = fk_next(&cur)) != len && input[k] != '\n') {}
+                while ((k = fk_next(&cur)) != len && input[k] != '\n' && input[k] != '\r') {}
                 if (k == len) goto unterminated;
             }
             break;
