@@ -14,6 +14,7 @@
 #include "oyl_chars.h"
 #include "oyl_simd.h"
 
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -22,10 +23,12 @@
 
 #define INDENT_STACK_INIT 16
 
+/* Indentation and columns are signed, -1 being none (the top level), and
+ * as wide as offsets, so a line can be as long as the input */
 typedef struct {
-    int  *data;
-    int   len;
-    int   cap;
+    ptrdiff_t *data;
+    int        len;
+    int        cap;
 } indent_stack;
 
 /* ── Scanner state ───────────────────────────────────────── */
@@ -43,7 +46,7 @@ struct oyl_scanner {
 
     /* state */
     int          flow_level;
-    int          indent;
+    ptrdiff_t    indent;
     indent_stack indents;
     bool         stream_started;
     bool         stream_ended;
@@ -56,7 +59,7 @@ struct oyl_scanner {
     int          pending_count;
 
     /* track last token's start column (0-based) for mapping indent detection */
-    int          last_token_col;
+    ptrdiff_t    last_token_col;
     /* true if last token was a quoted scalar (for JSON-like key detection) */
     bool         last_was_quoted;
 
@@ -64,7 +67,7 @@ struct oyl_scanner {
     oyl_arena   *arena;
 
     /* implicit-key check (see check_implicit_key) */
-    struct { oyl_mark open; bool is_map; int props_col; } *flows;
+    struct { oyl_mark open; bool is_map; ptrdiff_t props_col; } *flows;
                                    /* open flow brackets, with the column of
                                     * props right before them (or -1) */
     int          flows_len, flows_cap;
@@ -74,9 +77,9 @@ struct oyl_scanner {
     int          explicit_depth;   /* ... at this flow depth */
     size_t       key_colon_line;   /* line of the last block implicit-key ':' */
     size_t       node_start;       /* start offset of the last noted node */
-    int          node_col;         /* its 0-based start column */
+    ptrdiff_t    node_col;         /* its 0-based start column */
     size_t       props_end;        /* end offset of the last anchor/tag run */
-    int          props_col;        /* 0-based column where that run starts */
+    ptrdiff_t    props_col;        /* 0-based column where that run starts */
     size_t       indicator_end;    /* offset just past the last block - ? : */
 
     /* the document's syntax leniencies (OYL_SYNTAX_), and where to warn
@@ -160,7 +163,7 @@ static bool continuation_indent_ok(const oyl_scanner *s, char closer) {
     size_t line_start = s->pos - (s->col - 1);
     size_t k = line_start;
     while (k < s->pos && s->buf[k] == ' ') k++;
-    return (long)(k - line_start) > (long)s->indent;
+    return (ptrdiff_t)(k - line_start) > s->indent;
 }
 
 /* Skip whitespace, line breaks and comments. Returns an error message, or
@@ -208,7 +211,7 @@ ALWAYS_INLINE const char *skip_blanks_and_comments(oyl_scanner *s) {
     if (line_start != SIZE_MAX && s->flow_level == 0 && !AT_END(s)) {
         size_t spaces = line_start;
         while (spaces < s->pos && s->buf[spaces] == ' ') spaces++;
-        if (spaces < s->pos && (long)(spaces - line_start) <= (long)s->indent)
+        if (spaces < s->pos && (ptrdiff_t)(spaces - line_start) <= s->indent)
             return "tabs are not allowed as indentation";
     }
     return NULL;
@@ -255,7 +258,7 @@ static oyl_mark flow_pop(oyl_scanner *s) {
 static inline void note_node(oyl_scanner *s, oyl_mark start, size_t end) {
     s->node_line = start.line;
     s->node_start = start.offset;
-    s->node_col = (int)start.col - 1;
+    s->node_col = (ptrdiff_t)start.col - 1;
     s->node_end = end;
 }
 
@@ -271,7 +274,7 @@ static bool only_blanks_between(const oyl_scanner *s, size_t from, size_t to) {
  * on a line form one run, which starts at the first of them. */
 static void note_props(oyl_scanner *s, oyl_mark start, size_t end) {
     if (!only_blanks_between(s, s->props_end, start.offset))
-        s->props_col = (int)start.col - 1;
+        s->props_col = (ptrdiff_t)start.col - 1;
     s->props_end = end;
 }
 
@@ -328,11 +331,11 @@ static int classify_colon(oyl_scanner *s) {
 
 /* ── Indent management ───────────────────────────────────── */
 
-static bool indent_push(oyl_scanner *s, int col) {
+static bool indent_push(oyl_scanner *s, ptrdiff_t col) {
     indent_stack *st = &s->indents;
     if (st->len >= st->cap) {
         int new_cap = st->cap * 2;
-        int *new_data = (int *)realloc(st->data, new_cap * sizeof(int));
+        ptrdiff_t *new_data = realloc(st->data, (size_t)new_cap * sizeof *new_data);
         if (!new_data) return false;
         st->data = new_data;
         st->cap  = new_cap;
@@ -370,7 +373,7 @@ static oyl_token tok_scalar(oyl_str value, oyl_scalar_style style,
     };
 }
 
-static bool maybe_unroll_indents(oyl_scanner *s, int col) {
+static bool maybe_unroll_indents(oyl_scanner *s, ptrdiff_t col) {
     while (s->indent > col) {
         indent_pop(s);
     }
@@ -535,8 +538,8 @@ static oyl_status scan_plain_scalar(oyl_scanner *s, oyl_token *tok) {
                 break;
             }
 
-            int next_indent = (int)s->col - 1;
-            int min_indent = s->indent + 1;
+            ptrdiff_t next_indent = (ptrdiff_t)s->col - 1;
+            ptrdiff_t min_indent = s->indent + 1;
             if (min_indent < 0) min_indent = 0;
 
             if (next_indent < min_indent) {
@@ -620,7 +623,7 @@ static oyl_status scan_plain_scalar(oyl_scanner *s, oyl_token *tok) {
     TRIM_TRAILING();
 
     oyl_mark end = mark(s);
-    s->last_token_col = (int)start.col - 1;  /* 0-based col of this scalar */
+    s->last_token_col = (ptrdiff_t)start.col - 1;  /* 0-based col of this scalar */
     if (in_buf) {
         buf[out] = '\0';
         note_node(s, start, end.offset);
@@ -649,7 +652,7 @@ static oyl_status scan_single_quoted(oyl_scanner *s, oyl_token *tok) {
             oyl_str val = {s->buf + s->pos, j - s->pos};
             s->col += j + 1 - s->pos;
             s->pos = j + 1;
-            s->last_token_col = (int)start.col - 1;
+            s->last_token_col = (ptrdiff_t)start.col - 1;
             s->last_was_quoted = true;
             note_node(s, start, s->pos);
             *tok = tok_scalar(val, OYL_SCALAR_SINGLE_QUOTED, start, mark(s));
@@ -720,7 +723,7 @@ static oyl_status scan_single_quoted(oyl_scanner *s, oyl_token *tok) {
     advance(s, 1); /* skip closing ' */
 
     buf[out] = '\0';
-    s->last_token_col = (int)start.col - 1;
+    s->last_token_col = (ptrdiff_t)start.col - 1;
     s->last_was_quoted = true;
     note_node(s, start, s->pos);
     *tok = tok_scalar((oyl_str){buf, out}, OYL_SCALAR_SINGLE_QUOTED, start, mark(s));
@@ -740,7 +743,7 @@ static oyl_status scan_double_quoted(oyl_scanner *s, oyl_token *tok) {
             oyl_str val = {s->buf + s->pos, j - s->pos};
             s->col += j + 1 - s->pos;
             s->pos = j + 1;
-            s->last_token_col = (int)start.col - 1;
+            s->last_token_col = (ptrdiff_t)start.col - 1;
             s->last_was_quoted = true;
             note_node(s, start, s->pos);
             *tok = tok_scalar(val, OYL_SCALAR_DOUBLE_QUOTED, start, mark(s));
@@ -910,7 +913,7 @@ static oyl_status scan_double_quoted(oyl_scanner *s, oyl_token *tok) {
     advance(s, 1);
 
     buf[out] = '\0';
-    s->last_token_col = (int)start.col - 1;
+    s->last_token_col = (ptrdiff_t)start.col - 1;
     s->last_was_quoted = true;
     note_node(s, start, s->pos);
     *tok = tok_scalar((oyl_str){buf, out}, OYL_SCALAR_DOUBLE_QUOTED, start, mark(s));
@@ -937,7 +940,7 @@ static oyl_status scan_tag(oyl_scanner *s, oyl_token *tok) {
             SCAN_ERROR(s, "invalid verbatim tag");
         advance(s, 1);
         size_t len = BUF_AT(s) - tag_start;
-        s->last_token_col = (int)start.col - 1;
+        s->last_token_col = (ptrdiff_t)start.col - 1;
         note_props(s, start, s->pos);
         *tok = (oyl_token){
             .type  = OYL_TOK_TAG,
@@ -956,7 +959,7 @@ static oyl_status scan_tag(oyl_scanner *s, oyl_token *tok) {
     }
 
     size_t len = BUF_AT(s) - tag_start;
-    s->last_token_col = (int)start.col - 1;
+    s->last_token_col = (ptrdiff_t)start.col - 1;
     note_props(s, start, s->pos);
     *tok = (oyl_token){
         .type  = OYL_TOK_TAG,
@@ -985,7 +988,7 @@ static oyl_status scan_anchor_or_alias(oyl_scanner *s, oyl_token *tok) {
     size_t name_len = BUF_AT(s) - name_start;
     if (name_len == 0) SCAN_ERROR(s, "empty anchor or alias name");
 
-    s->last_token_col = (int)start.col - 1;
+    s->last_token_col = (ptrdiff_t)start.col - 1;
     if (!is_anchor) note_node(s, start, s->pos);
     else note_props(s, start, s->pos);
     *tok = (oyl_token){
@@ -1058,7 +1061,7 @@ oyl_scanner *oyl_scanner_new(const char *input, size_t len, oyl_arena *a) {
 
     s->indents.cap  = INDENT_STACK_INIT;
     s->indents.len  = 0;
-    s->indents.data = (int *)malloc(INDENT_STACK_INIT * sizeof(int));
+    s->indents.data = malloc(INDENT_STACK_INIT * sizeof *s->indents.data);
     if (!s->indents.data) { free(s); return NULL; }
 
     return s;
@@ -1110,7 +1113,7 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
      * This ensures s->indent reflects the actual nesting depth,
      * which is needed for plain scalar continuation checks. */
     if (s->flow_level == 0) {
-        int cur_col = (int)s->col - 1;  /* 0-based */
+        ptrdiff_t cur_col = (ptrdiff_t)s->col - 1;  /* 0-based */
         maybe_unroll_indents(s, cur_col);
     }
 
@@ -1203,7 +1206,7 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
                 SCAN_ERROR(s, "block sequence entries are not allowed on the same line as a mapping key");
             if (tab_after_indicator(s, s->pos))
                 SCAN_ERROR(s, "tabs are not allowed before a nested block collection");
-            int col = (int)s->col - 1;
+            ptrdiff_t col = (ptrdiff_t)s->col - 1;
             if (col > s->indent) {
                 indent_push(s, col);
             }
@@ -1223,7 +1226,7 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
                 SCAN_ERROR(s, "mapping values are not allowed on the same line as another key");
             if (tab_after_indicator(s, s->pos))
                 SCAN_ERROR(s, "tabs are not allowed before a nested block collection");
-            int qcol = (int)s->col - 1;
+            ptrdiff_t qcol = (ptrdiff_t)s->col - 1;
             if (qcol > s->indent) {
                 indent_push(s, qcol);
             }
@@ -1251,13 +1254,13 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
     if (c == ':') {
         uint8_t next = PEEK_AT(s, 1);
         if (s->flow_level == 0 && (oyl_is_blank_or_break(next) || next == 0)) {
-            int colon_col = (int)s->col - 1;
+            ptrdiff_t colon_col = (ptrdiff_t)s->col - 1;
             /* when a node (scalar, alias, or flow collection) directly
              * precedes the ':', the key starts where it does, or at props
              * right before it on its line ("&k key:", "!!map {a: b}:");
              * an empty key starts at its props ("&k :") or the ':' itself
              * ("- : v") */
-            int key_col = colon_col;
+            ptrdiff_t key_col = colon_col;
             if (only_blanks_between(s, s->node_end, s->pos)) {
                 key_col = s->node_col;
                 if (only_blanks_between(s, s->props_end, s->node_start))
@@ -1267,7 +1270,7 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
             }
             /* use minimum of key and colon column — handles explicit key
              * (? key\n: val) where colon_col is the mapping indent */
-            int map_col = key_col < colon_col ? key_col : colon_col;
+            ptrdiff_t map_col = key_col < colon_col ? key_col : colon_col;
             int kind = classify_colon(s);
             if (kind == COLON_BAD_KEY)
                 SCAN_ERROR(s, "implicit key must be on a single line");
@@ -1348,17 +1351,17 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
         if (!AT_END(s)) skip_break(s);
 
         /* determine content indent level */
-        int base_indent;
+        ptrdiff_t base_indent;
         if (explicit_indent > 0) {
             base_indent = s->indent + explicit_indent;
             if (base_indent < explicit_indent) base_indent = explicit_indent;
         } else {
             /* auto-detect from first non-empty content line */
             base_indent = -1; /* sentinel: not yet detected */
-            int max_empty_indent = 0; /* longest whitespace-only line */
+            ptrdiff_t max_empty_indent = 0; /* longest whitespace-only line */
             size_t probe = s->pos;
             while (probe < s->len) {
-                int li = 0;
+                ptrdiff_t li = 0;
                 while (probe + li < s->len && s->buf[probe + li] == ' ') li++;
                 if (probe + li >= s->len) {
                     if (li > max_empty_indent) max_empty_indent = li;
@@ -1375,7 +1378,7 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
                     continue;
                 }
                 /* content must be indented deeper than the current block level */
-                int min_indent = s->indent + 1;
+                ptrdiff_t min_indent = s->indent + 1;
                 if (min_indent < 0) min_indent = 0;
                 if (li >= min_indent) {
                     base_indent = li;
@@ -1388,7 +1391,7 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
             }
             if (base_indent < 0) {
                 /* no content lines — use longest empty line (YAML 1.2 §8.1.2) */
-                int min_indent = s->indent + 1;
+                ptrdiff_t min_indent = s->indent + 1;
                 if (min_indent < 1) min_indent = 1;
                 base_indent = max_empty_indent > min_indent ? max_empty_indent : min_indent;
             }
@@ -1399,7 +1402,7 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
         size_t save_pos = s->pos, save_line = s->line, save_col = s->col;
         size_t needed = 0;
         while (s->pos < s->len) {
-            int li = 0;
+            ptrdiff_t li = 0;
             while (s->pos + li < s->len && s->buf[s->pos + li] == ' ') li++;
             if (s->pos + li >= s->len) {
                 /* trailing blank line at end; as in the copy pass below,
@@ -1456,13 +1459,13 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
         size_t out = 0;
 
         /* track line structure for folded mode */
-        typedef struct { size_t start; size_t len; bool empty; int extra_indent; } bsline;
+        typedef struct { size_t start; size_t len; bool empty; ptrdiff_t extra_indent; } bsline;
         bsline *lines = NULL;
-        int nlines = 0, lines_cap = 0;
+        size_t nlines = 0, lines_cap = 0;
         if (style == OYL_SCALAR_FOLDED) {
             /* count lines for allocation */
             size_t tp = s->pos;
-            int cnt = 0;
+            size_t cnt = 0;
             while (tp < end_pos) {
                 tp += oyl_scan_to_break(s->buf + tp, end_pos - tp);
                 cnt++;
@@ -1478,7 +1481,7 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
          * it may not (see OYL_SYNTAX_EOF_NO_BREAK) */
         bool terminated = true;
         while (s->pos < end_pos) {
-            int li = 0;
+            ptrdiff_t li = 0;
             while (s->pos + li < s->len && s->buf[s->pos + li] == ' ') li++;
             bool line_is_break = (s->pos + li >= end_pos) ||
                                  (s->pos + li < s->len && oyl_is_break((uint8_t)s->buf[s->pos + li]));
@@ -1496,7 +1499,7 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
             /* whitespace-only lines ABOVE base indent (li > base_indent)
              * fall through to content handler (extra spaces are content) */
             if (!line_is_break && li < base_indent) break;
-            int extra = li - base_indent;
+            ptrdiff_t extra = li - base_indent;
             advance_cols(s, (size_t)base_indent);   /* indentation: spaces */
 
             size_t line_content_start = out;
@@ -1529,7 +1532,7 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
             if (!fbuf) return OYL_ERR_MEMORY;
             size_t fout = 0;
 
-            int i = 0;
+            size_t i = 0;
             while (i < nlines) {
                 if (lines[i].empty) {
                     /* leading empty lines (before any content) → preserve */
@@ -1545,8 +1548,8 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
                 bool more_indented = lines[i].extra_indent > 0;
 
                 /* count following empty lines */
-                int empty_count = 0;
-                int j = i + 1;
+                size_t empty_count = 0;
+                size_t j = i + 1;
                 while (j < nlines && lines[j].empty) {
                     empty_count++;
                     j++;
@@ -1555,21 +1558,21 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
                 if (j >= nlines) {
                     /* no more content after this — final break + any trailing empties */
                     fbuf[fout++] = '\n';
-                    for (int k = 0; k < empty_count; k++)
+                    for (size_t k = 0; k < empty_count; k++)
                         fbuf[fout++] = '\n';
                 } else if (more_indented) {
                     /* more-indented: always preserve break */
                     fbuf[fout++] = '\n';
                     /* plus any empty lines */
-                    for (int k = 0; k < empty_count; k++)
+                    for (size_t k = 0; k < empty_count; k++)
                         fbuf[fout++] = '\n';
                 } else if (empty_count > 0) {
                     /* normal line → empty line(s):
                      * if next content is more-indented, fold break is preserved
                      * (empty_count + 1), otherwise absorbed (empty_count) */
-                    int n = empty_count;
+                    size_t n = empty_count;
                     if (j < nlines && lines[j].extra_indent > 0) n++;
-                    for (int k = 0; k < n; k++)
+                    for (size_t k = 0; k < n; k++)
                         fbuf[fout++] = '\n';
                 } else if (lines[j].extra_indent > 0) {
                     /* next is more-indented: preserve break */
@@ -1655,7 +1658,7 @@ void oyl_scanner_set_syntax(oyl_scanner *s, unsigned syntax, oyl_warn_state *w) 
 
 bool oyl_scanner_copy(oyl_scanner *dst, const oyl_scanner *src) {
     if (dst->indents.cap < src->indents.len) {
-        int *d = realloc(dst->indents.data, (size_t)src->indents.cap * sizeof *d);
+        ptrdiff_t *d = realloc(dst->indents.data, (size_t)src->indents.cap * sizeof *d);
         if (!d) return false;
         dst->indents.data = d;
         dst->indents.cap = src->indents.cap;

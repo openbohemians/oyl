@@ -14,6 +14,7 @@
 #include "oyl_internal.h"
 #include "oyl_simd.h"
 #include <limits.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -28,8 +29,8 @@ typedef enum {
 } ctx_type;
 
 typedef struct {
-    ctx_type type;
-    int      indent;
+    ctx_type  type;
+    ptrdiff_t indent;
 } ctx_entry;
 
 /* ── Incremental parser states ──────────────────────────── */
@@ -64,7 +65,7 @@ typedef enum {
 
 typedef struct {
     ctx_type     type;
-    int          indent;
+    ptrdiff_t    indent;
     parser_state return_state;
 } state_frame;
 
@@ -97,7 +98,7 @@ struct oyl_parser {
     bool    has_anchor;
     bool    has_tag;
     size_t  props_line;  /* line where first prop was consumed */
-    int     props_col;   /* column (0-based) where first prop was consumed */
+    ptrdiff_t props_col;   /* column (0-based) where first prop was consumed */
     oyl_mark props_start; /* full mark of first property token */
 
     /* tag directives: handle → prefix mapping */
@@ -161,7 +162,7 @@ struct oyl_parser {
     int          out_len;
     int          out_cursor;
     oyl_event    saved_node;    /* saved scalar/alias for : lookahead */
-    int          saved_node_col;
+    ptrdiff_t    saved_node_col;
     bool         have_saved_node;
     parser_state unroll_return;
     parser_state node_return;  /* where to go after a block node completes */
@@ -283,7 +284,7 @@ static inline bool dequeue(oyl_parser *p, oyl_event *evt) {
     return true;
 }
 
-static inline bool push_ctx(oyl_parser *p, ctx_type type, int indent) {
+static inline bool push_ctx(oyl_parser *p, ctx_type type, ptrdiff_t indent) {
     if ((type == CTX_BLOCK_MAP || type == CTX_BLOCK_SEQ) && p->doc_start_line &&
         p->current.start.line == p->doc_start_line) {
         stop_with(p, OYL_ERR_PARSE, "block collection cannot start on the '---' line");
@@ -340,8 +341,8 @@ static inline oyl_token_type tok_type(oyl_parser *p) {
 }
 
 /* Token column (0-based) */
-static inline int tok_col(oyl_parser *p) {
-    return (int)p->current.start.col - 1;
+static inline ptrdiff_t tok_col(oyl_parser *p) {
+    return (ptrdiff_t)p->current.start.col - 1;
 }
 
 /* ── Context helpers ─────────────────────────────────────── */
@@ -548,7 +549,7 @@ static bool props_continuation_ok(oyl_parser *p) {
     if (!(p->has_anchor || p->has_tag)) return true;
     if (p->current.start.line == p->props_line || in_flow(p)) return true;
     ctx_entry *top = top_ctx(p);
-    int parent = top ? top->indent : -1;
+    ptrdiff_t parent = top ? top->indent : -1;
     return tok_col(p) > parent;
 }
 
@@ -620,9 +621,9 @@ static oyl_status parse_block_node(oyl_parser *p);
 static oyl_status parse_flow_node(oyl_parser *p);
 static oyl_status parse_flow_sequence(oyl_parser *p);
 static oyl_status parse_flow_mapping(oyl_parser *p);
-static oyl_status parse_block_sequence(oyl_parser *p, int seq_indent);
-static oyl_status parse_block_mapping(oyl_parser *p, int map_indent);
-static oyl_status parse_block_map_value(oyl_parser *p, int map_indent);
+static oyl_status parse_block_sequence(oyl_parser *p, ptrdiff_t seq_indent);
+static oyl_status parse_block_mapping(oyl_parser *p, ptrdiff_t map_indent);
+static oyl_status parse_block_map_value(oyl_parser *p, ptrdiff_t map_indent);
 
 /* ── Parse flow sequence contents ────────────────────────── */
 
@@ -873,7 +874,7 @@ static oyl_status parse_flow_node(oyl_parser *p) {
     }
 
     if (tt == OYL_TOK_FLOW_SEQ_START) {
-        int col = tok_col(p);
+        ptrdiff_t col = tok_col(p);
         oyl_mark open_start = p->current.start;
         oyl_mark open_end = p->current.end;
         consume_token(p);
@@ -888,7 +889,7 @@ static oyl_status parse_flow_node(oyl_parser *p) {
     }
 
     if (tt == OYL_TOK_FLOW_MAP_START) {
-        int col = tok_col(p);
+        ptrdiff_t col = tok_col(p);
         oyl_mark open_start = p->current.start;
         oyl_mark open_end = p->current.end;
         consume_token(p);
@@ -932,7 +933,7 @@ static oyl_status parse_flow_node(oyl_parser *p) {
 
 /* ── Parse block map value ───────────────────────────────── */
 
-static oyl_status parse_block_map_value(oyl_parser *p, int map_indent) {
+static oyl_status parse_block_map_value(oyl_parser *p, ptrdiff_t map_indent) {
     if (p->oom) return OOM_STATUS(p);
     oyl_status st = peek_token(p);
     if (st != OYL_OK) return st;
@@ -948,7 +949,7 @@ static oyl_status parse_block_map_value(oyl_parser *p, int map_indent) {
     if (st != OYL_OK) return st;
 
     oyl_token_type tt = tok_type(p);
-    int col = tok_col(p);
+    ptrdiff_t col = tok_col(p);
 
     /* empty value cases */
     if (tt == OYL_TOK_STREAM_END || tt == OYL_TOK_DOC_START ||
@@ -973,7 +974,7 @@ static oyl_status parse_block_map_value(oyl_parser *p, int map_indent) {
 
 /* ── Parse block mapping ─────────────────────────────────── */
 
-static oyl_status parse_block_mapping(oyl_parser *p, int map_indent) {
+static oyl_status parse_block_mapping(oyl_parser *p, ptrdiff_t map_indent) {
     oyl_status st;
 
     for (;;) {
@@ -982,7 +983,7 @@ static oyl_status parse_block_mapping(oyl_parser *p, int map_indent) {
         st = peek_token(p);
         if (st != OYL_OK) return st;
 
-        int col = tok_col(p);
+        ptrdiff_t col = tok_col(p);
         oyl_token_type tt = tok_type(p);
 
         /* explicit key ? */
@@ -1055,7 +1056,7 @@ static oyl_status parse_block_mapping(oyl_parser *p, int map_indent) {
         }
 
         /* consume properties that might be on the key */
-        int key_start_col = col; /* remember where the key (or its props) started */
+        ptrdiff_t key_start_col = col; /* remember where the key (or its props) started */
         st = consume_props(p);
         if (st != OYL_OK) return st;
 
@@ -1151,7 +1152,7 @@ static oyl_status parse_block_mapping(oyl_parser *p, int map_indent) {
 
 /* ── Parse block sequence ────────────────────────────────── */
 
-static oyl_status parse_block_sequence(oyl_parser *p, int seq_indent) {
+static oyl_status parse_block_sequence(oyl_parser *p, ptrdiff_t seq_indent) {
     oyl_status st;
 
     for (;;) {
@@ -1210,7 +1211,7 @@ static oyl_status parse_block_node(oyl_parser *p) {
     if (st != OYL_OK) return st;
 
     oyl_token_type tt = tok_type(p);
-    int col = tok_col(p);
+    ptrdiff_t col = tok_col(p);
 
     /* a block sequence must start on a new line after its properties */
     if (tt == OYL_TOK_BLOCK_SEQ_ENTRY && (p->has_anchor || p->has_tag) &&
@@ -1249,7 +1250,7 @@ static oyl_status parse_block_node(oyl_parser *p) {
         p->pending_tag = OYL_STR_NULL;
 
         /* Consume inner node's props to peek at the real structure */
-        int inner_col = tok_col(p);   /* where the inner node (a key?) starts */
+        ptrdiff_t inner_col = tok_col(p);   /* where the inner node (a key?) starts */
         size_t inner_line = p->current.start.line;
         st = consume_props(p);
         if (st != OYL_OK) return st;
@@ -1285,7 +1286,7 @@ static oyl_status parse_block_node(oyl_parser *p) {
 
             /* the key starts at its props when they share its line
              * ("&k a: b" is a key at the column of "&k") */
-            int scalar_col = evt.start.line == inner_line ? inner_col : col;
+            ptrdiff_t scalar_col = evt.start.line == inner_line ? inner_col : col;
             consume_token(p);
 
             st = peek_token(p);
@@ -1383,7 +1384,7 @@ static oyl_status parse_block_node(oyl_parser *p) {
          * is the first key of an implicit block mapping that takes the
          * outer props; otherwise both sets of props are the collection's. */
         if (tt == OYL_TOK_FLOW_SEQ_START || tt == OYL_TOK_FLOW_MAP_START) {
-            int key_col = p->current.start.line == inner_line ? inner_col : col;
+            ptrdiff_t key_col = p->current.start.line == inner_line ? inner_col : col;
             oyl_mark flow_open = p->current.start;
             oyl_mark flow_open_end = p->current.end;
             int coll_idx = p->evt_len;   /* where the collection starts */
@@ -1475,7 +1476,7 @@ static oyl_status parse_block_node(oyl_parser *p) {
         evt.value = p->current.value;
         evt.start = p->current.start;
         evt.end = p->current.end;
-        int alias_col = col;
+        ptrdiff_t alias_col = col;
         consume_token(p);
 
         st = peek_token(p);
@@ -1514,7 +1515,7 @@ static oyl_status parse_block_node(oyl_parser *p) {
     /* flow sequence */
     if (tt == OYL_TOK_FLOW_SEQ_START) {
         /* a key with props on its line starts at them ("&x [a]: b") */
-        int flow_col = ((p->has_anchor || p->has_tag) &&
+        ptrdiff_t flow_col = ((p->has_anchor || p->has_tag) &&
                         p->props_line == p->current.start.line) ? p->props_col : col;
         bool props_before_line = (p->has_anchor || p->has_tag) &&
                                  p->props_line != p->current.start.line;
@@ -1573,7 +1574,7 @@ static oyl_status parse_block_node(oyl_parser *p) {
     /* flow mapping */
     if (tt == OYL_TOK_FLOW_MAP_START) {
         /* a key with props on its line starts at them ("&x [a]: b") */
-        int flow_col = ((p->has_anchor || p->has_tag) &&
+        ptrdiff_t flow_col = ((p->has_anchor || p->has_tag) &&
                         p->props_line == p->current.start.line) ? p->props_col : col;
         bool props_before_line = (p->has_anchor || p->has_tag) &&
                                  p->props_line != p->current.start.line;
@@ -1703,7 +1704,7 @@ static oyl_status parse_block_node(oyl_parser *p) {
         evt.end = p->current.end;
         size_t scalar_line = p->current.start.line;
 
-        int scalar_col = col;
+        ptrdiff_t scalar_col = col;
         consume_token(p);
 
         /* peek for : → simple key (starts a nested mapping) */
@@ -1711,10 +1712,10 @@ static oyl_status parse_block_node(oyl_parser *p) {
         if (st != OYL_OK) return st;
 
         if (key_colon_follows(p, scalar_line)) {
-            int colon_col = tok_col(p);
+            ptrdiff_t colon_col = tok_col(p);
             /* The effective key column considers props on the same line:
              * e.g., "!!str a:" has effective col = 0 (the tag col) */
-            int eff_key_col = scalar_col;
+            ptrdiff_t eff_key_col = scalar_col;
             if ((p->has_anchor || p->has_tag) &&
                 p->props_line == scalar_line &&
                 p->props_col < scalar_col) {
@@ -1737,7 +1738,7 @@ static oyl_status parse_block_node(oyl_parser *p) {
                                     p->props_line != scalar_line;
 
                 /* mapping indent uses effective key col (considers props) */
-                int map_col = eff_key_col;
+                ptrdiff_t map_col = eff_key_col;
 
                 if (props_on_map) {
                     map_evt.start = evt.start;
@@ -1810,7 +1811,7 @@ static oyl_status parse_block_node(oyl_parser *p) {
          * and the mapping starts at them; props on an earlier line belong
          * on the mapping (handled by attach below) */
         if ((p->has_anchor || p->has_tag) && p->props_line == p->current.start.line) {
-            int map_col = p->props_col;
+            ptrdiff_t map_col = p->props_col;
             map_evt.start = p->props_start;
             map_evt.end = p->props_start;
             enqueue(p, &map_evt);
@@ -3227,7 +3228,7 @@ static inline void inc_emit(oyl_parser *p, const oyl_event *evt) {
         p->out_buf[p->out_len++] = *evt;
 }
 
-static inline void inc_push_frame(oyl_parser *p, ctx_type type, int indent,
+static inline void inc_push_frame(oyl_parser *p, ctx_type type, ptrdiff_t indent,
                                    parser_state return_state) {
     if ((type == CTX_BLOCK_MAP || type == CTX_BLOCK_SEQ) && p->doc_start_line &&
         p->current.start.line == p->doc_start_line) {
@@ -3404,7 +3405,7 @@ static oyl_status inc_end_document(oyl_parser *p) {
 
 static oyl_status parser_step_flow(oyl_parser *p) {
     oyl_token_type tt;
-    int col;
+    ptrdiff_t col;
     oyl_event evt;
 
     switch (p->state) {
@@ -3883,7 +3884,7 @@ static oyl_status parser_step_flow(oyl_parser *p) {
 
 static oyl_status parser_step(oyl_parser *p) {
     oyl_token_type tt;
-    int col;
+    ptrdiff_t col;
     oyl_mark mark;
     oyl_event evt;
     state_frame *top;
@@ -4214,7 +4215,7 @@ static oyl_status parser_step(oyl_parser *p) {
 
     case ST_BLOCK_NODE_SEQ: {
         peek_token(p);
-        int seq_indent = tok_col(p);
+        ptrdiff_t seq_indent = tok_col(p);
         evt = evt_simple(OYL_EVT_SEQUENCE_START);
         evt.start = p->current.start;
         evt.end = p->current.end;                         /* the "-" */
@@ -4228,7 +4229,7 @@ static oyl_status parser_step(oyl_parser *p) {
     case ST_BLOCK_NODE_EXPLICIT_KEY: {
         /* ? key: starts a mapping */
         peek_token(p);
-        int map_indent = tok_col(p);
+        ptrdiff_t map_indent = tok_col(p);
         evt = evt_simple(OYL_EVT_MAPPING_START);
         evt.start = p->current.start;
         evt.end = p->current.end;                         /* the "?" */
@@ -4242,7 +4243,7 @@ static oyl_status parser_step(oyl_parser *p) {
     case ST_BLOCK_NODE_BARE_VALUE: {
         /* : at start → mapping with empty key */
         peek_token(p);
-        int map_indent = tok_col(p);
+        ptrdiff_t map_indent = tok_col(p);
         evt = evt_simple(OYL_EVT_MAPPING_START);
         evt.start = p->current.start;
         evt.end = p->current.end;                         /* the ":" */
@@ -4277,7 +4278,7 @@ static oyl_status parser_step(oyl_parser *p) {
         tt = tok_type(p);
         col = tok_col(p);
         top = inc_top_frame(p);
-        int map_indent = top ? top->indent : 0;
+        ptrdiff_t map_indent = top ? top->indent : 0;
 
         /* check if we're still in this mapping's indent level */
         if (tt == OYL_TOK_BLOCK_MAP_KEY && col == map_indent) {
@@ -4330,7 +4331,7 @@ static oyl_status parser_step(oyl_parser *p) {
         peek_token(p);
         tt = tok_type(p);
         top = inc_top_frame(p);
-        int ek_indent = top ? top->indent : 0;
+        ptrdiff_t ek_indent = top ? top->indent : 0;
 
         if (tok_col(p) < ek_indent ||
             (tok_col(p) == ek_indent && tt != OYL_TOK_BLOCK_SEQ_ENTRY) ||
@@ -4402,7 +4403,7 @@ static oyl_status parser_step(oyl_parser *p) {
         peek_token(p);
         tt = tok_type(p);
         top = inc_top_frame(p);
-        int map_indent = top ? top->indent : 0;
+        ptrdiff_t map_indent = top ? top->indent : 0;
 
         if (tt == OYL_TOK_BLOCK_MAP_VALUE && tok_col(p) == map_indent) {
             p->state = ST_BLOCK_MAP_VALUE;
@@ -4441,7 +4442,7 @@ static oyl_status parser_step(oyl_parser *p) {
         tt = tok_type(p);
         col = tok_col(p);
         top = inc_top_frame(p);
-        int map_indent = top ? top->indent : 0;
+        ptrdiff_t map_indent = top ? top->indent : 0;
 
         p->value_colon_line = colon_line;
         p->value_colon_starts_line = colon_starts_line;
@@ -4515,7 +4516,7 @@ static oyl_status parser_step(oyl_parser *p) {
         tt = tok_type(p);
         col = tok_col(p);
         top = inc_top_frame(p);
-        int seq_indent = top ? top->indent : 0;
+        ptrdiff_t seq_indent = top ? top->indent : 0;
 
         if (tt == OYL_TOK_BLOCK_SEQ_ENTRY && col == seq_indent) {
             p->state = ST_BLOCK_SEQ_ENTRY;
@@ -4537,7 +4538,7 @@ static oyl_status parser_step(oyl_parser *p) {
         tt = tok_type(p);
         col = tok_col(p);
         top = inc_top_frame(p);
-        int seq_indent = top ? top->indent : 0;
+        ptrdiff_t seq_indent = top ? top->indent : 0;
 
         /* empty entry: an entry's content is indented past its '-', so
          * anything at or left of it (the next '-', an enclosing ':', ...)

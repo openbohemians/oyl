@@ -143,6 +143,14 @@
   type has it; it was an error. A `<<` tagged `!!merge` merges even when
   quoted, and one tagged `!!str` doesn't, under a schema that gives `<<`
   the merge tag (YAML 1.1's). Found by comparing with PyYAML.
+- Columns and indentation were ints in the scanner and parser, narrowed
+  from the `size_t` positions in marks, so a line longer than 2 GB gave
+  wrong positions and a block scalar's count of leading spaces
+  overflowed (undefined behaviour); a folded block scalar counted its
+  lines in an int too. They are `ptrdiff_t` now, signed (indentation
+  -1 is the top level) and as wide as offsets, so a line can be as long
+  as the input. The same instructions run as before. Found by stricter
+  compiler warnings.
 - `oyl_parser_set_merge` compared keys by their text. A merged key equal
   to one already set but written otherwise (`0x1` for `1`, or `yes` for
   `on` in YAML 1.1) was added again, and one written the same but of
