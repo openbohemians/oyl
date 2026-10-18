@@ -25,9 +25,13 @@ bother with the older releases at this point"). Everything on `tree`
 faster emitter) ships as 1.2.0. At tag time, fold the changelog's 1.0.1,
 1.1.0 and 1.2.0 sections into one. Batch fuzzing of `tree` started
 2026-10-18 02:12 UTC (dispatched, `ec481e5`, both sanitizers): until
-then ClusterFuzzLite had only ever fuzzed main. Scheduled runs only fuzz
-main. **Tag only after several days of clean batch runs on the release
-commit, with the user's go-ahead.**
+then ClusterFuzzLite had only ever fuzzed main. **`tree` merged into main
+2026-10-18 (`ada453c`, same content as `ec481e5`; the user chose this so
+the scheduled runs, every 6 hours per sanitizer, fuzz it).** The website
+(main's `docs/`) and README now show 1.2's features before the tag, as
+the user accepted. Work continues on main; `tree` and `schema-parsers`
+are merged (not deleted). **Tag only after several days of clean batch
+runs on the release commit, with the user's go-ahead.**
 
 ## 1.0.1 (on main, not tagged; superseded by 1.2.0)
 
