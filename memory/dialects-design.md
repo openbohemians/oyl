@@ -24,7 +24,11 @@ claim that libyaml accepts tabs as indentation was wrong: it rejects
 them in block context, and even rejects some valid tabs (`-\ta`,
 `:\tb` after `?`, a tab-led plain continuation line), which Oyl reads.
 A `#` after plain text is part of the scalar in both (`b#c`), and a
-comment may start any line. Found on the way: libyaml 0.2.5
+comment may start any line. In real files it doesn't come up: of the
+same 11,058 files, 10,553 outside Oyl's fuzz corpus, no file PyYAML
+reads does Oyl reject; all 15 such files are fuzz corpus seeds from the
+suite's fail cases. (PyYAML fails 5 real files Oyl reads, all over
+custom tags or unhashable keys, a loader matter.) Found on the way: libyaml 0.2.5
 rejects `\'` and accepts `%YAML 1.2`, so `OYL_SYNTAX_LIBYAML` was renamed
 `OYL_SYNTAX_GOYAML2`: those leniencies are go-yaml v2's.
 
