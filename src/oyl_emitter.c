@@ -45,12 +45,12 @@ struct oyl_emitter {
     char   *buf;
     size_t  len;
     size_t  cap;
-    int     column;
 
     /* context stack */
     emit_ctx *stack;
     int       stack_len;
     int       stack_cap;
+    int       flow_depth;   /* flow collections on the stack */
 
     /* state */
     bool doc_open;
@@ -65,8 +65,8 @@ struct oyl_emitter {
 
 #define EMIT_INIT_CAP 4096
 
-static oyl_status buf_ensure(oyl_emitter *e, size_t need) {
-    if (e->len + need <= e->cap) return OYL_OK;
+NOINLINE oyl_status buf_grow(oyl_emitter *e, size_t need) {
+    if (need > SIZE_MAX - e->len) return OYL_ERR_MEMORY;
     size_t new_cap = e->cap * 2;
     if (new_cap < e->len + need) new_cap = e->len + need;
     char *nb = realloc(e->buf, new_cap);
@@ -76,27 +76,22 @@ static oyl_status buf_ensure(oyl_emitter *e, size_t need) {
     return OYL_OK;
 }
 
-static oyl_status buf_put(oyl_emitter *e, char c) {
+static inline oyl_status buf_ensure(oyl_emitter *e, size_t need) {
+    return need <= e->cap - e->len ? OYL_OK : buf_grow(e, need);
+}
+
+static inline oyl_status buf_put(oyl_emitter *e, char c) {
     oyl_status st = buf_ensure(e, 1);
     if (st != OYL_OK) return st;
     e->buf[e->len++] = c;
-    if (c == '\n') e->column = 0;
-    else e->column++;
     return OYL_OK;
 }
 
 static oyl_status buf_puts(oyl_emitter *e, const char *s, size_t slen) {
     oyl_status st = buf_ensure(e, slen);
     if (st != OYL_OK) return st;
-    memcpy(e->buf + e->len, s, slen);
+    if (slen) memcpy(e->buf + e->len, s, slen);
     e->len += slen;
-    for (size_t i = slen; i > 0; i--) {
-        if (s[i - 1] == '\n') {
-            e->column = (int)(slen - i);
-            return OYL_OK;
-        }
-    }
-    e->column += (int)slen;
     return OYL_OK;
 }
 
@@ -108,7 +103,6 @@ static oyl_status buf_indent(oyl_emitter *e, int spaces) {
     if (st != OYL_OK) return st;
     memset(e->buf + e->len, ' ', (size_t)spaces);
     e->len += (size_t)spaces;
-    e->column += spaces;
     return OYL_OK;
 }
 
@@ -129,6 +123,7 @@ static oyl_status push_ctx(oyl_emitter *e, emit_ctx_type type, int indent) {
         .count = 0,
         .expect_key = (type == EMIT_CTX_BLOCK_MAP || type == EMIT_CTX_FLOW_MAP),
     };
+    if (type == EMIT_CTX_FLOW_MAP || type == EMIT_CTX_FLOW_SEQ) e->flow_depth++;
     return OYL_OK;
 }
 
@@ -138,16 +133,13 @@ static emit_ctx *top_ctx(oyl_emitter *e) {
 }
 
 static void pop_ctx(oyl_emitter *e) {
-    if (e->stack_len > 0) e->stack_len--;
+    if (e->stack_len == 0) return;
+    emit_ctx_type type = e->stack[--e->stack_len].type;
+    if (type == EMIT_CTX_FLOW_MAP || type == EMIT_CTX_FLOW_SEQ) e->flow_depth--;
 }
 
 static bool in_any_flow(oyl_emitter *e) {
-    for (int i = e->stack_len - 1; i >= 0; i--) {
-        if (e->stack[i].type == EMIT_CTX_FLOW_MAP ||
-            e->stack[i].type == EMIT_CTX_FLOW_SEQ)
-            return true;
-    }
-    return false;
+    return e->flow_depth > 0;
 }
 
 /* ── Separator strings ───────────────────────────────────── */
@@ -223,26 +215,52 @@ static bool looks_like_number(const char *s, size_t len) {
     return all_digit;
 }
 
-static bool has_break(const char *s, size_t len) {
-    for (size_t i = 0; i < len; i++) {
-        if (oyl_is_break((uint8_t)s[i])) return true;
-    }
-    return false;
-}
+/* What a scalar's bytes contain. One pass over it (scalar_classes) answers
+ * most of what choosing its style asks; the rest is about its ends. */
+enum {
+    SC_CTRL  = 1 << 0,   /* a control character other than tab and \n, or DEL */
+    SC_BREAK = 1 << 1,   /* \n or \r */
+    SC_LF    = 1 << 2,   /* \n */
+    SC_COLON = 1 << 3,
+    SC_HASH  = 1 << 4,
+    SC_FLOW  = 1 << 5,   /* , [ ] { } */
+};
 
-static bool needs_escape(const char *s, size_t len) {
-    for (size_t i = 0; i < len; i++) {
-        uint8_t c = (uint8_t)s[i];
-        if (c < 0x20 && c != '\t') return true; /* control chars */
-        if (c == 0x7F) return true;
-    }
-    return false;
+#define C_ SC_CTRL
+#define LF (SC_BREAK | SC_LF)
+#define CR (SC_CTRL | SC_BREAK)
+#define CO SC_COLON
+#define HA SC_HASH
+#define FL SC_FLOW
+static const uint8_t scalar_class[256] = {
+    /*       0   1   2   3   4   5   6   7   8   9   A   B   C   D   E   F */
+    /* 0x */ C_, C_, C_, C_, C_, C_, C_, C_, C_, 0,  LF, C_, C_, CR, C_, C_,
+    /* 1x */ C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_, C_,
+    /* 2x */ 0,  0,  0,  HA, 0,  0,  0,  0,  0,  0,  0,  0,  FL, 0,  0,  0,
+    /* 3x */ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  CO, 0,  0,  0,  0,  0,
+    /* 4x */ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+    /* 5x */ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  FL, 0,  FL, 0,  0,
+    /* 6x */ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+    /* 7x */ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  FL, 0,  FL, 0,  C_,
+    /* 8x-Fx: 0 */
+};
+#undef C_
+#undef LF
+#undef CR
+#undef CO
+#undef HA
+#undef FL
+
+static unsigned scalar_classes(const char *s, size_t len) {
+    unsigned f = 0;
+    for (size_t i = 0; i < len; i++) f |= scalar_class[(uint8_t)s[i]];
+    return f;
 }
 
 /* Could this text be misread if emitted plain? Only syntax is considered
  * here; values that would resolve to another type (numbers, true, null)
- * are handled by choose_style. */
-static bool needs_quoting(const char *s, size_t len, bool flow_ctx) {
+ * are handled by choose_style. `f` is scalar_classes(s, len). */
+static bool needs_quoting(const char *s, size_t len, bool flow_ctx, unsigned f) {
     if (len == 0) return true;
 
     /* starts with an indicator. '-', '?' and ':' may start a plain scalar
@@ -256,8 +274,9 @@ static bool needs_quoting(const char *s, size_t len, bool flow_ctx) {
         if (oyl_is_blank_or_break(next)) return true;
         if (flow_ctx && oyl_is_flow(next)) return true;
     }
-    /* space or tab at start */
+    /* space or tab at either end */
     if (first == ' ' || first == '\t') return true;
+    if (s[len - 1] == ' ' || s[len - 1] == '\t') return true;
 
     /* U+FEFF at the start would read as a byte order mark and be dropped */
     if (len >= 3 && first == 0xEF && (uint8_t)s[1] == 0xBB && (uint8_t)s[2] == 0xBF)
@@ -267,18 +286,23 @@ static bool needs_quoting(const char *s, size_t len, bool flow_ctx) {
     if (len >= 3 && (memcmp(s, "---", 3) == 0 || memcmp(s, "...", 3) == 0))
         return true;
 
-    for (size_t i = 0; i < len; i++) {
-        uint8_t c = (uint8_t)s[i];
-        /* ": ", ":\t", " #", "\t#", and a trailing ':' (which would read
-         * as a mapping value indicator) */
-        if (c == ':' && (i + 1 == len || s[i + 1] == ' ' || s[i + 1] == '\t')) return true;
-        if ((c == ' ' || c == '\t') && i + 1 < len && s[i + 1] == '#') return true;
-        /* line breaks */
-        if (oyl_is_break(c)) return true;
-        /* flow indicators in flow context */
-        if (flow_ctx && oyl_is_flow(c)) return true;
-        /* trailing space/tab */
-        if ((c == ' ' || c == '\t') && i + 1 == len) return true;
+    /* line breaks, and flow indicators in flow context */
+    if (f & SC_BREAK) return true;
+    if (flow_ctx && (f & SC_FLOW)) return true;
+
+    /* ": ", ":\t", and a trailing ':' (which would read as a mapping value
+     * indicator); " #" and "\t#" (a comment) */
+    if (f & SC_COLON) {
+        for (const char *c = memchr(s, ':', len); c; c = memchr(c + 1, ':', len - (size_t)(c + 1 - s))) {
+            size_t i = (size_t)(c - s);
+            if (i + 1 == len || s[i + 1] == ' ' || s[i + 1] == '\t') return true;
+        }
+    }
+    if (f & SC_HASH) {
+        for (const char *c = memchr(s, '#', len); c; c = memchr(c + 1, '#', len - (size_t)(c + 1 - s))) {
+            size_t i = (size_t)(c - s);
+            if (i > 0 && (s[i - 1] == ' ' || s[i - 1] == '\t')) return true;
+        }
     }
     return false;
 }
@@ -286,12 +310,9 @@ static bool needs_quoting(const char *s, size_t len, bool flow_ctx) {
 /* Can `s` be written as a literal block scalar and read back exactly?
  * Not with control characters (other than tab and line feed), and not
  * when the first non-empty line starts with a space: that would need an
- * indentation indicator. */
-static bool literal_ok(const char *s, size_t len) {
-    for (size_t i = 0; i < len; i++) {
-        uint8_t c = (uint8_t)s[i];
-        if ((c < 0x20 && c != '\n' && c != '\t') || c == 0x7F) return false;
-    }
+ * indentation indicator. `f` is scalar_classes(s, len). */
+static bool literal_ok(const char *s, size_t len, unsigned f) {
+    if (f & SC_CTRL) return false;
     size_t i = 0;
     while (i < len && s[i] == '\n') i++;
     return !(i < len && s[i] == ' ');
@@ -309,36 +330,30 @@ static bool is_str_tag(oyl_str tag) {
 static oyl_scalar_style choose_style(oyl_scalar_style requested,
                                      const char *val, size_t len,
                                      bool flow_ctx, bool is_key, oyl_str tag) {
+    if (requested == OYL_SCALAR_DOUBLE_QUOTED) return requested;
+    unsigned f = scalar_classes(val, len);
     /* Block scalars are written literal (folded values are already
      * folded, and literal keeps them exact), only in block context and
      * not as keys; otherwise double-quoted */
-    bool block_ok = !flow_ctx && !is_key && literal_ok(val, len);
     if (requested == OYL_SCALAR_LITERAL || requested == OYL_SCALAR_FOLDED)
-        return block_ok ? OYL_SCALAR_LITERAL : OYL_SCALAR_DOUBLE_QUOTED;
+        return !flow_ctx && !is_key && literal_ok(val, len, f) ? OYL_SCALAR_LITERAL
+                                                                : OYL_SCALAR_DOUBLE_QUOTED;
     /* single quotes fold line breaks; keep the value exact with escapes */
     if (requested == OYL_SCALAR_SINGLE_QUOTED)
-        return has_break(val, len) ? OYL_SCALAR_DOUBLE_QUOTED : requested;
-    if (requested == OYL_SCALAR_DOUBLE_QUOTED) return requested;
+        return f & SC_BREAK ? OYL_SCALAR_DOUBLE_QUOTED : requested;
 
     /* PLAIN requested — auto-detect */
     if (len == 0 && !is_str_tag(tag))
         return OYL_SCALAR_PLAIN;              /* empty (null) node */
-    if (needs_escape(val, len))
-        return OYL_SCALAR_DOUBLE_QUOTED;      /* control characters */
-    if (!needs_quoting(val, len, flow_ctx)) {
+    if (f & (SC_CTRL | SC_LF))
+        return OYL_SCALAR_DOUBLE_QUOTED;      /* control characters, line feeds */
+    if (!needs_quoting(val, len, flow_ctx, f)) {
         if (is_str_tag(tag) && (is_yaml_keyword(val, len) || looks_like_number(val, len)))
             return OYL_SCALAR_DOUBLE_QUOTED;
         return OYL_SCALAR_PLAIN;
     }
-
-    /* needs quoting — pick style */
-    if (needs_escape(val, len))
-        return OYL_SCALAR_DOUBLE_QUOTED;
-
-    /* multiline in block context → literal */
-    if (block_ok && has_break(val, len))
-        return OYL_SCALAR_LITERAL;
-
+    /* needs quoting; without control characters or line feeds there's no
+     * line break either, so a literal block scalar isn't an option */
     return OYL_SCALAR_DOUBLE_QUOTED;
 }
 
@@ -348,48 +363,58 @@ static oyl_status emit_plain(oyl_emitter *e, const char *s, size_t len) {
     return buf_puts(e, s, len);
 }
 
+/* Quoted scalars are written in chunks of CHUNK bytes, each with room
+ * reserved once for its longest escaped form */
+#define CHUNK 4096
+
 static oyl_status emit_single_quoted(oyl_emitter *e, const char *s, size_t len) {
     oyl_status st = buf_put(e, '\'');
-    if (st != OYL_OK) return st;
-    for (size_t i = 0; i < len; i++) {
-        if (s[i] == '\'') {
-            st = PUTS(e, "''");
-            if (st != OYL_OK) return st;
-        } else {
-            st = buf_put(e, s[i]);
-            if (st != OYL_OK) return st;
+    for (size_t i = 0; i < len && st == OYL_OK;) {
+        size_t n = len - i < CHUNK ? len - i : CHUNK;
+        if ((st = buf_ensure(e, 2 * n)) != OYL_OK) break;
+        char *o = e->buf + e->len;
+        for (size_t end = i + n; i < end; i++) {
+            if (s[i] == '\'') *o++ = '\'';   /* '' */
+            *o++ = s[i];
         }
+        e->len = (size_t)(o - e->buf);
     }
-    return buf_put(e, '\'');
+    return st == OYL_OK ? buf_put(e, '\'') : st;
 }
 
 static oyl_status emit_double_quoted(oyl_emitter *e, const char *s, size_t len) {
+    static const char hex[] = "0123456789ABCDEF";
     oyl_status st = buf_put(e, '"');
-    if (st != OYL_OK) return st;
-    for (size_t i = 0; i < len; i++) {
-        uint8_t c = (uint8_t)s[i];
-        switch (c) {
-        case '\\': st = PUTS(e, "\\\\"); break;
-        case '"':  st = PUTS(e, "\\\""); break;
-        case '\n': st = PUTS(e, "\\n"); break;
-        case '\r': st = PUTS(e, "\\r"); break;
-        case '\t': st = PUTS(e, "\\t"); break;
-        case '\0': st = PUTS(e, "\\0"); break;
-        case '\a': st = PUTS(e, "\\a"); break;
-        case '\b': st = PUTS(e, "\\b"); break;
-        default:
-            if (c < 0x20 || c == 0x7F) {
-                char esc[5];
-                snprintf(esc, sizeof(esc), "\\x%02X", c);
-                st = buf_puts(e, esc, 4);
-            } else {
-                st = buf_put(e, (char)c);
+    for (size_t i = 0; i < len && st == OYL_OK;) {
+        size_t n = len - i < CHUNK ? len - i : CHUNK;
+        if ((st = buf_ensure(e, 4 * n)) != OYL_OK) break;   /* \xHH */
+        char *o = e->buf + e->len;
+        for (size_t end = i + n; i < end; i++) {
+            uint8_t c = (uint8_t)s[i];
+            if (c >= 0x20 && c != 0x7F && c != '\\' && c != '"') {
+                *o++ = (char)c;
+                continue;
             }
-            break;
+            *o++ = '\\';
+            switch (c) {
+            case '\\': *o++ = '\\'; break;
+            case '"':  *o++ = '"'; break;
+            case '\n': *o++ = 'n'; break;
+            case '\r': *o++ = 'r'; break;
+            case '\t': *o++ = 't'; break;
+            case '\0': *o++ = '0'; break;
+            case '\a': *o++ = 'a'; break;
+            case '\b': *o++ = 'b'; break;
+            default:   /* other control characters and DEL */
+                *o++ = 'x';
+                *o++ = hex[c >> 4];
+                *o++ = hex[c & 15];
+                break;
+            }
         }
-        if (st != OYL_OK) return st;
+        e->len = (size_t)(o - e->buf);
     }
-    return buf_put(e, '"');
+    return st == OYL_OK ? buf_put(e, '"') : st;
 }
 
 /* Write `s` as a literal block scalar, which reads back exactly. Callers
