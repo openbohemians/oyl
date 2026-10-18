@@ -82,12 +82,14 @@
   document by its directives: a `%TAG !!` prefix the program registered,
   else its `%YAML` version (1.1 and 1.2 built in), else the parser's
   default (`oyl_parser_set_dialect`, `oyl_parser_add_dialect`). Built in:
-  YAML 1.2, YAML 1.1, and go-yaml v2 with libyaml's leniencies, which
-  makes `oyl_parse_json` identical to `sigs.k8s.io/yaml` on all 866
-  documents of the Kubernetes manifests it was checked on.
-- **`oyl_schema_yaml11()`**, YAML 1.1's types as the 1.1 spec has them
-  (base 60, 0-octal, y/n booleans, timestamps), with new int and float
-  flags for them.
+  YAML 1.2; YAML 1.1 as libyaml and PyYAML read it; and go-yaml v2 with
+  its leniencies, which makes `oyl_parse_json` identical to
+  `sigs.k8s.io/yaml` on all 866 documents of the Kubernetes manifests it
+  was checked on.
+- **`oyl_schema_yaml11()`**, YAML 1.1's types as PyYAML reads them, the
+  usual loader on libyaml (base 60, 0-octal, yes/no/on/off booleans but
+  not y/n, timestamps), with new int and float flags for them; on 100
+  tricky scalars, every tag and value is PyYAML's.
 - **Warnings**, to a callback (`oyl_parser_set_warn`).
 - `oyl_parser_document_dialect`, `oyl_parser_yaml_version`, `OYL_TAG_VALUE`.
 

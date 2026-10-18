@@ -562,7 +562,9 @@ static void test_values_yaml11(void) {
     const oyl_schema *s = oyl_schema_yaml11();
     oyl_value v;
 
-    ASSERT(is_bool(plain_value(s, "y"), true), "y");
+    ASSERT(is_text(plain_value(s, "y"), "y"), "y is text to PyYAML (yaml.org/type lists it)");
+    ASSERT(is_text(plain_value(s, "N"), "N"), "N likewise");
+    ASSERT(is_bool(plain_value(s, "yes"), true), "yes");
     ASSERT(is_bool(plain_value(s, "NO"), false), "NO");
     ASSERT(is_bool(plain_value(s, "on"), true), "on");
     ASSERT(plain_value(s, "~").kind == OYL_VALUE_NULL, "~");
@@ -588,7 +590,10 @@ static void test_values_yaml11(void) {
     ASSERT(is_float(plain_value(s, "190:20:30.15"), 685230.15), "190:20:30.15 (base 60)");
     ASSERT(is_float(plain_value(s, "-.inf"), -INFINITY), "-.inf");
     ASSERT(is_float(plain_value(s, "1."), 1.0), "1.");
-    ASSERT(is_float(plain_value(s, "+.5"), 0.5), "+.5 (the 1.1 type allows the sign)");
+    ASSERT(is_float(plain_value(s, ".5"), 0.5), ".5");
+    ASSERT(is_text(plain_value(s, "+.5"), "+.5"), "+.5: PyYAML takes no sign before a leading dot");
+    ASSERT(is_float(plain_value(s, "-1.5"), -1.5), "-1.5: before a digit, a sign is fine");
+    ASSERT(is_text(plain_value(s, "-.nan"), "-.nan"), "-.nan: nor before .nan");
     ASSERT(is_text(plain_value(s, "1e3"), "1e3"), "1e3: a float needs a dot");
     ASSERT(is_text(plain_value(s, "1.0e3"), "1.0e3"), "1.0e3: an exponent needs a sign");
     ASSERT(is_text(plain_value(s, "."), "."), ". (the 1.1 pattern would take it; PyYAML doesn't)");

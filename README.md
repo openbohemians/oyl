@@ -394,8 +394,9 @@ directives choose its dialect, among those the program allows:
 
 1. `%TAG !! <prefix>`: the dialect registered for that prefix types the
    document's explicit `!!` tags and its untagged values alike
-2. `%YAML <version>`: the version of the standard `!!` schema; `1.1` gives
-   YAML 1.1's types (`yes` is true, `0777` is octal), `1.2` the Core schema
+2. `%YAML <version>`: the version of the standard `!!` schema; `1.1` reads
+   as libyaml and PyYAML do (`yes` is true, `0777` is octal), `1.2` by the
+   Core schema
 3. otherwise the parser's default dialect
 
 ```c

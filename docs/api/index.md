@@ -403,7 +403,8 @@ oyl_parser_set_warn(p, on_warning, user);
 A dialect bundles a schema, syntax leniencies (`OYL_SYNTAX_`) and a merge
 order (`OYL_MERGE_NONE`, `_YAML`, `_ORDERED`). A document's dialect: the
 one registered for its `%TAG !!` prefix, else for its `%YAML` version
-(built in: 1.1 is `oyl_dialect_yaml11()`, 1.2 `oyl_dialect_yaml12()`;
+(built in: 1.1 is `oyl_dialect_yaml11()`, as libyaml and PyYAML read it,
+1.2 `oyl_dialect_yaml12()`;
 other 1.x versions read as 1.2 with a warning), else the default. The
 default is `oyl_parser_set_dialect`'s, else YAML 1.2 with the schema of
 `oyl_parser_set_schema`. With tag resolution on (a schema set), events are
@@ -422,10 +423,10 @@ tagged by the document's dialect.
 
 | Syntax flag | Effect |
 |-------------|--------|
-| `OYL_SYNTAX_SQUOTE_ESCAPE` | `\'` in double quotes is `'` |
-| `OYL_SYNTAX_EOF_NO_BREAK` | a block scalar ending the input gets no final line feed |
-| `OYL_SYNTAX_YAML11_ONLY` | `%YAML` other than 1.1 is an error (in the default dialect, for every document) |
-| `OYL_SYNTAX_LIBYAML` | all three, as go-yaml v2 inherits them |
+| `OYL_SYNTAX_SQUOTE_ESCAPE` | `\'` in double quotes is `'` (go-yaml v2) |
+| `OYL_SYNTAX_EOF_NO_BREAK` | a block scalar ending the input gets no final line feed (libyaml, so PyYAML and go-yaml v2) |
+| `OYL_SYNTAX_YAML11_ONLY` | `%YAML` other than 1.1 is an error, in the default dialect, for every document (go-yaml v2) |
+| `OYL_SYNTAX_GOYAML2` | all three: go-yaml v2's |
 
 Warnings (`oyl_warning`): `OYL_WARN_YAML_VERSION`, `OYL_WARN_DIALECT` (a
 `%TAG !!` prefix with no dialect), `OYL_WARN_LENIENCY`,

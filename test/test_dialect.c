@@ -89,6 +89,13 @@ static void test_version(void) {
     st = scalars("%YAML 1.2\n---\na: yes\n", core_schema, false, &w, got, sizeof got);
     ASSERT(st == OYL_OK && strcmp(got, "a=str yes=str") == 0, "%YAML 1.2: Core");
 
+    /* YAML 1.1 as libyaml and PyYAML read it: y is text (yaml.org/type
+     * would make it a bool), and a block scalar ending the input gets no
+     * final line feed */
+    st = scalars("%YAML 1.1\n---\nk: y\nl: yes\nm: |\n  x", core_schema, false, NULL, got, sizeof got);
+    ASSERT(st == OYL_OK && strcmp(got, "k=str y=str l=str yes=bool m=str x=str") == 0,
+           "%YAML 1.1 reads as PyYAML does");
+
     memset(&w, 0, sizeof w);
     st = scalars("%YAML 1.3\n---\na: yes\n", core_schema, false, &w, got, sizeof got);
     ASSERT(st == OYL_OK && strcmp(got, "a=str yes=str") == 0, "%YAML 1.3: read as 1.2");
