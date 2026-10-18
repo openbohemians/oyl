@@ -458,16 +458,16 @@ static oyl_status emit_block_scalar(oyl_emitter *e, const char *s, size_t len,
     return OYL_OK;
 }
 
-static oyl_status emit_scalar(oyl_emitter *e, const oyl_event *evt) {
-    const char *val = evt->value.data;
-    size_t vlen = evt->value.len;
+static oyl_status emit_scalar(oyl_emitter *e, oyl_str value, oyl_scalar_style requested,
+                              oyl_str tag) {
+    const char *val = value.data;
+    size_t vlen = value.len;
     bool flow_ctx = in_any_flow(e) || e->opts.style != OYL_EMIT_BLOCK;
 
     emit_ctx *ctx = top_ctx(e);
     bool is_key = ctx && (ctx->type == EMIT_CTX_BLOCK_MAP || ctx->type == EMIT_CTX_FLOW_MAP) &&
                   ctx->expect_key;
-    oyl_scalar_style style = choose_style(evt->scalar_style, val, vlen, flow_ctx,
-                                          is_key, evt->tag);
+    oyl_scalar_style style = choose_style(requested, val, vlen, flow_ctx, is_key, tag);
 
     int indent = ctx ? ctx->indent + e->opts.indent : e->opts.indent;
 
@@ -559,29 +559,30 @@ static oyl_status emit_tag(oyl_emitter *e, oyl_str tag) {
     return buf_put(e, ' ');
 }
 
-static oyl_status emit_props(oyl_emitter *e, const oyl_event *evt) {
-    e->wrote_props = (evt->anchor.data && evt->anchor.len) || (evt->tag.data && evt->tag.len);
-    oyl_status st = emit_anchor(e, evt->anchor);
-    if (st != OYL_OK) return st;
-    return emit_tag(e, evt->tag);
+static bool has_props(oyl_str anchor, oyl_str tag) {
+    return (anchor.data && anchor.len) || (tag.data && tag.len);
 }
 
-static bool has_props(const oyl_event *evt) {
-    return (evt->anchor.data && evt->anchor.len) || (evt->tag.data && evt->tag.len);
+static oyl_status emit_props(oyl_emitter *e, oyl_str anchor, oyl_str tag) {
+    e->wrote_props = has_props(anchor, tag);
+    if (!e->wrote_props) return OYL_OK;
+    oyl_status st = emit_anchor(e, anchor);
+    if (st != OYL_OK) return st;
+    return emit_tag(e, tag);
 }
 
 /* Properties of a block collection go on the line that introduces it
  * ("key: &a !!map", "- &a"), and the collection itself starts on the next
  * line; a block collection can never start on its properties' line. */
-static oyl_status emit_block_collection_props(oyl_emitter *e, const oyl_event *evt,
+static oyl_status emit_block_collection_props(oyl_emitter *e, oyl_str anchor, oyl_str tag,
                                               bool after_key) {
     oyl_status st;
-    if (!has_props(evt)) return OYL_OK;
+    if (!has_props(anchor, tag)) return OYL_OK;
     if (after_key) {
         st = buf_put(e, ' ');
         if (st != OYL_OK) return st;
     }
-    st = emit_props(e, evt);
+    st = emit_props(e, anchor, tag);
     if (st != OYL_OK) return st;
     if (e->len > 0 && e->buf[e->len - 1] == ' ') e->len--; /* trailing space */
     return OYL_OK;
@@ -594,10 +595,10 @@ static oyl_status emit_block_collection_props(oyl_emitter *e, const oyl_event *e
  * Writes "?" and the key's properties; the collection follows on the next
  * lines, and the value's ':' goes on its own line (see emit_pre_node). */
 static oyl_status emit_complex_key_open(oyl_emitter *e, emit_ctx *map,
-                                        const oyl_event *evt) {
+                                        oyl_str anchor, oyl_str tag) {
     oyl_status st = buf_put(e, '?');
     if (st != OYL_OK) return st;
-    st = emit_block_collection_props(e, evt, true);
+    st = emit_block_collection_props(e, anchor, tag, true);
     if (st != OYL_OK) return st;
     map->complex_key = true;
     e->after_seq_dash = false;
@@ -730,11 +731,213 @@ static void advance_ctx(oyl_emitter *e) {
     e->after_seq_dash = false;
 }
 
+/* ── Nodes ───────────────────────────────────────────────── */
+
+/* One function per kind of event, taking its fields: oyl_emit, the
+ * building functions below and oyl_emit_tree all come here */
+
+static oyl_status emit_document_start(oyl_emitter *e, bool implicit) {
+    oyl_status st;
+    if (!implicit) {
+        if (!e->first_doc && e->len > 0 && e->buf[e->len - 1] != '\n') {
+            st = buf_put(e, '\n');
+            if (st != OYL_OK) return st;
+        }
+        st = PUTS(e, "---");
+        if (st != OYL_OK) return st;
+    }
+    e->doc_open = true;
+    e->first_doc = false;
+    return OYL_OK;
+}
+
+static oyl_status emit_document_end(oyl_emitter *e, bool implicit) {
+    oyl_status st;
+    if (!implicit) {
+        if (e->len > 0 && e->buf[e->len - 1] != '\n') {
+            st = buf_put(e, '\n');
+            if (st != OYL_OK) return st;
+        }
+        st = PUTS(e, "...\n");
+        if (st != OYL_OK) return st;
+    }
+    e->doc_open = false;
+    return OYL_OK;
+}
+
+static oyl_status emit_mapping_start(oyl_emitter *e, oyl_str anchor, oyl_str tag, bool flow) {
+    oyl_status st;
+    /* inside a flow collection everything must be flow */
+    bool use_flow = (e->opts.style != OYL_EMIT_BLOCK) || flow || in_any_flow(e);
+    emit_ctx *outer = top_ctx(e);
+    bool map_value = !use_flow && outer && outer->type == EMIT_CTX_BLOCK_MAP &&
+                     !outer->expect_key;
+
+    st = emit_pre_node(e, !use_flow);
+    if (st != OYL_OK) return st;
+
+    if (!use_flow && outer && outer->type == EMIT_CTX_BLOCK_MAP && outer->expect_key) {
+        st = emit_complex_key_open(e, outer, anchor, tag);
+    } else if (use_flow) {
+        st = emit_props(e, anchor, tag);
+    } else {
+        st = emit_block_collection_props(e, anchor, tag, map_value);
+        /* a mapping with properties in a sequence can't share the
+         * "- &a" line with its first key (the props would go to the key) */
+        if (st == OYL_OK && e->after_seq_dash && has_props(anchor, tag))
+            e->after_seq_dash = false;
+    }
+    if (st != OYL_OK) return st;
+
+    if (use_flow) {
+        st = buf_put(e, '{');
+        if (st != OYL_OK) return st;
+        st = push_ctx(e, EMIT_CTX_FLOW_MAP, 0);
+    } else {
+        emit_ctx *parent = top_ctx(e);
+        int indent;
+        if (parent && parent->type == EMIT_CTX_BLOCK_SEQ) {
+            /* compact mapping in sequence: indent aligns with content after "- " */
+            indent = parent->indent + 2;
+        } else if (parent && (parent->type == EMIT_CTX_BLOCK_MAP)) {
+            indent = parent->indent + e->opts.indent;
+        } else {
+            indent = 0;
+        }
+        st = push_ctx(e, EMIT_CTX_BLOCK_MAP, indent);
+    }
+    if (st != OYL_OK) return st;
+    /* advance parent context, preserving after_seq_dash for compact mapping */
+    bool saved_dash = e->after_seq_dash;
+    e->stack_len--;
+    advance_ctx(e);
+    e->stack_len++;
+    e->after_seq_dash = saved_dash;
+    return OYL_OK;
+}
+
+static oyl_status emit_mapping_end(oyl_emitter *e) {
+    oyl_status st;
+    emit_ctx *ctx = top_ctx(e);
+    if (!ctx) return OYL_ERR_EMIT;
+
+    if (ctx->type == EMIT_CTX_FLOW_MAP) {
+        st = buf_put(e, '}');
+        if (st != OYL_OK) return st;
+    } else if (ctx->count == 0) {
+        /* empty block mapping → {} ("k: {}", "? {}") */
+        if (e->len > 0 && e->buf[e->len - 1] != ' ' && e->buf[e->len - 1] != '\n') {
+            st = buf_put(e, ' ');
+            if (st != OYL_OK) return st;
+        }
+        st = PUTS(e, "{}");
+        if (st != OYL_OK) return st;
+    }
+    pop_ctx(e);
+    e->after_seq_dash = false;
+    return OYL_OK;
+}
+
+static oyl_status emit_sequence_start(oyl_emitter *e, oyl_str anchor, oyl_str tag, bool flow) {
+    oyl_status st;
+    /* inside a flow collection everything must be flow */
+    bool use_flow = (e->opts.style != OYL_EMIT_BLOCK) || flow || in_any_flow(e);
+    emit_ctx *outer = top_ctx(e);
+    bool map_value = !use_flow && outer && outer->type == EMIT_CTX_BLOCK_MAP &&
+                     !outer->expect_key;
+
+    st = emit_pre_node(e, !use_flow);
+    if (st != OYL_OK) return st;
+
+    if (!use_flow && outer && outer->type == EMIT_CTX_BLOCK_MAP && outer->expect_key)
+        st = emit_complex_key_open(e, outer, anchor, tag);
+    else
+        st = use_flow ? emit_props(e, anchor, tag)
+                      : emit_block_collection_props(e, anchor, tag, map_value);
+    if (st != OYL_OK) return st;
+
+    if (use_flow) {
+        st = buf_put(e, '[');
+        if (st != OYL_OK) return st;
+        st = push_ctx(e, EMIT_CTX_FLOW_SEQ, 0);
+    } else {
+        emit_ctx *parent = top_ctx(e);
+        int indent;
+        if (parent && parent->type == EMIT_CTX_BLOCK_MAP) {
+            indent = parent->indent + e->opts.indent;
+        } else if (parent && parent->type == EMIT_CTX_BLOCK_SEQ) {
+            indent = parent->indent + e->opts.indent;
+        } else {
+            indent = 0;
+        }
+        st = push_ctx(e, EMIT_CTX_BLOCK_SEQ, indent);
+    }
+    if (st != OYL_OK) return st;
+    /* advance parent context, preserving after_seq_dash */
+    bool saved_dash = e->after_seq_dash;
+    e->stack_len--;
+    advance_ctx(e);
+    e->stack_len++;
+    e->after_seq_dash = saved_dash;
+    return OYL_OK;
+}
+
+static oyl_status emit_sequence_end(oyl_emitter *e) {
+    oyl_status st;
+    emit_ctx *ctx = top_ctx(e);
+    if (!ctx) return OYL_ERR_EMIT;
+
+    if (ctx->type == EMIT_CTX_FLOW_SEQ) {
+        st = buf_put(e, ']');
+        if (st != OYL_OK) return st;
+    } else if (ctx->count == 0) {
+        /* empty block sequence → [] ("k: []", "? []") */
+        if (e->len > 0 && e->buf[e->len - 1] != ' ' && e->buf[e->len - 1] != '\n') {
+            st = buf_put(e, ' ');
+            if (st != OYL_OK) return st;
+        }
+        st = PUTS(e, "[]");
+        if (st != OYL_OK) return st;
+    }
+    pop_ctx(e);
+    e->after_seq_dash = false;
+    return OYL_OK;
+}
+
+static oyl_status emit_scalar_node(oyl_emitter *e, oyl_str value, oyl_scalar_style style,
+                                   oyl_str anchor, oyl_str tag) {
+    oyl_status st = emit_pre_node(e, false);
+    if (st != OYL_OK) return st;
+
+    st = emit_props(e, anchor, tag);
+    if (st != OYL_OK) return st;
+
+    st = emit_scalar(e, value, style, tag);
+    if (st != OYL_OK) return st;
+
+    advance_ctx(e);
+    return OYL_OK;
+}
+
+static oyl_status emit_alias_node(oyl_emitter *e, oyl_str name) {
+    oyl_status st = emit_pre_node(e, false);
+    if (st != OYL_OK) return st;
+    emit_ctx *ctx = top_ctx(e);
+    e->key_was_alias = ctx && (ctx->type == EMIT_CTX_BLOCK_MAP ||
+                               ctx->type == EMIT_CTX_FLOW_MAP) && ctx->expect_key;
+
+    st = buf_put(e, '*');
+    if (st != OYL_OK) return st;
+    st = buf_puts(e, name.data, name.len);
+    if (st != OYL_OK) return st;
+
+    advance_ctx(e);
+    return OYL_OK;
+}
+
 /* ── Main emit function ──────────────────────────────────── */
 
 oyl_status oyl_emit(oyl_emitter *e, const oyl_event *evt) {
-    oyl_status st;
-
     switch (evt->type) {
     case OYL_EVT_STREAM_START:
         e->first_doc = true;
@@ -746,198 +949,15 @@ oyl_status oyl_emit(oyl_emitter *e, const oyl_event *evt) {
             return buf_put(e, '\n');
         return OYL_OK;
 
-    case OYL_EVT_DOC_START:
-        if (!evt->implicit) {
-            if (!e->first_doc && e->len > 0 && e->buf[e->len - 1] != '\n') {
-                st = buf_put(e, '\n');
-                if (st != OYL_OK) return st;
-            }
-            st = PUTS(e, "---");
-            if (st != OYL_OK) return st;
-        }
-        e->doc_open = true;
-        e->first_doc = false;
-        return OYL_OK;
-
-    case OYL_EVT_DOC_END:
-        if (!evt->implicit) {
-            if (e->len > 0 && e->buf[e->len - 1] != '\n') {
-                st = buf_put(e, '\n');
-                if (st != OYL_OK) return st;
-            }
-            st = PUTS(e, "...\n");
-            if (st != OYL_OK) return st;
-        }
-        e->doc_open = false;
-        return OYL_OK;
-
-    case OYL_EVT_MAPPING_START: {
-        /* inside a flow collection everything must be flow */
-        bool use_flow = (e->opts.style != OYL_EMIT_BLOCK) || evt->flow || in_any_flow(e);
-        emit_ctx *outer = top_ctx(e);
-        bool map_value = !use_flow && outer && outer->type == EMIT_CTX_BLOCK_MAP &&
-                         !outer->expect_key;
-
-        st = emit_pre_node(e, !use_flow);
-        if (st != OYL_OK) return st;
-
-        if (!use_flow && outer && outer->type == EMIT_CTX_BLOCK_MAP && outer->expect_key) {
-            st = emit_complex_key_open(e, outer, evt);
-        } else if (use_flow) {
-            st = emit_props(e, evt);
-        } else {
-            st = emit_block_collection_props(e, evt, map_value);
-            /* a mapping with properties in a sequence can't share the
-             * "- &a" line with its first key (the props would go to the key) */
-            if (st == OYL_OK && e->after_seq_dash && has_props(evt))
-                e->after_seq_dash = false;
-        }
-        if (st != OYL_OK) return st;
-
-        if (use_flow) {
-            st = buf_put(e, '{');
-            if (st != OYL_OK) return st;
-            st = push_ctx(e, EMIT_CTX_FLOW_MAP, 0);
-        } else {
-            emit_ctx *parent = top_ctx(e);
-            int indent;
-            if (parent && parent->type == EMIT_CTX_BLOCK_SEQ) {
-                /* compact mapping in sequence: indent aligns with content after "- " */
-                indent = parent->indent + 2;
-            } else if (parent && (parent->type == EMIT_CTX_BLOCK_MAP)) {
-                indent = parent->indent + e->opts.indent;
-            } else {
-                indent = 0;
-            }
-            st = push_ctx(e, EMIT_CTX_BLOCK_MAP, indent);
-        }
-        if (st != OYL_OK) return st;
-        /* advance parent context, preserving after_seq_dash for compact mapping */
-        bool saved_dash = e->after_seq_dash;
-        e->stack_len--;
-        advance_ctx(e);
-        e->stack_len++;
-        e->after_seq_dash = saved_dash;
-        return OYL_OK;
-    }
-
-    case OYL_EVT_MAPPING_END: {
-        emit_ctx *ctx = top_ctx(e);
-        if (!ctx) return OYL_ERR_EMIT;
-
-        if (ctx->type == EMIT_CTX_FLOW_MAP) {
-            st = buf_put(e, '}');
-            if (st != OYL_OK) return st;
-        } else if (ctx->count == 0) {
-            /* empty block mapping → {} ("k: {}", "? {}") */
-            if (e->len > 0 && e->buf[e->len - 1] != ' ' && e->buf[e->len - 1] != '\n') {
-                st = buf_put(e, ' ');
-                if (st != OYL_OK) return st;
-            }
-            st = PUTS(e, "{}");
-            if (st != OYL_OK) return st;
-        }
-        pop_ctx(e);
-        e->after_seq_dash = false;
-        return OYL_OK;
-    }
-
-    case OYL_EVT_SEQUENCE_START: {
-        /* inside a flow collection everything must be flow */
-        bool use_flow = (e->opts.style != OYL_EMIT_BLOCK) || evt->flow || in_any_flow(e);
-        emit_ctx *outer = top_ctx(e);
-        bool map_value = !use_flow && outer && outer->type == EMIT_CTX_BLOCK_MAP &&
-                         !outer->expect_key;
-
-        st = emit_pre_node(e, !use_flow);
-        if (st != OYL_OK) return st;
-
-        if (!use_flow && outer && outer->type == EMIT_CTX_BLOCK_MAP && outer->expect_key)
-            st = emit_complex_key_open(e, outer, evt);
-        else
-            st = use_flow ? emit_props(e, evt)
-                          : emit_block_collection_props(e, evt, map_value);
-        if (st != OYL_OK) return st;
-
-        if (use_flow) {
-            st = buf_put(e, '[');
-            if (st != OYL_OK) return st;
-            st = push_ctx(e, EMIT_CTX_FLOW_SEQ, 0);
-        } else {
-            emit_ctx *parent = top_ctx(e);
-            int indent;
-            if (parent && parent->type == EMIT_CTX_BLOCK_MAP) {
-                indent = parent->indent + e->opts.indent;
-            } else if (parent && parent->type == EMIT_CTX_BLOCK_SEQ) {
-                indent = parent->indent + e->opts.indent;
-            } else {
-                indent = 0;
-            }
-            st = push_ctx(e, EMIT_CTX_BLOCK_SEQ, indent);
-        }
-        if (st != OYL_OK) return st;
-        /* advance parent context, preserving after_seq_dash */
-        bool saved_dash2 = e->after_seq_dash;
-        e->stack_len--;
-        advance_ctx(e);
-        e->stack_len++;
-        e->after_seq_dash = saved_dash2;
-        return OYL_OK;
-    }
-
-    case OYL_EVT_SEQUENCE_END: {
-        emit_ctx *ctx = top_ctx(e);
-        if (!ctx) return OYL_ERR_EMIT;
-
-        if (ctx->type == EMIT_CTX_FLOW_SEQ) {
-            st = buf_put(e, ']');
-            if (st != OYL_OK) return st;
-        } else if (ctx->count == 0) {
-            /* empty block sequence → [] ("k: []", "? []") */
-            if (e->len > 0 && e->buf[e->len - 1] != ' ' && e->buf[e->len - 1] != '\n') {
-                st = buf_put(e, ' ');
-                if (st != OYL_OK) return st;
-            }
-            st = PUTS(e, "[]");
-            if (st != OYL_OK) return st;
-        }
-        pop_ctx(e);
-        e->after_seq_dash = false;
-        return OYL_OK;
-    }
-
-    case OYL_EVT_SCALAR: {
-        st = emit_pre_node(e, false);
-        if (st != OYL_OK) return st;
-
-        st = emit_props(e, evt);
-        if (st != OYL_OK) return st;
-
-        st = emit_scalar(e, evt);
-        if (st != OYL_OK) return st;
-
-        advance_ctx(e);
-        return OYL_OK;
-    }
-
-    case OYL_EVT_ALIAS: {
-        st = emit_pre_node(e, false);
-        if (st != OYL_OK) return st;
-        {
-            emit_ctx *ctx = top_ctx(e);
-            e->key_was_alias = ctx && (ctx->type == EMIT_CTX_BLOCK_MAP ||
-                                       ctx->type == EMIT_CTX_FLOW_MAP) && ctx->expect_key;
-        }
-
-        st = buf_put(e, '*');
-        if (st != OYL_OK) return st;
-        st = buf_puts(e, evt->value.data, evt->value.len);
-        if (st != OYL_OK) return st;
-
-        advance_ctx(e);
-        return OYL_OK;
-    }
-
+    case OYL_EVT_DOC_START:      return emit_document_start(e, evt->implicit);
+    case OYL_EVT_DOC_END:        return emit_document_end(e, evt->implicit);
+    case OYL_EVT_MAPPING_START:  return emit_mapping_start(e, evt->anchor, evt->tag, evt->flow);
+    case OYL_EVT_MAPPING_END:    return emit_mapping_end(e);
+    case OYL_EVT_SEQUENCE_START: return emit_sequence_start(e, evt->anchor, evt->tag, evt->flow);
+    case OYL_EVT_SEQUENCE_END:   return emit_sequence_end(e);
+    case OYL_EVT_SCALAR:
+        return emit_scalar_node(e, evt->value, evt->scalar_style, evt->anchor, evt->tag);
+    case OYL_EVT_ALIAS:          return emit_alias_node(e, evt->value);
     default:
         return OYL_ERR_EMIT;
     }
@@ -989,47 +1009,36 @@ oyl_status oyl_emit_stream_end(oyl_emitter *e) {
 }
 
 oyl_status oyl_emit_document_start(oyl_emitter *e, bool implicit) {
-    oyl_event evt = { .type = OYL_EVT_DOC_START, .implicit = implicit };
-    return oyl_emit(e, &evt);
+    return emit_document_start(e, implicit);
 }
 
 oyl_status oyl_emit_document_end(oyl_emitter *e, bool implicit) {
-    oyl_event evt = { .type = OYL_EVT_DOC_END, .implicit = implicit };
-    return oyl_emit(e, &evt);
+    return emit_document_end(e, implicit);
 }
 
 oyl_status oyl_emit_scalar(oyl_emitter *e, oyl_str value, oyl_scalar_style style,
                            oyl_str anchor, oyl_str tag) {
-    oyl_event evt = { .type = OYL_EVT_SCALAR, .value = value, .scalar_style = style,
-                      .anchor = anchor, .tag = tag };
-    return oyl_emit(e, &evt);
+    return emit_scalar_node(e, value, style, anchor, tag);
 }
 
 oyl_status oyl_emit_alias(oyl_emitter *e, oyl_str name) {
-    oyl_event evt = { .type = OYL_EVT_ALIAS, .value = name };
-    return oyl_emit(e, &evt);
+    return emit_alias_node(e, name);
 }
 
 oyl_status oyl_emit_mapping_start(oyl_emitter *e, oyl_str anchor, oyl_str tag, bool flow) {
-    oyl_event evt = { .type = OYL_EVT_MAPPING_START, .anchor = anchor, .tag = tag,
-                      .flow = flow };
-    return oyl_emit(e, &evt);
+    return emit_mapping_start(e, anchor, tag, flow);
 }
 
 oyl_status oyl_emit_mapping_end(oyl_emitter *e) {
-    oyl_event evt = { .type = OYL_EVT_MAPPING_END };
-    return oyl_emit(e, &evt);
+    return emit_mapping_end(e);
 }
 
 oyl_status oyl_emit_sequence_start(oyl_emitter *e, oyl_str anchor, oyl_str tag, bool flow) {
-    oyl_event evt = { .type = OYL_EVT_SEQUENCE_START, .anchor = anchor, .tag = tag,
-                      .flow = flow };
-    return oyl_emit(e, &evt);
+    return emit_sequence_start(e, anchor, tag, flow);
 }
 
 oyl_status oyl_emit_sequence_end(oyl_emitter *e) {
-    oyl_event evt = { .type = OYL_EVT_SEQUENCE_END };
-    return oyl_emit(e, &evt);
+    return emit_sequence_end(e);
 }
 
 oyl_str oyl_emitter_output(oyl_emitter *e) {

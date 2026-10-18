@@ -745,24 +745,23 @@ oyl_status oyl_node_entries(const oyl_tree *t, uint32_t map, unsigned flags, oyl
 
 /* ── Writing ─────────────────────────────────────────────── */
 
-/* The event that read node i */
-static oyl_event node_event(const oyl_tree *t, uint32_t i) {
+/* Emit node i, as the event that read it would be */
+static oyl_status emit_node(oyl_emitter *e, const oyl_tree *t, uint32_t i) {
     const oyl_node *n = &t->nodes[i];
-    oyl_event e = { .type = n->kind == OYL_NODE_SCALAR   ? OYL_EVT_SCALAR
-                          : n->kind == OYL_NODE_ALIAS    ? OYL_EVT_ALIAS
-                          : n->kind == OYL_NODE_SEQUENCE ? OYL_EVT_SEQUENCE_START
-                                                         : OYL_EVT_MAPPING_START };
-    if (n->kind == OYL_NODE_SCALAR || n->kind == OYL_NODE_ALIAS) {
-        e.value = oyl_tree_text(t, n);
-        e.scalar_style = (oyl_scalar_style)n->style;
-    }
-    e.flow = (n->flags & OYL_NODE_FLOW) != 0;
-    if (n->kind != OYL_NODE_ALIAS && n->props) {
+    if (n->kind == OYL_NODE_ALIAS) return oyl_emit_alias(e, oyl_tree_text(t, n));
+    oyl_str tag = OYL_STR_NULL, anchor = OYL_STR_NULL;
+    if (n->props) {
         const oyl_node_props *pr = &t->props[n->props];
-        e.tag = pooled(t, pr->tag, pr->tag_len);
-        e.anchor = pooled(t, pr->anchor, pr->anchor_len);
+        tag = pooled(t, pr->tag, pr->tag_len);
+        anchor = pooled(t, pr->anchor, pr->anchor_len);
     }
-    return e;
+    bool flow = (n->flags & OYL_NODE_FLOW) != 0;
+    switch (n->kind) {
+    case OYL_NODE_SCALAR:
+        return oyl_emit_scalar(e, oyl_tree_text(t, n), (oyl_scalar_style)n->style, anchor, tag);
+    case OYL_NODE_SEQUENCE: return oyl_emit_sequence_start(e, anchor, tag, flow);
+    default:                return oyl_emit_mapping_start(e, anchor, tag, flow);
+    }
 }
 
 /* End the collections from node j up through its ancestors, stopping at
@@ -786,8 +785,7 @@ oyl_status oyl_emit_tree(oyl_emitter *e, const oyl_tree *t) {
         /* node i's parent is node i-1 or one of its ancestors: the
          * collections between them have ended */
         if (i) st = end_up_to(e, t, i - 1, i - t->nodes[i].parent);
-        oyl_event ev = node_event(t, i);
-        if (st == OYL_OK) st = oyl_emit(e, &ev);
+        if (st == OYL_OK) st = emit_node(e, t, i);
     }
     if (st == OYL_OK) st = end_up_to(e, t, t->len - 1, NONE);
     if (st == OYL_OK) st = oyl_emit_document_end(e, t->implicit_end);
