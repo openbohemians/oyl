@@ -11,6 +11,7 @@
 #define OYL_INTERNAL_H
 
 #include "oyl/oyl.h"
+#include <math.h>
 #include <string.h>
 
 /* ── Schema ──────────────────────────────────────────────── */
@@ -130,7 +131,7 @@ static inline int oyl_key_cmp(const oyl_key *a, const oyl_key *b) {
     case OYL_VALUE_UINT:  return (x->as.u > y->as.u) - (x->as.u < y->as.u);
     case OYL_VALUE_FLOAT: {
         /* .nan's canonical form is one, so NaN equals NaN, after the numbers */
-        bool nx = x->as.f != x->as.f, ny = y->as.f != y->as.f;
+        bool nx = isnan(x->as.f), ny = isnan(y->as.f);
         if (nx || ny) return nx - ny;
         return (x->as.f > y->as.f) - (x->as.f < y->as.f);
     }

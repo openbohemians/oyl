@@ -199,6 +199,7 @@ static void neighbor(const char *digits, int n, int dir, char *out, int *e) {
 static int shortest_digits(double a, bool single, char *digits, int *e) {
     char point = *localeconv()->decimal_point;
     double x = single ? (double)(float)a : a;
+    *e = 0;
     for (int n = 1; n <= 17; n++) {
         char buf[48];
         snprintf(buf, sizeof buf, "%.*e", n - 1, x);
@@ -208,7 +209,8 @@ static int shortest_digits(double a, bool single, char *digits, int *e) {
             j++;
         }
         int ex = buf[j] == 'e' ? atoi(buf + j + 1) : 0;
-        if (reads_back(digits, n, ex, a, single, point)) { *e = ex; return n; }
+        *e = ex;
+        if (reads_back(digits, n, ex, a, single, point)) return n;
         /* the nearest n digits can miss on the narrow side of the interval
          * that reads back (next to a power of two), where a neighbor fits */
         char up[24], down[24];
@@ -412,16 +414,17 @@ static bool put_json_string(buffer *b, const char *str, size_t n) {
 
 /* ── Scalars ─────────────────────────────────────────────── */
 
+/* A base64 digit's value, or -1 (computed, not a table filled on first
+ * use, which threads converting at once would race on) */
+static int base64_digit(unsigned char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    return c == '+' ? 62 : c == '/' ? 63 : -1;
+}
+
 /* Go's base64.StdEncoding.DecodeString, which skips \r and \n */
 static bool base64_decode(oyl_str in, buffer *out) {
-    static signed char table[256];
-    static bool ready;
-    if (!ready) {
-        memset(table, -1, sizeof table);
-        const char *alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        for (int i = 0; i < 64; i++) table[(unsigned char)alphabet[i]] = (signed char)i;
-        ready = true;
-    }
     out->len = 0;
     int quad[4], q = 0, pad = 0;
     for (size_t i = 0; i < in.len; i++) {
@@ -435,8 +438,9 @@ static bool base64_decode(oyl_str in, buffer *out) {
             pad = 1;
             quad[q++] = 0;
         } else {
-            if (table[c] < 0) return false;
-            quad[q++] = table[c];
+            int v = base64_digit(c);
+            if (v < 0) return false;
+            quad[q++] = v;
         }
         if (q == 4) {
             unsigned char bytes[3] = { (unsigned char)(quad[0] << 2 | quad[1] >> 4),

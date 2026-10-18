@@ -4120,7 +4120,6 @@ static oyl_status parser_step(oyl_parser *p) {
 
     case ST_BLOCK_NODE_SCALAR: {
         peek_token(p);
-        mark = p->current.start;
         col = tok_col(p);
         evt = (oyl_event){
             .type = OYL_EVT_SCALAR,
@@ -4173,7 +4172,6 @@ static oyl_status parser_step(oyl_parser *p) {
 
     case ST_BLOCK_NODE_ALIAS: {
         peek_token(p);
-        mark = p->current.start;
         col = tok_col(p);
         evt = (oyl_event){
             .type = OYL_EVT_ALIAS,
@@ -4358,8 +4356,6 @@ static oyl_status parser_step(oyl_parser *p) {
         tt = tok_type(p);
 
         if (tt == OYL_TOK_SCALAR) {
-            mark = p->current.start;
-            col = tok_col(p);
             evt = (oyl_event){
                 .type = OYL_EVT_SCALAR,
                 .value = p->current.value,
@@ -4380,7 +4376,6 @@ static oyl_status parser_step(oyl_parser *p) {
                 p->state = ST_EAGER_DRAIN;
             }
         } else if (tt == OYL_TOK_ALIAS) {
-            mark = p->current.start;
             evt = (oyl_event){
                 .type = OYL_EVT_ALIAS,
                 .value = p->current.value,

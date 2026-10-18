@@ -66,6 +66,8 @@ static void test_kubernetes(void) {
     check("", "END");
     check("a: 1\n---\nb: 2\n", "{\"a\":1}");
     check("b: !!binary aGVsbG8=\n", "{\"b\":\"hello\"}");
+    check("b: !!binary QUJDeHl6MDEy\n", "{\"b\":\"ABCxyz012\"}");   /* A-Z, a-z, 0-9 */
+    check("b: !!binary Pz8/Pj4+\n", "{\"b\":\"???\\u003e\\u003e\\u003e\"}");   /* + and / */
     check("a: &x [1, 2]\nb: *x\n", "{\"a\":[1,2],\"b\":[1,2]}");
     check("v: \"\\xB5\"\n", "{\"v\":\"\xC2\xB5\"}");
 }
