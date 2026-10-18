@@ -11,8 +11,20 @@ dialect takes `OYL_SYNTAX_EOF_NO_BREAK`. Checked against PyYAML 6.0.3,
 CSafeLoader and SafeLoader alike: 100 tricky scalars identical; 57,231
 distinct plain scalars from 11,058 local files, every tag identical
 (values differ only for ints beyond 64 bits, text in Oyl). Not taken on:
-libyaml's acceptance of invalid YAML (tabs as indentation, # after text:
-the converter's ground, ideas.md). Found on the way: libyaml 0.2.5
+the invalid YAML libyaml accepts (the converter's ground, ideas.md).
+Measured 2026-10-18 on the yaml-test-suite's fail cases (Oyl rejects
+all): libyaml accepts 15, in five kinds. A comment touching the token
+before it: SU5Z `"value"#c`, X4QW `>#c`, 9JBA `]#c`, CVW2 `,#c`, MUS6:0
+`%YAML 1.1#`. Lines of a quoted scalar or flow collection not indented
+past their block: 9C9N, QB6E, DK95:1 and Y79Y:3 (the last two with a tab
+standing in for the indent). A bare `-` in flow: G5U8, YJV2. A directive
+after a document without `...`: EB22, RHX7, MUS6:1. S98Z (a block
+scalar's leading blank lines deeper than its first line). An earlier
+claim that libyaml accepts tabs as indentation was wrong: it rejects
+them in block context, and even rejects some valid tabs (`-\ta`,
+`:\tb` after `?`, a tab-led plain continuation line), which Oyl reads.
+A `#` after plain text is part of the scalar in both (`b#c`), and a
+comment may start any line. Found on the way: libyaml 0.2.5
 rejects `\'` and accepts `%YAML 1.2`, so `OYL_SYNTAX_LIBYAML` was renamed
 `OYL_SYNTAX_GOYAML2`: those leniencies are go-yaml v2's.
 
