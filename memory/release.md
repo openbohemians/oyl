@@ -34,7 +34,9 @@ are merged (not deleted). **Tag only after several days of clean batch
 runs on the release commit, with the user's go-ahead.**
 Clean so far: the two dispatched runs on `ec481e5` (1 ASan, 1 UBSan, the
 tree code's first batch runs), and a local 30-minute run on `ada453c`
-(2026-10-18, 5.7M inputs, the user asked for it).
+(2026-10-18, 5.7M inputs, the user asked for it). Since then main has
+`8b2a7e2` (a tree's dialect could point into a freed parser; found by
+the Rust binding).
 
 ## 1.0.1 (on main, not tagged; superseded by 1.2.0)
 
@@ -186,6 +188,23 @@ only after the `+`, so re-vendoring for a release needs a bump before it.
 Both go to 1.0 once the Rust API holds through the tree work (agreed
 2026-10-10). The crates.io README of 0.1.0 still shows the git install
 line; the repo's says `oyl = "0.1"`.
+
+**0.2.0 on branch `oyl-1.2`** (2026-10-18, the user agreed to steps 1
+and 2): oyl-sys vendors Oyl's main (`8b2a7e2`) and mirrors the whole
+header (88 functions; the layout test covers oyl_value and the tree
+structs); `oyl` gains trees (`Parser::next_tree`/`trees`, `Tree`,
+`Node`: get with merges, at, items, pairs, entries, entries_strict,
+value, mark, span, raw_nodes; Send + Sync; `Emitter::tree`), `Value`,
+`Dialect<'a>` (presets `'static`; a tree's dialect borrows the tree),
+`Schema::yaml11`/`goyaml2`, `Parser::next_json` with `JsonOptions`
+(`kubernetes()`), and `examples/tree.rs`. Tests: 15 tree, 15 API, 4 doc
+(one compile_fail for the dialect lifetime). Writing it found a C bug,
+fixed in `8b2a7e2`: a tree's dialect pointed into the parser when only a
+schema was set. **To publish:** after Oyl 1.2.0 is tagged, re-vendor the
+tag (oyl-sys becomes 0.2.0+1.2.0), merge `oyl-1.2` into main, and ask
+the user before `cargo publish --workspace`. **Next (step 3, agreed in
+principle):** serde, `oyl::from_str` as a Deserializer over the tree,
+behind a feature (serde_yaml was archived in 2024).
 
 ### Go
 
