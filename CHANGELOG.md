@@ -33,6 +33,13 @@
   the rules that could accept it: for text starting with `n`, go-yaml v2's
   schema tries `null`, `n` and `no`, not all 30 rules. Building a tree is
   about 8% faster for it.
+- The emitter is 1.5x to 7x faster, with the same output byte for byte:
+  it decides a scalar's style in one pass over it instead of up to four,
+  writes quoted scalars a chunk at a time, no longer counts output
+  columns it never used, and emits events and trees without building an
+  event per node. Writing held trees as YAML: block mappings 214 to 340
+  MB/s, the largest Kubernetes CRD 705 to 1531, multi-line plain scalars
+  334 to 2352.
 
 ### Fixed
 
