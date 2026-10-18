@@ -1,6 +1,6 @@
 # Release 1.0
 
-*Updated 2026-10-17*
+*Updated 2026-10-18*
 
 ## Status
 
@@ -17,7 +17,19 @@
   parse-path agreement; `94239d8`, verbatim tags), 2026-09-28 (`8e1d455`, flow-key lookahead
   redesign).
 
-## 1.0.1 (on main, not tagged)
+## Next release: 1.2.0, straight from `tree`
+
+**The user decided 2026-10-17: no separate 1.0.1 or 1.1 releases** ("why
+bother with the older releases at this point"). Everything on `tree`
+(1.0.1's fixes, 1.1's schemas, dialects and JSON, 1.2's trees and the
+faster emitter) ships as 1.2.0. At tag time, fold the changelog's 1.0.1,
+1.1.0 and 1.2.0 sections into one. Batch fuzzing of `tree` started
+2026-10-18 02:12 UTC (dispatched, `ec481e5`, both sanitizers): until
+then ClusterFuzzLite had only ever fuzzed main. Scheduled runs only fuzz
+main. **Tag only after several days of clean batch runs on the release
+commit, with the user's go-ahead.**
+
+## 1.0.1 (on main, not tagged; superseded by 1.2.0)
 
 Fixes: Core's `.Inf`/`.NaN` spellings (`707aa94`), `\x80`-`\xFF` escapes
 as UTF-8 (`fba460b`), `%YAML` other than 1.x rejected (`7cc131b`), and the

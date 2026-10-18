@@ -11,7 +11,9 @@ CI green): see "Step 2 as built". **Step 3 built 2026-10-12** (`d79fde8`):
 see "Step 3 as built". **Step 4 measured and published** (README tree
 tables `2bcc6a4`, harness `1cd2e15`). **Emitter speed pass done**
 (`5115554`, `685b7a6`; the user chose it before the release, 2026-10-17):
-1.5-7x faster, same output. **Next:** step 5, release 1.2.0 (ask first).
+1.5-7x faster, same output. **Next:** step 5, release 1.2.0, the only
+release now (release.md): batch fuzzing of `tree` first (started
+2026-10-18), then ask the user.
 See "Step 4 so far". Roadmap
 step 5 (roadmap.md). It replaces the sketch in ideas.md. The user agreed
 on 2026-10-11 to build the tree before parallel parsing, designed so
