@@ -45,3 +45,13 @@ Larger features go in ideas.md, and the order of work in roadmap.md.
     PyYAML folds them, last wins.
   No such pair in 10,541 real files (dialects-design.md). Open question:
   what `get(text)` means once keys have types (a typed lookup beside it?).
+  Checked on 5c12136 (2026-10-18): the tree still holds every pair (the
+  emitter writes both back); only `get`/`entries` fold them.
+  `oyl_parse_json` already compares by value, since it writes keys from
+  their values: `true: a` + `True: b` gives `{"true":"b"}`, and
+  `OYL_JSON_STRICT` rejects it, so trees and JSON disagree. `1`/`"1"` is
+  one JSON key either way (strict rejects it, rightly). Events are fine:
+  key uniqueness is a rule of the representation, not of syntax, and the
+  suite doesn't test it. Trees are new in 1.2.0, so fixing this before
+  the tag means no release matches keys by text (suggested to the user,
+  not decided).
