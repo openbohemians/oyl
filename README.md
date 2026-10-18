@@ -625,10 +625,49 @@ while rapidyaml rewrites the input buffer in place and libfyaml decodes
 text when it's read, so on long scalars they hold less. Measured from
 glibc's heap (`mallinfo2`) with the trees of the whole input kept.
 
+### Writing YAML
+
+Throughput in MB/s of input writing each library's trees, built
+beforehand, back out as YAML, measured with `make bench-compare-emit` the
+same way (passes agree within 6%, except libfyaml on the CRD, 17%):
+
+| Input | Oyl | libyaml 0.2.5 | libfyaml 0.9.6 | rapidyaml 0.16 |
+|---|---:|---:|---:|---:|
+| **Generated, 10 MB** | | | | |
+| block mappings and sequences | 328 | 68 | 94 | 373 |
+| mixed block, flow and quoted | 411 | 86 | 118 | 372 |
+| JSON | 382 | 70 | 92 | 368 |
+| config files (comments, block scalars, anchors) | 629 | 143 | 127 | 555 |
+| **Real files, repeated to ~10 MB** | | | | |
+| travis.yml | 1095 | 204 | 373 | 897 |
+| appveyor.yml | 704 | 186 | 205 | 752 |
+| compile_commands.json | 1316 | 258 | 650 | 718 |
+| **Kubernetes** | | | | |
+| 854 manifests in one stream, 7.3 MB | 1306 | fails¹ | 185 | fails² |
+| the largest CRD, 1.4 MB | 1482 | 319 | 517 | 1770 |
+| **Scalar-heavy text** | | | | |
+| literal block scalars (`\|`) | 1401 | 278 | 96 | 1398 |
+| folded block scalars (`>`) | 1665 | 251 | 256 | 1752 |
+| multi-line double-quoted | 1489 | 253 | 92 | 613 |
+| multi-line single-quoted | 1551 | 250 | 97 | 1346 |
+| multi-line plain | 2431 | 252 | 99 | 1954 |
+
+Each library writes in its default style: `oyl_emit_tree`, libyaml's
+`yaml_emitter_dump` (which consumes its documents, so they're loaded again
+before each run, untimed), libfyaml's `fy_emit_document_to_string`, and
+rapidyaml's `emitrs_yaml`. ¹ ² As above: the trees can't be built.
+
+Oyl writes YAML 3.8–9.6× faster than libyaml and 2–25× faster than
+libfyaml. Against rapidyaml it's faster on 8 of the 13 inputs both can
+read (up to 2.4×, on double-quoted text), even on literal block scalars,
+and slower on 4, by 5–19%: block mappings, appveyor.yml, folded block
+scalars and the CRD.
+
 Run `make bench` to measure Oyl alone. `make bench-compare` runs the event
-table above with whichever libraries are installed, and
-`make bench-compare-tree` the tree tables; see `bench/compare/run.sh` for
-adding rapidyaml (`RYML_HEADER`, `RYML_SRC`) and your own files (`CASES`).
+table above with whichever libraries are installed,
+`make bench-compare-tree` the tree tables and `make bench-compare-emit`
+the emitter's; see `bench/compare/run.sh` for adding rapidyaml
+(`RYML_HEADER`, `RYML_SRC`) and your own files (`CASES`).
 
 ## Conformance and Testing
 

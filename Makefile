@@ -56,7 +56,7 @@ TEST_TREE := $(OBJDIR)/test_tree
 
 .PHONY: all static shared pkgconfig install uninstall dist version \
         clean test test-suite test-schema test-emitter test-merge \
-        test-resolve test-errors test-flow test-json test-dialect test-tree test-all bench bench-parser bench-cmp bench-parser-cmp bench-compare bench-compare-tree bench-classify bench-oracle bench-parallel
+        test-resolve test-errors test-flow test-json test-dialect test-tree test-all bench bench-parser bench-cmp bench-parser-cmp bench-compare bench-compare-tree bench-compare-emit bench-classify bench-oracle bench-parallel
 
 all: $(LIB) $(TEST)
 
@@ -238,6 +238,10 @@ bench-compare:
 # The same with every library building its tree, and the memory trees hold
 bench-compare-tree:
 	@MODE=tree bench/compare/run.sh $(SIZE)
+
+# The same with every library writing its trees, built beforehand, as YAML
+bench-compare-emit:
+	@MODE=emit bench/compare/run.sh $(SIZE)
 
 # Compare plain-scalar classifiers inside the parser; see bench/classify/run.sh
 bench-classify:

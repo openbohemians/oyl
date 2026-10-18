@@ -7,7 +7,8 @@
 # Environment:
 #   MODE         events (default): every library as an event parser;
 #                tree: every library building its tree, then the memory
-#                each tree holds
+#                each tree holds; emit: every library writing its trees,
+#                built beforehand, as YAML
 #   RYML_HEADER  path to a rapidyaml single header, e.g.
 #                rapidyaml.v0.16.0.singlehdr.hpp from its GitHub releases
 #   RYML_SRC     unpacked rapidyaml source release, for its event parser
@@ -36,7 +37,8 @@ mkdir -p "$OUT"
 case $MODE in
     events) T="" ;;
     tree) T="_tree" ;;
-    *) echo "MODE must be events or tree" >&2; exit 2 ;;
+    emit) T="_emit" ;;
+    *) echo "MODE must be events, tree or emit" >&2; exit 2 ;;
 esac
 
 $CC -O2 -I"$ROOT/bench" "$HERE/gen_inputs.c" -o "$OUT/gen_inputs"
@@ -91,23 +93,29 @@ if [ -n "$RYML_SRC" ] && [ -d "$RYML_SRC/src_extra" ]; then
 elif [ "$MODE" = events ]; then
     echo "RYML_SRC not set: rapidyaml's event parser skipped" >&2
 fi
-# in tree mode, rapidyaml's tree, from the single header or the sources
-ryml_tree() {   # ryml_tree <name> [flags]
-    name=$1; shift
+# in tree and emit modes, rapidyaml's tree, from the single header or the
+# sources
+ryml_build() {   # ryml_build <name> <source> [flags]
+    name=$1; src=$2; shift 2
     if [ -n "$RYML_HEADER" ] && [ -f "$RYML_HEADER" ]; then
         $CXX $CXXFLAGS -std=c++17 -DRYML_HEADER="\"$RYML_HEADER\"" "$@" \
-            "$HERE/cmp_ryml.cpp" -o "$OUT/cmp_$name"
+            "$HERE/$src" -o "$OUT/cmp_$name"
     else
-        $CXX $CXXFLAGS -std=c++17 $RYML_INC "$@" "$HERE/cmp_ryml.cpp" \
+        $CXX $CXXFLAGS -std=c++17 $RYML_INC "$@" "$HERE/$src" \
             "$OUT"/ryml_obj/*.o -o "$OUT/cmp_$name"
     fi
 }
-if [ "$MODE" = tree ]; then
+if [ "$MODE" != events ]; then
     if { [ -n "$RYML_HEADER" ] && [ -f "$RYML_HEADER" ]; } ||
        { [ -n "$RYML_SRC" ] && [ -d "$RYML_SRC/src_extra" ]; }; then
-        ryml_tree rapidyaml
-        ryml_tree rapidyaml-reuse -DRYML_REUSE
-        LIBS="$LIBS rapidyaml rapidyaml-reuse"
+        if [ "$MODE" = tree ]; then
+            ryml_build rapidyaml cmp_ryml.cpp
+            ryml_build rapidyaml-reuse cmp_ryml.cpp -DRYML_REUSE
+            LIBS="$LIBS rapidyaml rapidyaml-reuse"
+        else
+            ryml_build rapidyaml cmp_ryml_emit.cpp
+            LIBS="$LIBS rapidyaml"
+        fi
     else
         echo "neither RYML_HEADER nor RYML_SRC set: rapidyaml skipped" >&2
     fi
@@ -124,6 +132,8 @@ fi
 echo
 if [ "$MODE" = tree ]; then
     echo "Parse to tree throughput in MB/s, median of $RUNS runs${PIN:+ (pinned to CPU $CPU)}"
+elif [ "$MODE" = emit ]; then
+    echo "Emit throughput from held trees, MB/s of input, median of $RUNS runs${PIN:+ (pinned to CPU $CPU)}"
 else
     echo "Parse throughput in MB/s, median of $RUNS runs${PIN:+ (pinned to CPU $CPU)}"
 fi
