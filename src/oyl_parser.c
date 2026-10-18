@@ -4916,6 +4916,10 @@ void oyl_parser_fail(oyl_parser *p, oyl_mark mark, const char *msg) {
 }
 
 oyl_arena *oyl_parser_arena(const oyl_parser *p) { return p->arena; }
+bool oyl_parser_owns_dialect(const oyl_parser *p, const oyl_dialect *d) {
+    return d == &p->schema_dialect;
+}
+
 const char *oyl_parser_input(const oyl_parser *p, size_t *len) {
     *len = p->input_len;
     return p->input;

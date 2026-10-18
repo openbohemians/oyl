@@ -675,7 +675,8 @@ typedef struct {
 
 /** Read the parser's next document into a tree. At the end of the stream,
  *  returns OYL_OK with @p *tree NULL. Free the tree with oyl_tree_free();
- *  the input must outlive it. The parser's settings apply (dialects,
+ *  the input, and a schema or dialect given to the parser, must outlive
+ *  it, but the parser need not. The parser's settings apply (dialects,
  *  limits, warnings); leave its merge and alias resolution off. Errors
  *  (the parser's, an alias to an unknown anchor, a document over 4 GB) are
  *  reported by oyl_parser_error() and oyl_parser_error_mark(). */

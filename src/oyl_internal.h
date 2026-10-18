@@ -103,6 +103,9 @@ bool oyl_scanner_copy(oyl_scanner *dst, const oyl_scanner *src);
 void oyl_parser_fail(oyl_parser *p, oyl_mark mark, const char *msg);
 oyl_arena        *oyl_parser_arena(const oyl_parser *p);
 const char       *oyl_parser_input(const oyl_parser *p, size_t *len);
+/* Whether `d` is a dialect the parser made itself (from a schema alone),
+ * which lives only as long as the parser */
+bool              oyl_parser_owns_dialect(const oyl_parser *p, const oyl_dialect *d);
 int               oyl_parser_depth_limit(const oyl_parser *p);   /* 0: none */
 const oyl_schema *oyl_parser_schema(const oyl_parser *p);       /* NULL: none */
 /* Report a warning found after parsing (no re-reading to guard against) */
@@ -128,6 +131,7 @@ struct oyl_tree {
     const oyl_schema  *schema;
     oyl_merge_order    merge;
     bool               implicit_start, implicit_end;   /* no "---", no "..." */
+    oyl_dialect        own_dialect;   /* a copy of a dialect the parser owned */
 };
 
 /* A scalar's or alias's text */

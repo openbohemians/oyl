@@ -304,6 +304,10 @@ oyl_status oyl_parse_tree(oyl_parser *p, oyl_tree **tree) {
     t->base = e->start.offset;
     t->doc_mark = e->start;
     t->dialect = oyl_parser_document_dialect(p);
+    if (oyl_parser_owns_dialect(p, t->dialect)) {   /* the tree may outlive the parser */
+        t->own_dialect = *t->dialect;
+        t->dialect = &t->own_dialect;
+    }
     t->schema = oyl_dialect_schema(t->dialect);
     t->merge = oyl_dialect_merge(t->dialect);
     t->implicit_start = e->implicit;

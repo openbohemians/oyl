@@ -436,6 +436,25 @@ static void test_documents(void) {
     }
     oyl_arena_free(a);
 
+    /* a tree outlives its parser, even one that made its own dialect from
+     * a schema (just sanitize checks nothing dangles) */
+    a = oyl_arena_new(4096);
+    y = "n: 42\n";
+    p = oyl_parser_new(y, strlen(y), a);
+    oyl_parser_set_schema(p, oyl_schema_core());
+    t = NULL;
+    ASSERT(oyl_parse_tree(p, &t) == OYL_OK && t, "a tree from a parser with a schema");
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+    if (t) {
+        oyl_value v;
+        ASSERT(oyl_dialect_schema(oyl_tree_dialect(t)) == oyl_schema_core() &&
+               oyl_dialect_merge(oyl_tree_dialect(t)) == OYL_MERGE_YAML, "its dialect, after the parser");
+        ASSERT(oyl_node_value(t, 2, &v) == OYL_OK && v.kind == OYL_VALUE_INT && v.as.i == 42,
+               "and its values");
+        oyl_tree_free(t);
+    }
+
     ASSERT(oyl_parse_tree(NULL, &t) == OYL_ERR_INPUT, "no parser");
     oyl_tree_free(NULL);
     ASSERT(oyl_tree_nodes(NULL, NULL) == NULL && oyl_tree_pool(NULL).len == 0, "no tree");
