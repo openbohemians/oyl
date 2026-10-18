@@ -36,17 +36,38 @@ a human security audit (OSTIF, OpenSSF Alpha-Omega) once 1.2.0 is used.
 
 ## Open (not fixed; for the user to decide)
 
-- **Lines over 2 GiB** (**Open**). Columns are `size_t` in marks but
-  narrowed to `int` in about 15 places in the scanner and parser
-  (`(int)s->col - 1`), and block scalars count leading spaces in an
-  `int li` with no bound: signed overflow (UB) on a line of more than
-  2^31 spaces. Needs a multi-GB document. Suggested fix: a limit error
-  for lines past INT_MAX bytes, as trees have one for 4 GB.
-- **Incremental parser states never entered** (**Open**): `ST_UNROLL`,
-  `ST_BLOCK_NODE_EMPTY`, `ST_BLOCK_MAP_VALUE_NODE`, `ST_BLOCK_SEQ_ENTRY_NODE`,
-  `ST_FLOW_SEQ_CHECK_COLON`, and the frame-unrolling at document starts.
-  Dead code, or reachable only by inputs the fuzzer hasn't found. Either
-  prove reachable (a test) or remove.
+- **Lines over 2 GiB: fixed in `518519a`.** Columns and indentation
+  were ints narrowed from `size_t` marks (signed for the -1 top level);
+  a block scalar's space count could overflow. The user preferred
+  removing the narrowing to a 2 GB line limit (2026-10-18): they are
+  `ptrdiff_t` now. Same instruction count; a 1.5% cycle difference went
+  away with forced code alignment (measured with perf_event_open
+  instruction and cycle counts; wall time on this box varies by ±3%).
+- **Incremental parser states never entered: analyzed 2026-10-18** (a
+  subagent; scripts and cases in the session scratchpad `states/`). All
+  five are unreachable, so deleting them changes nothing:
+  - `ST_UNROLL` and both `if (p->doc_open)` blocks at document starts:
+    `doc_open` and `frame_len` are always clear when ST_STREAM_DOC_LOOP
+    is entered (the incremental parser closes each document itself).
+    Had it run, it would have disagreed with eager `unroll_all` (it pops
+    flow frames too).
+  - `ST_BLOCK_NODE_EMPTY`: every entry to ST_BLOCK_NODE has already
+    handled DOC_START, DOC_END and STREAM_END. (Its dead code sets
+    `end = current.end` where eager uses `current.start`.)
+  - `ST_BLOCK_MAP_VALUE_NODE`, `ST_BLOCK_SEQ_ENTRY_NODE`: never set
+    anywhere (trampolines bypassed before the rename).
+  - `ST_FLOW_SEQ_CHECK_COLON`: never set; `flow_is_block_key` decides
+    ahead of time. Wired back in, it would mismatch the eager parser.
+  - Also dead: the eager "empty scalar before '-'" block in
+    `parse_block_node`, and ST_DOC_DIRECTIVES' STREAM_END branch.
+  **Open: delete them** (recommended, for the user to decide).
+- **Errors aren't sticky** (**Open**, found by the same subagent).
+  Calling `oyl_parse_next` again after an error goes on parsing: eager
+  mode closes the open collections with `unroll_all` and silently drops
+  content (`&x a:\n  b: c\n  d\n---\ne` loses `d`); incremental mode
+  gives a second `+DOC` and then "please report". `oyl.h` doesn't say
+  what happens. Suggested: keep the first error and return it on every
+  later call; then `unroll_all` can go too.
 - **Out-of-memory paths never run** (**Open**): every allocation failure
   branch (parser, tree, JSON, scanner copy). A fault-injection test
   (fail the Nth allocation, for every N, over a few documents, under
