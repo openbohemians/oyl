@@ -1,6 +1,6 @@
 # Release 1.0
 
-*Updated 2026-10-11*
+*Updated 2026-10-17*
 
 ## Status
 
@@ -22,10 +22,14 @@
 Fixes: Core's `.Inf`/`.NaN` spellings (`707aa94`), `\x80`-`\xFF` escapes
 as UTF-8 (`fba460b`), `%YAML` other than 1.x rejected (`7cc131b`), and the
 flow-key lookahead with blanks before a quoted key's ':' (`e1fedf2`,
-found 2026-10-11 by the ASan batch run on `7cc131b`: `['' :',']:`). The
-clean-fuzz clock restarted at `e1fedf2`; batch runs dispatched
-2026-10-11 23:20 UTC. **Tag only after clean batch runs on `e1fedf2` or
-later, with the user's go-ahead.** `schema-parsers` has the fix merged.
+found 2026-10-11 by the ASan batch run on `7cc131b`: `['' :',']:`), and
+the same lookahead with a comment ended by a lone `\r` (`ae8d609`, found
+2026-10-16 21:44 UTC by the UBSan batch run on `e1fedf2`, the only failure
+in 5 days of runs: `[a #x\r, [b]: c]` was a key to the eager parser, an
+error to the incremental one). **The clean-fuzz clock restarted at
+`ae8d609`;** batch runs dispatched 2026-10-18 00:25 UTC. **Tag only after
+clean batch runs on `ae8d609` or later, with the user's go-ahead.**
+Merged into `schema-parsers` (`d09556e`) and `tree` (`df34496`).
 
 ## The rule
 
