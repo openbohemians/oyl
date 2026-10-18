@@ -32,6 +32,9 @@ the scheduled runs, every 6 hours per sanitizer, fuzz it).** The website
 the user accepted. Work continues on main; `tree` and `schema-parsers`
 are merged (not deleted). **Tag only after several days of clean batch
 runs on the release commit, with the user's go-ahead.**
+Clean so far: the two dispatched runs on `ec481e5` (1 ASan, 1 UBSan, the
+tree code's first batch runs), and a local 30-minute run on `ada453c`
+(2026-10-18, 5.7M inputs, the user asked for it).
 
 ## 1.0.1 (on main, not tagged; superseded by 1.2.0)
 
