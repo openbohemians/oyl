@@ -31,27 +31,19 @@ Larger features go in ideas.md, and the order of work in roadmap.md.
 - **oyl.go: a wrapper .c for `oyl_tree.c`** (**Open**). oyl.go needs one
   wrapper per vendored source file. Add it when oyl.go vendors a release
   with trees (1.2.0).
-- **Keys compared by tag and value, not text** (**Open**; the user asked
-  for this note, 2026-10-18: "okay for now"). Trees (`oyl_node_get`,
-  `oyl_node_entries`, `OYL_ENTRIES_STRICT`, so serde too) match keys by
-  their text. YAML 1.2.2 §3.2.1.3 (and 1.1 alike) says two scalars are
-  equal only when their tags and canonical forms are equal. Two ways off:
-  - `1` and `"1"` (`!!int` and `!!str`): two keys to the spec, one to
-    Oyl, so a valid document loses a pair to `entries`, and strict
-    entries call it a repeat. The user finds this one the more
-    questionable; fix it first.
-  - `true`/`True`, `0x1`/`1`, `~`/`null` (1.2); also `yes`/`on`/`true`
-    (1.1): one key to the spec (a duplicate, so an error), two to Oyl.
-    PyYAML folds them, last wins.
-  No such pair in 10,541 real files (dialects-design.md). Open question:
-  what `get(text)` means once keys have types (a typed lookup beside it?).
-  Checked on 5c12136 (2026-10-18): the tree still holds every pair (the
-  emitter writes both back); only `get`/`entries` fold them.
-  `oyl_parse_json` already compares by value, since it writes keys from
-  their values: `true: a` + `True: b` gives `{"true":"b"}`, and
-  `OYL_JSON_STRICT` rejects it, so trees and JSON disagree. `1`/`"1"` is
-  one JSON key either way (strict rejects it, rightly). Events are fine:
-  key uniqueness is a rule of the representation, not of syntax, and the
-  suite doesn't test it. Trees are new in 1.2.0, so fixing this before
-  the tag means no release matches keys by text (suggested to the user,
-  not decided).
+- **Keys compared by tag and value, not text** (**Fixed in `4191b09`**,
+  2026-10-18; the user said "OK, lets do it" after the 1.2 spec check).
+  YAML 1.2.2 §3.2.1.3: two scalars are equal when their tags and
+  canonical forms are. Trees (`oyl_node_get`, `oyl_node_entries`,
+  `OYL_ENTRIES_STRICT`, so serde too) and `oyl_parser_set_merge` now
+  compare that way, in the document's schema: `1`/`"1"` two keys,
+  `0x1`/`1` and `true`/`True` one (strict: a repeat). `oyl_node_get(text)`
+  finds the string key, else the key a scalar so written is ("80" finds
+  80); new `oyl_node_get_value` takes an `oyl_value` (its kind's
+  standard tag). `oyl_parse_json` unchanged (it already keyed by value).
+  Against PyYAML: 6,000 random typed-key documents, no differences; the
+  one left is Python's `==` folding `1`, `1.0` and `True` (YAML keeps
+  three keys). Strict reports the first key written again. Rust:
+  `Node::get_value` (oyl.rs `0dda7e1`). `entries` keeps the key forms
+  beside the entries and starts both on the stack: 35.5 ns a pair on
+  Kubernetes mappings against 34.5 before; serde generic +6%.

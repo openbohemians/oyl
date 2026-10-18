@@ -44,12 +44,14 @@ sequence (YAML's merge only: go-yaml v2 rejects it); and in the parser's
 merge, sources' own merges first, tags (`!!merge "<<"` merges, `!!str <<`
 doesn't under YAML 1.1's schema), and a self-containing `<<` stays a key.
 Not matched, on purpose: PyYAML's key order (merged keys first, from the
-last source), since mappings are unordered. **Open: key equality.** Trees
-match keys by text, PyYAML by value: `yes`/`true`, `0x1`/`1`, `~`/`null`
-are one key to PyYAML and two to Oyl; `1`/`"1"` the reverse (and Python
-also folds `True`/`1`/`1.0`). No such pair in 10,541 real files
-(`keyclash.py`). Left as is and told the user; changing it would touch the
-tree design's text lookup.
+last source), since mappings are unordered. **Key equality: fixed in
+`4191b09`** (the user asked, 2026-10-18): trees and the parser's merge
+compare keys by tag and value, as YAML 1.2.2 §3.2.1.3 says, so they
+agree with PyYAML (6,000 random typed-key documents) except where
+Python's `==` folds `True`/`1`/`1.0`, which YAML keeps apart. No such
+pair in 10,541 real files (`keyclash.py`), but `1`/`"1"` was a 1.2
+conformance bug. Key equality is mostly a 1.1 problem (18 boolean
+spellings, `0777` = `511`, base 60): a point for "move to 1.2".
 
 **Agreed with the user, 2026-10-11** (decisions at the end). **Built
 2026-10-11 on `schema-parsers`**: `a9d8fd5` (the YAML 1.1 schema), `8dc86a2`
