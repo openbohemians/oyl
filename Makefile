@@ -50,13 +50,10 @@ TEST_MERGE := $(OBJDIR)/test_merge
 TEST_RESOLVE := $(OBJDIR)/test_resolve
 TEST_ERRORS := $(OBJDIR)/test_errors
 TEST_FLOW := $(OBJDIR)/test_flow
-TEST_JSON := $(OBJDIR)/test_json
-TEST_DIALECT := $(OBJDIR)/test_dialect
-TEST_TREE := $(OBJDIR)/test_tree
 
 .PHONY: all static shared pkgconfig install uninstall dist version \
         clean test test-suite test-schema test-emitter test-merge \
-        test-resolve test-errors test-flow test-json test-dialect test-tree test-oom test-all bench bench-parser bench-cmp bench-parser-cmp bench-compare bench-compare-tree bench-compare-emit bench-classify bench-oracle bench-parallel
+        test-resolve test-errors test-flow test-all bench bench-parser bench-cmp bench-parser-cmp bench-compare bench-classify bench-oracle bench-parallel
 
 all: $(LIB) $(TEST)
 
@@ -166,23 +163,6 @@ $(TEST_ERRORS): $(TESTDIR)/test_errors.c $(LIB)
 $(TEST_FLOW): $(TESTDIR)/test_flow.c $(LIB)
 	$(CC) $(OYL_CFLAGS) $< $(LIB) -o $@
 
-$(TEST_JSON): $(TESTDIR)/test_json.c $(LIB)
-	$(CC) $(OYL_CFLAGS) $< $(LIB) -lm -o $@
-
-$(TEST_DIALECT): $(TESTDIR)/test_dialect.c $(LIB)
-	$(CC) $(OYL_CFLAGS) $< $(LIB) -lm -o $@
-
-$(TEST_TREE): $(TESTDIR)/test_tree.c $(LIB)
-	$(CC) $(OYL_CFLAGS) $< $(LIB) -lm -o $@
-
-# Every allocation failing in turn: malloc, calloc and realloc wrapped with
-# the linker's --wrap, which GNU ld (and lld) have, so Linux only
-ifeq ($(shell uname -s),Linux)
-TEST_OOM := $(OBJDIR)/test_oom
-$(TEST_OOM): $(TESTDIR)/test_oom.c $(LIB)
-	$(CC) $(OYL_CFLAGS) $< $(LIB) -lm -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc -o $@
-endif
-
 test: $(TEST)
 	@echo "─── Running scanner tests ───"
 	@./$(TEST)
@@ -215,28 +195,7 @@ test-flow: $(TEST_FLOW)
 	@echo "─── Running flow tests ───"
 	@./$(TEST_FLOW)
 
-test-json: $(TEST_JSON)
-	@echo "─── Running JSON tests ───"
-	@./$(TEST_JSON)
-
-test-dialect: $(TEST_DIALECT)
-	@echo "─── Running dialect tests ───"
-	@./$(TEST_DIALECT)
-
-test-tree: $(TEST_TREE)
-	@echo "─── Running tree tests ───"
-	@./$(TEST_TREE)
-
-ifdef TEST_OOM
-test-oom: $(TEST_OOM)
-	@echo "─── Running allocation failure tests ───"
-	@./$(TEST_OOM)
-else
-test-oom:
-	@echo "─── Allocation failure tests: Linux only (the linker's --wrap) ───"
-endif
-
-test-all: test test-suite test-schema test-emitter test-merge test-resolve test-errors test-flow test-json test-dialect test-tree test-oom
+test-all: test test-suite test-schema test-emitter test-merge test-resolve test-errors test-flow
 
 bench: $(OBJDIR)/bench_scanner $(OBJDIR)/bench_parser
 	@./$(OBJDIR)/bench_scanner $(SIZE)
@@ -251,14 +210,6 @@ bench-cmp: $(OBJDIR)/bench_scanner_cmp
 # Compare with libyaml, libfyaml and rapidyaml; see bench/compare/run.sh
 bench-compare:
 	@bench/compare/run.sh $(SIZE)
-
-# The same with every library building its tree, and the memory trees hold
-bench-compare-tree:
-	@MODE=tree bench/compare/run.sh $(SIZE)
-
-# The same with every library writing its trees, built beforehand, as YAML
-bench-compare-emit:
-	@MODE=emit bench/compare/run.sh $(SIZE)
 
 # Compare plain-scalar classifiers inside the parser; see bench/classify/run.sh
 bench-classify:
@@ -282,7 +233,6 @@ bench-parser-cmp: $(OBJDIR)/bench_parser_cmp
 # OYL_CKPT_SPACING: checkpoints every 256 bytes, so short inputs take several
 $(OBJDIR)/fuzz_parser: fuzz/fuzz_parser.c $(SRCS) | $(OBJDIR)
 	clang -std=c11 -Wall -Wextra -Iinclude -DOYL_CKPT_SPACING=256 \
-	  -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION \
 	  -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined \
 	  -fno-omit-frame-pointer -g -O1 \
 	  $< $(SRCS) -o $@

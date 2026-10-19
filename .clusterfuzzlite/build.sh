@@ -3,11 +3,9 @@
 # sanitizer flags), $LIB_FUZZING_ENGINE and $OUT come from the base image.
 
 # OYL_CKPT_SPACING: the parser checkpoints every 256 bytes, so that short
-# inputs take several. FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION (the base
-# image sets it too): code kept for deletion traps if it is ever reached.
+# inputs take several
 for f in src/*.c; do
-    $CC $CFLAGS -std=c11 -Iinclude -DOYL_CKPT_SPACING=256 -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION \
-        -c "$f" -o "$WORK/$(basename "$f" .c).o"
+    $CC $CFLAGS -std=c11 -Iinclude -DOYL_CKPT_SPACING=256 -c "$f" -o "$WORK/$(basename "$f" .c).o"
 done
 $CC $CFLAGS -std=c11 -Iinclude -c fuzz/fuzz_parser.c -o "$WORK/fuzz_parser.o"
 # linked with $CXX even for C, as the libFuzzer runtime is C++

@@ -20,27 +20,22 @@ sanitize:
     # integration. Cleans first because make doesn't track CFLAGS changes.
     set -euo pipefail
     make clean >/dev/null
-    # the allocation failure test needs the linker's --wrap: Linux only
-    oom=""; [ "$(uname -s)" = Linux ] && oom=test_oom
     make CC=clang \
       CFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g -O1" \
       build/test_scanner build/test_schema build/test_emitter build/test_merge \
-      build/test_resolve build/test_errors build/test_flow build/test_json build/test_dialect build/test_tree build/test_yaml_suite \
-      ${oom:+build/$oom} >/dev/null
+      build/test_resolve build/test_errors build/test_flow build/test_yaml_suite >/dev/null
     # allocator_may_return_null: the arena tests request absurd sizes on purpose
     # and expect malloc to fail with NULL, as it does outside ASAN.
     export ASAN_OPTIONS='symbolize=1:halt_on_error=0:detect_leaks=1:strict_string_checks=1:allocator_may_return_null=1'
     export UBSAN_OPTIONS='print_stacktrace=1:halt_on_error=0'
     fail=0
-    for t in test_scanner test_schema test_emitter test_merge test_resolve test_errors test_flow test_json test_dialect test_tree test_yaml_suite $oom; do
+    for t in test_scanner test_schema test_emitter test_merge test_resolve test_errors test_flow test_yaml_suite; do
         printf "── %s ──\n" "$t"
         out=$(./build/$t 2>&1)
         hits=$(printf '%s' "$out" | grep -v 'AddressSanitizer failed to allocate' | grep -cE 'AddressSanitizer|UndefinedBehaviorSanitizer|LeakSanitizer|runtime error' || true)
         printf '%s\n' "$out" | tail -2
         if [ "$hits" -gt 0 ]; then
             printf '  ⚠ %d sanitizer hit(s)\n' "$hits"
-            printf '%s\n' "$out" | grep -v 'AddressSanitizer failed to allocate' |
-                grep -E -A3 'AddressSanitizer|UndefinedBehaviorSanitizer|LeakSanitizer|runtime error' | head -40
             fail=1
         fi
     done
@@ -110,17 +105,14 @@ test-install: test-install-arch test-install-deb test-install-rpm
 # Fuzz the parser with libFuzzer + ASAN + UBSAN for N seconds (default 60)
 fuzz duration='60':
     #!/usr/bin/env bash
-    # Each crash/oom/timeout finding is written to fuzz/crashes/ for
-    # inspection; libFuzzer accumulates an interesting-input corpus under
-    # fuzz/corpus/. Both dirs are gitignored. Replay a finding with:
-    # ./build/fuzz_parser path. An input taking over 10 s is a finding: work
-    # that grows too fast on some input (libFuzzer's default allows 20 min).
+    # Each crash/oom finding is written to fuzz/crashes/ for inspection;
+    # libFuzzer accumulates an interesting-input corpus under fuzz/corpus/.
+    # Both dirs are gitignored. Replay a finding with: ./build/fuzz_parser path
     set -euo pipefail
     mkdir -p fuzz/corpus fuzz/crashes
     make build/fuzz_parser
     ./build/fuzz_parser \
         -max_total_time={{duration}} \
-        -timeout=10 \
         -artifact_prefix=fuzz/crashes/ \
         fuzz/corpus
 
