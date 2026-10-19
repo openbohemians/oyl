@@ -123,6 +123,89 @@ static void test_version(void) {
     oyl_arena_free(a);
 }
 
+/* ── The document picks the version, the program the dialect ── */
+
+static void failsafe_schema(oyl_parser *p, oyl_arena *a) {
+    (void)a;
+    oyl_parser_set_schema(p, oyl_schema_failsafe());
+}
+
+static void goyaml2_resolving(oyl_parser *p, oyl_arena *a) {
+    oyl_parser_set_schema(p, oyl_schema_core());
+    goyaml2(p, a);
+}
+
+static void goyaml2_yaml11_for_1_1(oyl_parser *p, oyl_arena *a) {
+    goyaml2_resolving(p, a);
+    oyl_parser_add_dialect(p, oyl_dialect_yaml11(), "1.1", NULL);
+}
+
+static void goyaml2_yaml12_for_1_2(oyl_parser *p, oyl_arena *a) {
+    goyaml2_resolving(p, a);
+    oyl_parser_add_dialect(p, oyl_dialect_yaml12(), "01.02", NULL);
+}
+
+static void failsafe_1_3(oyl_parser *p, oyl_arena *a) {
+    oyl_parser_set_schema(p, oyl_schema_core());
+    oyl_parser_set_dialect(p, oyl_dialect_new(a, "1.3", oyl_schema_failsafe(), 0, OYL_MERGE_YAML));
+}
+
+static void test_version_rule(void) {
+    printf("test_version_rule:\n");
+    char got[512];
+    warnings w = { 0 };
+    /* a default of the version declared stays: go-yaml v2 is a 1.1 dialect */
+    oyl_status st = scalars("%YAML 1.1\n---\nv: 1e3\nq: \"it\\'s\"\n", goyaml2_resolving, false, &w,
+                            got, sizeof got);
+    ASSERT(st == OYL_OK && strcmp(got, "v=str 1e3=float q=str it's=str") == 0,
+           "%YAML 1.1 keeps the go-yaml v2 default");
+    /* a schema alone is YAML 1.2's: %YAML 1.2 keeps it, %YAML 1.1 doesn't */
+    st = scalars("%YAML 1.2\n---\na: 1\n", failsafe_schema, false, NULL, got, sizeof got);
+    ASSERT(st == OYL_OK && strcmp(got, "a=str 1=str") == 0, "%YAML 1.2 keeps the parser's schema");
+    st = scalars("%YAML 1.1\n---\na: yes\n", failsafe_schema, false, NULL, got, sizeof got);
+    ASSERT(st == OYL_OK && strcmp(got, "a=str yes=bool") == 0, "%YAML 1.1: the built-in 1.1");
+    memset(&w, 0, sizeof w);
+    st = scalars("%YAML 1.3\n---\na: 1\n", failsafe_schema, false, &w, got, sizeof got);
+    ASSERT(st == OYL_OK && strcmp(got, "a=str 1=str") == 0, "%YAML 1.3 reads as 1.2: the parser's schema");
+    ASSERT(w.count[OYL_WARN_YAML_VERSION] == 1, "... with a warning");
+
+    /* a dialect registered for the version comes before the default */
+    st = scalars("%YAML 1.1\n---\nv: 1e3\n", goyaml2_yaml11_for_1_1, false, NULL, got, sizeof got);
+    ASSERT(st == OYL_OK && strcmp(got, "v=str 1e3=str") == 0, "registered for 1.1, over a 1.1 default");
+    /* and lets go-yaml v2's world take that version ("01.02" is 1.2) */
+    st = scalars("%YAML 1.2\n---\na: 1\n", goyaml2_yaml12_for_1_2, false, NULL, got, sizeof got);
+    ASSERT(st == OYL_OK && strcmp(got, "a=str 1=int") == 0, "go-yaml v2 default, a dialect for 1.2");
+
+    /* a program's dialect of another version */
+    memset(&w, 0, sizeof w);
+    st = scalars("%YAML 1.3\n---\na: 1\n", failsafe_1_3, false, &w, got, sizeof got);
+    ASSERT(st == OYL_OK && strcmp(got, "a=str 1=str") == 0 && w.total == 0,
+           "a 1.3 default for %YAML 1.3, no warning");
+    st = scalars("%YAML 1.2\n---\na: 1\n", failsafe_1_3, false, NULL, got, sizeof got);
+    ASSERT(st == OYL_OK && strcmp(got, "a=str 1=int") == 0, "... the built-in for %YAML 1.2");
+    st = scalars("a: 1\n", failsafe_1_3, false, NULL, got, sizeof got);
+    ASSERT(st == OYL_OK && strcmp(got, "a=str 1=str") == 0, "... the default without %YAML");
+
+    /* versions */
+    oyl_arena *a = oyl_arena_new(4096);
+    int major = 0, minor = 0;
+    const oyl_dialect *d = oyl_dialect_new(a, "1.1", NULL, 0, OYL_MERGE_YAML);
+    oyl_dialect_version(d, &major, &minor);
+    ASSERT(d && major == 1 && minor == 1, "oyl_dialect_version");
+    oyl_dialect_version(oyl_dialect_goyaml2(), &major, &minor);
+    ASSERT(major == 1 && minor == 1, "go-yaml v2 is 1.1");
+    oyl_dialect_version(oyl_dialect_yaml12(), &major, &minor);
+    ASSERT(major == 1 && minor == 2, "yaml12 is 1.2");
+    const char *bad[] = { NULL, "", "1", "1.", "2.0", "0.9", "1.2.3", "1.x", " 1.2" };
+    for (size_t i = 0; i < sizeof bad / sizeof *bad; i++)
+        ASSERT(oyl_dialect_new(a, bad[i], NULL, 0, OYL_MERGE_YAML) == NULL, "a version not 1.x");
+    oyl_parser *p = oyl_parser_new("x", 1, a);
+    ASSERT(oyl_parser_add_dialect(p, oyl_dialect_yaml12(), "2.0", NULL) == OYL_ERR_INPUT,
+           "registering for a version not 1.x");
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+}
+
 /* ── %TAG !! chooses a dialect ─────────────────────────────── */
 
 static bool parse_semver(oyl_str text, oyl_value *out, void *user) {
@@ -148,7 +231,7 @@ static void with_acme(oyl_parser *p, oyl_arena *a) {
         oyl_schema_builder_add_int(b);
         const oyl_schema *s = oyl_schema_builder_finish(b);
         oyl_schema_builder_free(b);
-        acme = oyl_dialect_new(keep, s, 0, OYL_MERGE_YAML);
+        acme = oyl_dialect_new(keep, "1.2", s, 0, OYL_MERGE_YAML);
     }
     (void)a;
     oyl_parser_set_schema(p, oyl_schema_core());
@@ -263,11 +346,29 @@ static void test_json_dialect(void) {
     st = oyl_parse_json(p, NULL, 0, &json);
     ASSERT(st == OYL_OK && json.data && strcmp(json.data, "{\"b\":\"yes\"}") == 0, "then YAML 1.2: \"yes\"");
     oyl_parser_free(p);
+
+    /* %YAML 1.1 keeps a go-yaml v2 default: its types and merge order */
+    y = "%YAML 1.1\n---\nd: &d {host: localhost}\ndev:\n  host: dev\n  <<: *d\nv: 1e3\n";
+    p = oyl_parser_new(y, strlen(y), a);
+    oyl_parser_set_dialect(p, oyl_dialect_goyaml2());
+    st = oyl_parse_json(p, NULL, 0, &json);
+    ASSERT(st == OYL_OK && json.data &&
+           strcmp(json.data, "{\"d\":{\"host\":\"localhost\"},\"dev\":{\"host\":\"localhost\"},\"v\":1000}") == 0,
+           "%YAML 1.1 under go-yaml v2: go-yaml v2's JSON");
+    oyl_parser_free(p);
+    p = oyl_parser_new(y, strlen(y), a);
+    oyl_parser_set_dialect(p, oyl_dialect_goyaml2());
+    oyl_tree *t = NULL;
+    st = oyl_parse_tree(p, &t);
+    ASSERT(st == OYL_OK && t && oyl_tree_dialect(t) == oyl_dialect_goyaml2(), "... and its tree");
+    oyl_tree_free(t);
+    oyl_parser_free(p);
     oyl_arena_free(a);
 }
 
 int main(void) {
     test_version();
+    test_version_rule();
     test_tag_prefix();
     test_leniencies();
     test_json_dialect();

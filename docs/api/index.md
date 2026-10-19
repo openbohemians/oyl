@@ -401,20 +401,24 @@ oyl_parser_set_warn(p, on_warning, user);
 ```
 
 A dialect bundles a schema, syntax leniencies (`OYL_SYNTAX_`) and a merge
-order (`OYL_MERGE_NONE`, `_YAML`, `_ORDERED`). A document's dialect: the
-one registered for its `%TAG !!` prefix, else for its `%YAML` version
-(built in: 1.1 is `oyl_dialect_yaml11()`, with PyYAML's types and merge,
-1.2 `oyl_dialect_yaml12()`;
-other 1.x versions read as 1.2 with a warning), else the default. The
+order (`OYL_MERGE_NONE`, `_YAML`, `_ORDERED`), and is a dialect of one YAML
+version. A document's dialect: the one registered for its `%TAG !!`
+prefix; else, if it has a `%YAML` version, the one registered for that
+version, else the default if it is of that version, else the built-in one
+(1.1 is `oyl_dialect_yaml11()`, with PyYAML's types and merge, 1.2
+`oyl_dialect_yaml12()`; other 1.x versions read as 1.2 with a warning);
+else the default. The document picks the version, the program the dialect
+for each: `%YAML 1.1` keeps a go-yaml v2 default (a 1.1 dialect). The
 default is `oyl_parser_set_dialect`'s, else YAML 1.2 with the schema of
-`oyl_parser_set_schema`. With tag resolution on (a schema set), events are
-tagged by the document's dialect.
+`oyl_parser_set_schema`, which `%YAML 1.2` keeps. With tag resolution on (a
+schema set), events are tagged by the document's dialect.
 
 | Function | Description |
 |----------|-------------|
-| `oyl_dialect_new(arena, schema, syntax, merge)` | Build a dialect. |
-| `oyl_dialect_yaml12()`, `_yaml11()`, `_goyaml2()` | The built-in ones. |
+| `oyl_dialect_new(arena, version, schema, syntax, merge)` | Build a dialect of a version (`"1.2"`). |
+| `oyl_dialect_yaml12()`, `_yaml11()`, `_goyaml2()` | The built-in ones (go-yaml v2's is of 1.1). |
 | `oyl_dialect_schema(d)`, `_syntax(d)`, `_merge(d)` | Its parts. |
+| `oyl_dialect_version(d, &major, &minor)` | Its version. |
 | `oyl_parser_set_dialect(p, d)` | The default dialect. |
 | `oyl_parser_add_dialect(p, d, version, prefix)` | Let documents choose `d` by `%YAML` or `%TAG !!`. |
 | `oyl_parser_document_dialect(p)` | The dialect of the document an `OYL_EVT_DOC_START` begins (ask then). |
@@ -425,7 +429,7 @@ tagged by the document's dialect.
 |-------------|--------|
 | `OYL_SYNTAX_SQUOTE_ESCAPE` | `\'` in double quotes is `'` (go-yaml v2) |
 | `OYL_SYNTAX_EOF_NO_BREAK` | a block scalar ending the input gets no final line feed (libyaml, so PyYAML and go-yaml v2) |
-| `OYL_SYNTAX_YAML11_ONLY` | `%YAML` other than 1.1 is an error, in the default dialect, for every document (go-yaml v2) |
+| `OYL_SYNTAX_YAML11_ONLY` | `%YAML` other than 1.1 is an error, in the default dialect for every document but one choosing a registered dialect (go-yaml v2) |
 | `OYL_SYNTAX_GOYAML2` | all three: go-yaml v2's |
 
 Warnings (`oyl_warning`): `OYL_WARN_YAML_VERSION`, `OYL_WARN_DIALECT` (a

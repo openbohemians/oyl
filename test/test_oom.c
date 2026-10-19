@@ -334,7 +334,7 @@ static outcome schema_and_dialect(void) {
     const oyl_schema *s = oyl_schema_builder_finish(b);
     oyl_schema_builder_free(b);
     if (!s) { oyl_arena_free(a); return OUT_OF_MEMORY; }
-    const oyl_dialect *d = oyl_dialect_new(a, s, oyl_dialect_syntax(oyl_dialect_yaml12()), OYL_MERGE_YAML);
+    const oyl_dialect *d = oyl_dialect_new(a, "1.2", s, oyl_dialect_syntax(oyl_dialect_yaml12()), OYL_MERGE_YAML);
     if (!d) { oyl_arena_free(a); return OUT_OF_MEMORY; }
     const char *yaml = "a: on\nb: 0x1F\nc: 1.5\nd: ~\ne: !<tag:example.com,2026:yes> yup\nf: text\n";
     oyl_parser *p = oyl_parser_new(yaml, strlen(yaml), a);

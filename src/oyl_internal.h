@@ -63,7 +63,12 @@ struct oyl_dialect {
     const oyl_schema *schema;
     unsigned          syntax;   /* OYL_SYNTAX_ */
     oyl_merge_order   merge;
+    int               minor;    /* the YAML version it is a dialect of: 1.minor */
 };
+
+/* The minor version of a version string "1.<minor>" (leading zeros allowed,
+ * as in %YAML), or -1 */
+int oyl_version_minor(const char *version);
 
 /* Where warnings go. The parser re-reads input when it falls back to its
  * eager mode, so a warning is reported only past the last one of its code. */

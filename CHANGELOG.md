@@ -84,10 +84,13 @@
   the other 4 are where go-yaml v2's syntax differs from YAML 1.2. About six
   times as fast. With the Core schema and `OYL_JSON_MERGE`, standard JSON.
 
-- **Dialects**: a schema, syntax leniencies and a merge order, chosen per
-  document by its directives: a `%TAG !!` prefix the program registered,
-  else its `%YAML` version (1.1 and 1.2 built in), else the parser's
-  default (`oyl_parser_set_dialect`, `oyl_parser_add_dialect`). Built in:
+- **Dialects**: a schema, syntax leniencies and a merge order, of one
+  YAML version, chosen per document by its directives: a `%TAG !!` prefix
+  the program registered, else for its `%YAML` version the program's
+  dialect of that version (registered, or the default) or the built-in
+  one (1.1 and 1.2), else the parser's default (`oyl_parser_set_dialect`,
+  `oyl_parser_add_dialect`). The document picks the version, the program
+  the dialect for each. Built in:
   YAML 1.2; YAML 1.1 with PyYAML's types and merge; and go-yaml v2 with
   its leniencies, which makes `oyl_parse_json` identical to
   `sigs.k8s.io/yaml` on all 866 documents of the Kubernetes manifests it
@@ -103,7 +106,8 @@
 
 - With a schema set, a document that says `%YAML 1.1` is typed with YAML
   1.1's types (`yes` is true), as the directive asks; before, with the
-  parser's schema. Documents without the directive are unchanged.
+  parser's schema. Documents without the directive, or with `%YAML 1.2`,
+  are unchanged.
 - Of two `<<` merge keys in one mapping, the later wins, as in PyYAML and
   go-yaml v2; `oyl_parser_set_merge` let the earlier win. Keys written in
   the mapping still win over both.

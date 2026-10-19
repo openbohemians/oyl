@@ -390,16 +390,22 @@ your own parser. See [docs/api](docs/api/index.md#tag-schemas).
 ## Dialects and Directives
 
 A dialect is what varies between YAML worlds: a schema (types and
-values), syntax leniencies, and how `<<` merges. Each document's
-directives choose its dialect, among those the program allows:
+values), syntax leniencies, and how `<<` merges. Each is a dialect of one
+YAML version. Each document's directives choose its dialect, among those
+the program allows:
 
 1. `%TAG !! <prefix>`: the dialect registered for that prefix types the
    document's explicit `!!` tags and its untagged values alike
-2. `%YAML <version>`: the version of the standard `!!` schema; `1.1` with
-   PyYAML's types (`yes` is true, `0777` is octal) and merge, so a document
-   PyYAML reads gets the same values (`oyl.h` has the two exceptions),
-   `1.2` by the Core schema
+2. `%YAML <version>`: the program's dialect for that version, the one
+   registered for it or else the default if it is of that version; else
+   the built-in one: `1.1` with PyYAML's types (`yes` is true, `0777` is
+   octal) and merge, so a document PyYAML reads gets the same values
+   (`oyl.h` has the two exceptions), `1.2` by the Core schema
 3. otherwise the parser's default dialect
+
+The document picks the version, the program the dialect for each: with
+go-yaml v2 as the default, `%YAML 1.1` keeps go-yaml v2, a dialect of 1.1,
+and with a schema set, `%YAML 1.2` keeps that schema.
 
 ```c
 oyl_parser_set_dialect(p, oyl_dialect_goyaml2());           /* the default */
@@ -409,7 +415,8 @@ oyl_parser_add_dialect(p, my_dialect, NULL, "tag:acme.com,2026:");
 Built in: `oyl_dialect_yaml12()`, `oyl_dialect_yaml11()` and
 `oyl_dialect_goyaml2()` (go-yaml v2's types and merge order, with its
 leniencies: `\'` in double quotes, `%YAML` 1.1 only, and no line feed for a
-block scalar ending the input, as in libyaml). `oyl_dialect_new` builds one from any schema.
+block scalar ending the input, as in libyaml). `oyl_dialect_new` builds one
+of any version from any schema.
 YAML 1.2 applies a `%TAG !!` prefix to explicit tags only; Oyl applies it
 to untagged values too, which is what `!!` was meant for in YAML 1.2's
 design: `!` for the application's types, `!!` for the underlying schema.

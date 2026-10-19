@@ -267,7 +267,7 @@ static void test_merges(void) {
     unload(&x);
 
     oyl_arena *a = oyl_arena_new(1024);
-    const oyl_dialect *none = oyl_dialect_new(a, NULL, 0, OYL_MERGE_NONE);
+    const oyl_dialect *none = oyl_dialect_new(a, "1.2", NULL, 0, OYL_MERGE_NONE);
     x = load_with(MERGES, none);
     ASSERT(str_is(text_at(&x, "before.x"), "9") && str_is(text_at(&x, "before.y"), "<none>"),
            "no merging: << is an ordinary key");
@@ -539,7 +539,7 @@ static void test_keys(void) {
 
     /* and the failsafe schema's are all strings */
     oyl_arena *a = oyl_arena_new(1024);
-    const oyl_dialect *failsafe = oyl_dialect_new(a, oyl_schema_failsafe(),
+    const oyl_dialect *failsafe = oyl_dialect_new(a, "1.2", oyl_schema_failsafe(),
                                                   oyl_dialect_syntax(oyl_dialect_yaml12()), OYL_MERGE_YAML);
     x = load_with(KEYS, failsafe);
     check_entries(&x, "ints", 0, "1=str");

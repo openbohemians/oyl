@@ -132,7 +132,7 @@ struct oyl_parser {
      * the current document's */
     const oyl_dialect *default_dialect;   /* NULL: YAML 1.2, with `schema` if set */
     oyl_dialect        schema_dialect;    /* that default when only a schema is set */
-    struct { char version[16]; const oyl_dialect *d; } dialect_versions[8];
+    struct { int minor; const oyl_dialect *d; } dialect_versions[8];   /* %YAML 1.minor */
     int                n_dialect_versions;
     struct { char prefix[256]; const oyl_dialect *d; } dialect_prefixes[8];
     int                n_dialect_prefixes;
@@ -2017,7 +2017,8 @@ void oyl_parser_warn(oyl_parser *p, oyl_warning code, oyl_mark mark, const char 
 static const oyl_dialect *default_dialect(oyl_parser *p) {
     if (p->default_dialect) return p->default_dialect;
     if (p->schema) {
-        p->schema_dialect = (oyl_dialect){ .schema = p->schema, .syntax = 0, .merge = OYL_MERGE_YAML };
+        p->schema_dialect = (oyl_dialect){ .schema = p->schema, .syntax = 0, .merge = OYL_MERGE_YAML,
+                                           .minor = 2 };
         return &p->schema_dialect;
     }
     return oyl_dialect_yaml12();
@@ -2031,41 +2032,57 @@ static void use_dialect(oyl_parser *p, const oyl_dialect *d) {
     p->res_schema = p->schema ? oyl_dialect_schema(d) : NULL;
 }
 
-/* After a document's directives: its %TAG !! prefix, if a dialect is
- * registered for it, else its %YAML version, else the default */
+/* The program's dialect for YAML 1.`minor`: the one registered for that
+ * version, else the default if it is of that version, else NULL */
+static const oyl_dialect *version_dialect(oyl_parser *p, int minor, bool *registered) {
+    for (int j = 0; j < p->n_dialect_versions; j++)
+        if (p->dialect_versions[j].minor == minor) {
+            *registered = true;
+            return p->dialect_versions[j].d;
+        }
+    const oyl_dialect *d = default_dialect(p);
+    return d->minor == minor ? d : NULL;
+}
+
+/* After a document's directives: the dialect registered for its %TAG !!
+ * prefix; else, by its %YAML version, the program's dialect for that
+ * version, else the built-in one (other 1.x versions read as 1.2, with a
+ * warning); else the default. The document picks the version, the program
+ * the dialect for each. */
 static oyl_status select_dialect(oyl_parser *p) {
     const oyl_dialect *d = NULL;
+    bool registered = false;   /* one the program registered */
     char msg[320];
     for (int i = 0; i < p->tag_dir_count && !d; i++) {
         if (strcmp(p->tag_directives[i].handle, "!!") != 0) continue;
         const char *prefix = p->tag_directives[i].prefix;
         for (int j = 0; j < p->n_dialect_prefixes && !d; j++)
             if (strcmp(p->dialect_prefixes[j].prefix, prefix) == 0) d = p->dialect_prefixes[j].d;
-        if (!d && strcmp(prefix, "tag:yaml.org,2002:") != 0) {
+        if (d) registered = true;
+        else if (strcmp(prefix, "tag:yaml.org,2002:") != 0) {
             snprintf(msg, sizeof msg, "no dialect registered for %%TAG !! %s: untagged values "
                      "keep the standard types", prefix);
             oyl_warn(&p->warn, OYL_WARN_DIALECT, p->current.start, msg);
         }
     }
     if (!d && p->doc_has_version) {
-        char v[24];
-        snprintf(v, sizeof v, "%d.%d", p->doc_major, p->doc_minor);
-        for (int j = 0; j < p->n_dialect_versions && !d; j++)
-            if (strcmp(p->dialect_versions[j].version, v) == 0) d = p->dialect_versions[j].d;
-        if (!d && p->doc_minor == 1) d = oyl_dialect_yaml11();
-        if (!d) {
-            d = oyl_dialect_yaml12();
-            if (p->doc_minor != 2) {
-                snprintf(msg, sizeof msg, "%%YAML %s: read as YAML 1.2", v);
-                oyl_warn(&p->warn, OYL_WARN_YAML_VERSION, p->yaml_dir_mark, msg);
-            }
+        int minor = p->doc_minor;
+        d = version_dialect(p, minor, &registered);
+        if (!d && minor != 1 && minor != 2) {
+            snprintf(msg, sizeof msg, "%%YAML %d.%d: read as YAML 1.2", p->doc_major, minor);
+            oyl_warn(&p->warn, OYL_WARN_YAML_VERSION, p->yaml_dir_mark, msg);
+            minor = 2;
+            d = version_dialect(p, minor, &registered);
         }
+        if (!d) d = minor == 1 ? oyl_dialect_yaml11() : oyl_dialect_yaml12();
     }
     if (!d) d = default_dialect(p);
     use_dialect(p, d);
-    /* a world that takes %YAML 1.1 only, by the document's dialect or the
-     * default (go-yaml v2's), rejects any other version */
-    if (((d->syntax | default_dialect(p)->syntax) & OYL_SYNTAX_YAML11_ONLY) && p->doc_has_version &&
+    /* a world that takes %YAML 1.1 only (go-yaml v2's) rejects any other
+     * version: the document's dialect, or the default unless the program
+     * registered a dialect the document chose */
+    unsigned syntax = d->syntax | (registered ? 0 : default_dialect(p)->syntax);
+    if ((syntax & OYL_SYNTAX_YAML11_ONLY) && p->doc_has_version &&
         !(p->doc_major == 1 && p->doc_minor == 1)) {
         p->error_mark = p->yaml_dir_mark;
         snprintf(p->error_msg, sizeof p->error_msg,
@@ -5072,14 +5089,15 @@ oyl_status oyl_parser_add_dialect(oyl_parser *p, const oyl_dialect *d, const cha
                                   const char *tag_prefix) {
     if (!p || !d || (version == NULL) == (tag_prefix == NULL)) return OYL_ERR_INPUT;
     if (version) {
-        if (strlen(version) >= sizeof p->dialect_versions[0].version) return OYL_ERR_INPUT;
+        int minor = oyl_version_minor(version);
+        if (minor < 0) return OYL_ERR_INPUT;
         for (int i = 0; i < p->n_dialect_versions; i++)
-            if (strcmp(p->dialect_versions[i].version, version) == 0) {
+            if (p->dialect_versions[i].minor == minor) {
                 p->dialect_versions[i].d = d;
                 return OYL_OK;
             }
         if (p->n_dialect_versions == 8) return OYL_ERR_LIMIT;
-        strcpy(p->dialect_versions[p->n_dialect_versions].version, version);
+        p->dialect_versions[p->n_dialect_versions].minor = minor;
         p->dialect_versions[p->n_dialect_versions++].d = d;
     } else {
         if (strlen(tag_prefix) >= sizeof p->dialect_prefixes[0].prefix) return OYL_ERR_INPUT;
