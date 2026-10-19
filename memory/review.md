@@ -41,7 +41,7 @@ the first merge, in end order, so no recursion), budget as the parser's
 for events with max_events off; Kubernetes mode unchanged (go-yaml v2
 refuses these too). **Open, for the user to decide:** a tree lookup is
 linear in the merge graph, so reading *every* mapping of an adversarial
-graph is quadratic (a 300 KB 10,000-link diamond: 3 s; 1 MB about 35 s;
+graph is quadratic (a 365 KB 10,000-link diamond: 3.2 s; 1 MB, 27,000 links: 27 s;
 before, it failed fast with LIMIT). Events and JSON are linear (per-
 document memo). Fix would be a document-level cache for trees (trees are
 shared read-only across threads, so built once, published atomically, and
