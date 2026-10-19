@@ -151,6 +151,13 @@
   -1 is the top level) and as wide as offsets, so a line can be as long
   as the input. The same instructions run as before. Found by stricter
   compiler warnings.
+- An error is final: every later `oyl_parse_next` returns it again,
+  with the same message, as do `oyl_parse_tree` and `oyl_parse_json`,
+  whose own errors count too. Calling again after an error went on
+  parsing: the eager parser closed the open collections and took the
+  rest as it came, dropping content (`&x a:\n  b: c\n  d\n---\ne` lost
+  `d`), and the incremental one gave a second document start. Found by
+  the code review.
 - `oyl_parser_set_merge` compared keys by their text. A merged key equal
   to one already set but written otherwise (`0x1` for `1`, or `yes` for
   `on` in YAML 1.1) was added again, and one written the same but of

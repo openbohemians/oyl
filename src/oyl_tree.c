@@ -77,7 +77,7 @@ static bool fail(builder *b, oyl_status status, oyl_mark mark, const char *fmt, 
         va_start(ap, fmt);
         vsnprintf(msg, sizeof msg, fmt, ap);
         va_end(ap);
-        oyl_parser_fail(b->p, mark, msg);
+        oyl_parser_fail(b->p, status, mark, msg);
         b->status = status;
     }
     return false;
@@ -295,11 +295,15 @@ oyl_status oyl_parse_tree(oyl_parser *p, oyl_tree **tree) {
         if (e->type == OYL_EVT_STREAM_START) continue;
         if (e->type == OYL_EVT_STREAM_END || e->type == OYL_EVT_NONE) return OYL_OK;
         if (e->type == OYL_EVT_DOC_START) break;
-        oyl_parser_fail(p, e->start, "oyl_parse_tree: not at the start of a document");
+        oyl_parser_fail(p, OYL_ERR_INPUT, e->start, "oyl_parse_tree: not at the start of a document");
         return OYL_ERR_INPUT;
     }
+    /* from here the document is being read: failing leaves it half read */
     oyl_tree *t = calloc(1, sizeof *t);
-    if (!t) return OYL_ERR_MEMORY;
+    if (!t) {
+        oyl_parser_fail(p, OYL_ERR_MEMORY, e->start, "out of memory");
+        return OYL_ERR_MEMORY;
+    }
     t->input = oyl_parser_input(p, &t->input_len);
     t->base = e->start.offset;
     t->doc_mark = e->start;
@@ -317,6 +321,7 @@ oyl_status oyl_parse_tree(oyl_parser *p, oyl_tree **tree) {
                   .small = t->input_len - t->base <= UINT32_MAX };
     if (!grow((void **)&t->props, &t->pcap, 0, 1, sizeof *t->props)) {
         oyl_tree_free(t);
+        oyl_parser_fail(p, OYL_ERR_MEMORY, e->start, "out of memory");
         return OYL_ERR_MEMORY;
     }
     t->props[0] = (oyl_node_props){ 0, 0, 0, 0 };

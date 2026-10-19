@@ -157,8 +157,9 @@ bool oyl_scanner_copy(oyl_scanner *dst, const oyl_scanner *src);
 /* ── Parser, for oyl_json.c and oyl_tree.c ──────────────────────────────── */
 
 /* Report an error found after parsing (a converter's), as parse errors
- * are: oyl_parser_error() and oyl_parser_error_mark() return it. */
-void oyl_parser_fail(oyl_parser *p, oyl_mark mark, const char *msg);
+ * are: oyl_parser_error() and oyl_parser_error_mark() return it, and
+ * every later oyl_parse_next() returns `status` */
+void oyl_parser_fail(oyl_parser *p, oyl_status status, oyl_mark mark, const char *msg);
 oyl_arena        *oyl_parser_arena(const oyl_parser *p);
 const char       *oyl_parser_input(const oyl_parser *p, size_t *len);
 /* Whether `d` is a dialect the parser made itself (from a schema alone),

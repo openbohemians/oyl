@@ -447,6 +447,9 @@ OYL_API oyl_parser *oyl_parser_new(const char *input, size_t len, oyl_arena *a);
  *  by the parser, valid until the next call or oyl_parser_free(); copy it
  *  (or the fields you need) to keep it longer. On error @p *evt is set to
  *  NULL. After OYL_EVT_STREAM_END every call returns a OYL_EVT_NONE event.
+ *  An error is final: every later call returns it again, with the same
+ *  oyl_parser_error(), as do oyl_parse_tree() and oyl_parse_json(),
+ *  whose own errors count too. The events delivered before it stand.
  *
  *  Events are produced incrementally as input is consumed, except when
  *  merge keys, alias resolution, a schema, directives, or node properties

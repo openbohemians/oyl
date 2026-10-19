@@ -151,6 +151,7 @@ struct oyl_parser {
     oyl_mark error_mark;
     bool     oom;         /* stop parsing (see stop_status) */
     oyl_status stop_status; /* why oom was set: 0 = allocation failure */
+    oyl_status failed;    /* the first error returned: every later call returns it */
 
     /* incremental state machine */
     bool         incremental;   /* true = state machine, false = eager */
@@ -4864,7 +4865,10 @@ static oyl_status next_event(oyl_parser *p, oyl_event *evt) {
 }
 
 oyl_status oyl_parse_next(oyl_parser *p, const oyl_event **evt) {
-    oyl_status st = next_event(p, &p->out_evt);
+    /* an error is final: the stream isn't read past it, where the open
+     * collections would be closed and the rest taken as it comes */
+    oyl_status st = p->failed ? p->failed : next_event(p, &p->out_evt);
+    if (st != OYL_OK) p->failed = st;
     *evt = st == OYL_OK ? &p->out_evt : NULL;
     return st;
 }
@@ -4949,9 +4953,11 @@ void oyl_parser_set_max_depth(oyl_parser *p, int max) {
     if (p) p->max_depth = max;
 }
 
-void oyl_parser_fail(oyl_parser *p, oyl_mark mark, const char *msg) {
+void oyl_parser_fail(oyl_parser *p, oyl_status status, oyl_mark mark, const char *msg) {
+    if (p->failed) return;   /* the first error stands */
     snprintf(p->error_msg, sizeof(p->error_msg), "%s", msg);
     p->error_mark = mark;
+    p->failed = status;
 }
 
 oyl_arena *oyl_parser_arena(const oyl_parser *p) { return p->arena; }

@@ -631,6 +631,61 @@ static void test_read_file_edges(void) {
 
 /* ── Main ───────────────────────────────────────────────────── */
 
+/* ── An error is final ───────────────────────────────────── */
+
+/* Read events until an error; then three more calls must give the same
+ * status and message, and no event */
+static bool events_stop(const char *yaml, bool merge) {
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_parser *p = oyl_parser_new(yaml, strlen(yaml), a);
+    oyl_parser_set_merge(p, merge);
+    const oyl_event *e;
+    oyl_status st;
+    while ((st = oyl_parse_next(p, &e)) == OYL_OK && e->type != OYL_EVT_STREAM_END) {}
+    bool ok = st != OYL_OK;
+    char first[256];
+    snprintf(first, sizeof first, "%s", oyl_parser_error(p) ? oyl_parser_error(p) : "");
+    oyl_mark at = oyl_parser_error_mark(p);
+    for (int i = 0; i < 3 && ok; i++) {
+        ok = oyl_parse_next(p, &e) == st && e == NULL && oyl_parser_error(p) &&
+             strcmp(oyl_parser_error(p), first) == 0 && oyl_parser_error_mark(p).offset == at.offset;
+    }
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+    return ok;
+}
+
+static void test_errors_final(void) {
+    printf("test_errors_final:\n");
+    ASSERT(events_stop("- a\nb\n", false), "incremental: a parse error");
+    ASSERT(events_stop("&x a:\n  b: c\n  d\n---\ne\n", true), "eager: the next document isn't read");
+    ASSERT(events_stop("a: 'open\n---\nb: 1\n", false), "a scanner error");
+
+    /* a tree's own error: the next call doesn't read the next document */
+    const char *yaml = "a: *nowhere\n---\nb: 1\n";
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_parser *p = oyl_parser_new(yaml, strlen(yaml), a);
+    oyl_tree *t = NULL;
+    oyl_status st = oyl_parse_tree(p, &t);
+    ASSERT(st != OYL_OK && t == NULL, "a tree with an unknown alias");
+    const oyl_event *e;
+    ASSERT(oyl_parse_tree(p, &t) == st && t == NULL, "the tree's error again");
+    ASSERT(oyl_parse_next(p, &e) == st && e == NULL, "and from the events");
+    ASSERT(oyl_parser_error(p) && strstr(oyl_parser_error(p), "nowhere"), "the first message stands");
+    oyl_parser_free(p);
+
+    /* JSON's own error */
+    yaml = "{~: 1}\n---\nb: 1\n";
+    p = oyl_parser_new(yaml, strlen(yaml), a);
+    oyl_str json;
+    st = oyl_parse_json(p, NULL, 0, &json);
+    ASSERT(st != OYL_OK, "a null key in JSON");
+    ASSERT(oyl_parse_json(p, NULL, 0, &json) == st && json.data == NULL, "JSON's error again");
+    ASSERT(oyl_parser_error(p) && strstr(oyl_parser_error(p), "null"), "its message stands");
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+}
+
 int main(void) {
     /* file input */
     test_read_file();
@@ -661,6 +716,7 @@ int main(void) {
     test_yaml_versions();
     test_arena_limits();
     test_owned_pointers();
+    test_errors_final();
     test_read_file_edges();
 
     printf("\n--- Error tests: %d / %d passed ---\n", tests_passed, tests_run);

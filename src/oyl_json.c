@@ -116,7 +116,7 @@ static bool fail(doc *d, oyl_status status, oyl_mark mark, const char *fmt, ...)
         va_start(ap, fmt);
         vsnprintf(msg, sizeof msg, fmt, ap);
         va_end(ap);
-        oyl_parser_fail(d->p, mark, msg);
+        oyl_parser_fail(d->p, status, mark, msg);
         d->status = status;
     }
     return false;
