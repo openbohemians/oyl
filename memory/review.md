@@ -9,10 +9,14 @@ about 4,100 lines): `/code-review ultra` on a PR, which only the user can
 start, or a local workflow if the user says "use a workflow". (3) Later,
 a human security audit (OSTIF, OpenSSF Alpha-Omega) once 1.2.0 is used.
 
-**Layer 2:** PR #1 (`review/1.2.0` at `f29f219` into `review/v1.0.0` at
-the tag; 42 commits, +8,412 -880), opened 2026-10-19 for the user to run
-`/code-review ultra 1`. Not for merging: close it and delete both
-`review/` branches once the findings are in.
+**Layer 2:** PR #1 (the whole delta) was too large for ultrareview (39
+files, 9,292 lines) and is closed. Split 2026-10-19 into six review-only
+PRs, each 1,155-1,828 lines: #2 trees, #3 schemas/dialects/keys, #4
+JSON, #5 parser and scanner, #6 emitter and the OOM test, #7 header and
+docs (bench scripts left out). Each head is exactly `main` at `f29f219`;
+each base is `main` with that group's files as at v1.0.0
+(`review/<group>-base`). The user runs `/code-review ultra <n>` on each.
+Not for merging: close them and delete the `review/*` branches after.
 
 ## Layer 1, 2026-10-18 (code at `4191b09`)
 
