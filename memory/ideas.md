@@ -1,6 +1,6 @@
 # Ideas
 
-*Updated 2026-10-12*
+*Updated 2026-10-19*
 
 Larger features agreed in principle. None blocks 1.0, and none is started.
 
@@ -36,6 +36,18 @@ with skip counts.
 - **Beyond Oyl:** any parser that builds a tree can split this way
   wherever the structure at the cut is known (indentation in YAML,
   brackets in JSON).
+
+## Keeping part of the merges past the bound (the user's idea, 2026-10-19)
+
+Past the bound (`work_out_merges` gives up), every record already worked
+out is thrown away and each lookup walks the merges (`get_merged`). The
+user asked about an in-between: store part, walk the rest. A natural
+form: keep the records finished before the bound was hit, and let the
+walk read a stored record as a shortcut when it reaches that mapping
+(its pairs already in the order keys win), walking only what has none.
+Needs care that answers stay exactly the walk's: the walk's visited set
+spans the whole lookup, a record covers its mapping's whole graph, and
+text lookups use the spellings. Not started.
 
 ## YAML 1.1 → 1.2 converter (the user's idea, 2026-10-10)
 

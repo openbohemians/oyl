@@ -55,7 +55,19 @@ no event limit (three name lookups per item); fine at the default
 code: not quite; the marks test checks positions only (passes on the old
 code too), and the test_oom "costly merges" scenario fails only with the
 fix undone (the old code never went past the bound on that tree).
-Codex review of `1b7e037` not run yet (the user's call).
+**Codex reviewed the trees 2026-10-19** (`codex review` with the brief
+as its instructions; `--commit` can't take them; on `87db8a8`, after the
+fixes): 4 findings, all reproduced, fixed in `76403fe`: (P1) past the
+bound, a lookup re-checked and re-walked an alias to a sequence at every
+mapping merging it (8.1 s per lookup, 700 KB; now 0.004 s: a per-walk
+note per sequence, items once, mergeable from "all mappings" and the
+outermost item containing it; a mapping inside the sequence never merges
+it, a slip in the first version the merge reference caught); (P2a) a key
+whose value can't be read for want of memory became its text (now
+OYL_NO_NODE / OYL_ERR_MEMORY); (P2b) the settling table's size wrapped
+past 2^30 entries and hung (bound now under 2^30); (P2c) SipHash read full
+blocks natively, partial ones little-endian (now both little-endian;
+checked on s390x under qemu-s390x with a freestanding clang build).
 Findings as reported:
 (1) `<<: *s`, s a sequence of S aliases: every mapping writing it walks
 all S items (mergeable, work_out's item loop), uncharged to the bound;
