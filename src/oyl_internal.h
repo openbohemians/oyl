@@ -85,6 +85,95 @@ int oyl_schema_rule_of(const oyl_schema *schema, oyl_str text);
 /* Rule `rule`'s value of `text`: 1 accepted, 0 declined, -1 out of memory */
 int oyl_schema_rule_value(const oyl_schema *schema, int rule, oyl_str text, oyl_value *out);
 
+/* ── Hashing ─────────────────────────────────────────────── */
+
+/* The hash tables a document fills (anchors, keys, mappings by node) hash
+ * with SipHash-1-3, the variant Python's and Rust's tables use, under a
+ * secret key each parser takes from the system's randomness. Without the
+ * key no one can tell where an entry goes, so no document can be made
+ * whose entries all collide (hash flooding). A table only finds things,
+ * never orders them, so the key changes nothing a caller sees. */
+typedef struct {
+    uint64_t k0, k1;
+} oyl_hash_key;
+
+/* A new secret key (oyl_hash.c) */
+void oyl_hash_key_new(oyl_hash_key *key);
+
+/* A hash being computed, fed in pieces */
+typedef struct {
+    uint64_t v0, v1, v2, v3;
+    uint64_t buf, len;   /* the bytes not yet in a block, and how many in all */
+} oyl_hasher;
+
+#define OYL_ROTL64(x, b) (((x) << (b)) | ((x) >> (64 - (b))))
+
+static inline void oyl_sip_round(oyl_hasher *h) {
+    h->v0 += h->v1; h->v1 = OYL_ROTL64(h->v1, 13); h->v1 ^= h->v0; h->v0 = OYL_ROTL64(h->v0, 32);
+    h->v2 += h->v3; h->v3 = OYL_ROTL64(h->v3, 16); h->v3 ^= h->v2;
+    h->v0 += h->v3; h->v3 = OYL_ROTL64(h->v3, 21); h->v3 ^= h->v0;
+    h->v2 += h->v1; h->v1 = OYL_ROTL64(h->v1, 17); h->v1 ^= h->v2; h->v2 = OYL_ROTL64(h->v2, 32);
+}
+
+static inline void oyl_sip_block(oyl_hasher *h, uint64_t m) {
+    h->v3 ^= m;
+    oyl_sip_round(h);
+    h->v0 ^= m;
+}
+
+static inline void oyl_hash_start(oyl_hasher *h, const oyl_hash_key *key) {
+    h->v0 = 0x736f6d6570736575u ^ key->k0;
+    h->v1 = 0x646f72616e646f6du ^ key->k1;
+    h->v2 = 0x6c7967656e657261u ^ key->k0;
+    h->v3 = 0x7465646279746573u ^ key->k1;
+    h->buf = h->len = 0;
+}
+
+/* Blocks are read in the machine's byte order: a hash only has to be the
+ * same within one process */
+static inline void oyl_hash_bytes(oyl_hasher *h, const void *data, size_t n) {
+    const unsigned char *p = data;
+    for (; n && (h->len & 7); n--) {
+        h->buf |= (uint64_t)*p++ << (8 * (h->len++ & 7));
+        if (!(h->len & 7)) {
+            oyl_sip_block(h, h->buf);
+            h->buf = 0;
+        }
+    }
+    for (; n >= 8; n -= 8, p += 8, h->len += 8) {
+        uint64_t m;
+        memcpy(&m, p, 8);
+        oyl_sip_block(h, m);
+    }
+    for (; n; n--) h->buf |= (uint64_t)*p++ << (8 * (h->len++ & 7));
+}
+
+static inline uint64_t oyl_hash_end(oyl_hasher *h) {
+    uint64_t b = h->len << 56 | h->buf;
+    oyl_sip_block(h, b);
+    h->v2 ^= 0xff;
+    oyl_sip_round(h);
+    oyl_sip_round(h);
+    oyl_sip_round(h);
+    return h->v0 ^ h->v1 ^ h->v2 ^ h->v3;
+}
+
+static inline uint64_t oyl_hash(const oyl_hash_key *key, const void *data, size_t n) {
+    oyl_hasher h;
+    oyl_hash_start(&h, key);
+    oyl_hash_bytes(&h, data, n);
+    return oyl_hash_end(&h);
+}
+
+/* A number's hash, as its 8 bytes' */
+static inline uint64_t oyl_hash_u64(const oyl_hash_key *key, uint64_t x) {
+    oyl_hasher h;
+    oyl_hash_start(&h, key);
+    oyl_sip_block(&h, x);
+    h.len = 8;
+    return oyl_hash_end(&h);
+}
+
 /* A scalar as mapping keys are compared: two are equal when their tags
  * and values are (YAML 1.2.2 §3.2.1.3), so 0x1 and 1 are one key, 1 and
  * "1" two. Inline: trees sort keys with these. */
@@ -124,11 +213,22 @@ static inline bool oyl_key_tag_eq(oyl_str a, oyl_str b) {
            (a.len == b.len && (a.len == 0 || memcmp(a.data, b.data, a.len) == 0));
 }
 
-/* A key's hash, the same for keys oyl_key_cmp finds equal */
-static inline uint64_t oyl_key_hash(const oyl_key *k) {
-    uint64_t h = 14695981039346656037u, x = 14695981039346656037u;
-    for (size_t i = 0; i < k->tag.len; i++) h = (h ^ (unsigned char)k->tag.data[i]) * 1099511628211u;
-    const oyl_value *v = &k->value;
+/* A key's hash, the same for keys oyl_key_cmp finds equal. What is hashed
+ * spells the key one way only (its tag's length first), so that keys
+ * hash alike only by chance, which the secret key decides. In two steps,
+ * so that keys sharing a tag can share the first: the tag, then the
+ * value. */
+static inline void oyl_key_hash_tag(oyl_hasher *h, const oyl_hash_key *hk, oyl_str tag) {
+    oyl_hash_start(h, hk);
+    uint64_t len = tag.len;
+    oyl_hash_bytes(h, &len, sizeof len);
+    oyl_hash_bytes(h, tag.data, tag.len);
+}
+
+static inline uint64_t oyl_key_hash_value(oyl_hasher *h, const oyl_value *v) {
+    unsigned char kind = (unsigned char)v->kind;
+    oyl_hash_bytes(h, &kind, 1);
+    uint64_t x;
     switch (v->kind) {
     case OYL_VALUE_NULL:  x = 0; break;
     case OYL_VALUE_BOOL:  x = v->as.b; break;
@@ -144,13 +244,18 @@ static inline uint64_t oyl_key_hash(const oyl_key *k) {
         }
         break;
     }
-    default:
-        for (size_t i = 0; i < v->as.s.len; i++) x = (x ^ (unsigned char)v->as.s.data[i]) * 1099511628211u;
-        break;
+    default:   /* text: last, so its length goes without saying */
+        oyl_hash_bytes(h, v->as.s.data, v->as.s.len);
+        return oyl_hash_end(h);
     }
-    h = (h ^ (uint64_t)v->kind) * 0x9E3779B97F4A7C15u;
-    h = (h ^ x) * 0x9E3779B97F4A7C15u;
-    return h ^ (h >> 31);
+    oyl_hash_bytes(h, &x, sizeof x);
+    return oyl_hash_end(h);
+}
+
+static inline uint64_t oyl_key_hash(const oyl_hash_key *hk, const oyl_key *k) {
+    oyl_hasher h;
+    oyl_key_hash_tag(&h, hk, k->tag);
+    return oyl_key_hash_value(&h, &k->value);
 }
 
 /* Order keys, 0 when equal: by tag, then value, NaN equal to NaN */
@@ -204,18 +309,23 @@ const oyl_schema *oyl_parser_schema(const oyl_parser *p);       /* NULL: none */
 /* Report a warning found after parsing (no re-reading to guard against) */
 void              oyl_parser_warn(oyl_parser *p, oyl_warning code, oyl_mark mark,
                                   const char *msg);
+/* The secret key of the hash tables the parser's documents fill, made the
+ * first time one needs it */
+const oyl_hash_key *oyl_parser_hash_key(oyl_parser *p);
 
 /* ── Trees, for oyl_json.c ───────────────────────────────── */
 
 /* Numbers by node (as the mappings merges visit), on the stack until they
- * outgrow it */
+ * outgrow it. A document picks which nodes go in by where it puts its
+ * mappings, so the nodes hash under a secret key. */
 typedef struct {
     uint32_t *node, *val;   /* node UINT32_MAX: an empty slot */
     uint32_t  cap, len;
+    const oyl_hash_key *key;
     uint32_t  node_buf[32], val_buf[32];
 } oyl_node_map;
 
-void     oyl_nmap_init(oyl_node_map *s);
+void     oyl_nmap_init(oyl_node_map *s, const oyl_hash_key *key);
 void     oyl_nmap_free(oyl_node_map *s);
 /* Node x's number, or UINT32_MAX */
 uint32_t oyl_nmap_get(const oyl_node_map *s, uint32_t x);
@@ -243,6 +353,7 @@ struct oyl_tree {
     struct oyl_merges *merges;      /* the pairs of mappings that merge, worked out
                                        as the tree is built (oyl_tree.c); NULL: none */
     bool               merges_costly; /* too costly to work out: lookups walk them */
+    oyl_hash_key       hash_key;      /* its parser's, when it has merges */
 };
 
 /* A tree as written, its merges not worked out (oyl_json.c works out its

@@ -163,6 +163,23 @@ static void make_graph(void) {
                               i, i, i - 1, i - 1, i, i);
 }
 
+/* Merges too costly to work out (an alias to a long sequence, merged by
+ * many mappings), so lookups walk them: in m, the string "1" comes from
+ * a merge met after forty other mappings, and m has an int 1 of its own */
+static char costly[32768];
+
+static void make_costly(void) {
+    size_t n = 0;
+    n += (size_t)snprintf(costly + n, sizeof costly - n, "a: &a {k: v}\nb: &b {\"1\": string}\ns: &s [");
+    for (int i = 0; i < 2000; i++) n += (size_t)snprintf(costly + n, sizeof costly - n, i ? ",*a" : "*a");
+    n += (size_t)snprintf(costly + n, sizeof costly - n, "]\n");
+    for (int i = 0; i < 40; i++) n += (size_t)snprintf(costly + n, sizeof costly - n, "c%d: &c%d {c%d: %d}\n", i, i, i, i);
+    n += (size_t)snprintf(costly + n, sizeof costly - n, "m: {<<: [");
+    for (int i = 0; i < 40; i++) n += (size_t)snprintf(costly + n, sizeof costly - n, "*c%d, ", i);
+    n += (size_t)snprintf(costly + n, sizeof costly - n, "*b], 1: int}\nmany:\n");
+    for (int i = 0; i < 400; i++) n += (size_t)snprintf(costly + n, sizeof costly - n, "- {<<: *s}\n");
+}
+
 /* ── Scenarios ───────────────────────────────────────────── */
 
 static void put_event(const oyl_event *e) {
@@ -266,6 +283,34 @@ static outcome trees_stream(void) { return trees(stream); }
 static outcome trees_deep(void) { return trees(deep); }
 static outcome trees_many(void) { return trees(many); }
 static outcome trees_graph(void) { return trees(graph); }
+
+/* Looking up "1" in m walks the merges: running out of memory on the way
+ * must give OYL_NO_NODE, not the int 1 that "1" spells */
+static outcome trees_costly(void) {
+    oyl_arena *a = oyl_arena_new(4096);
+    if (!a) return OUT_OF_MEMORY;
+    oyl_parser *p = oyl_parser_new(costly, strlen(costly), a);
+    if (!p) { oyl_arena_free(a); return OUT_OF_MEMORY; }
+    oyl_parser_set_max_events(p, 0);
+    oyl_tree *t = NULL;
+    oyl_status st = oyl_parse_tree(p, &t);
+    outcome o = DONE;
+    if (st != OYL_OK) {
+        o = failed(st);
+    } else {
+        uint32_t m = oyl_node_get(t, 0, (oyl_str){ "m", 1 });
+        const oyl_pair *pairs;
+        size_t np;
+        put("entries %d", oyl_node_entries(t, m, 0, a, &pairs, &np));
+        uint32_t v = oyl_node_get(t, m, (oyl_str){ "1", 1 });
+        if (v == OYL_NO_NODE) o = OUT_OF_MEMORY;   /* it's there: only memory can lose it */
+        else put_str(oyl_node_text(t, v));
+    }
+    oyl_tree_free(t);
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+    return o;
+}
 
 static outcome json(const char *yaml, unsigned flags) {
     oyl_arena *a = oyl_arena_new(4096);
@@ -459,6 +504,7 @@ int main(void) {
     make_deep();
     make_many();
     make_graph();
+    make_costly();
     FILE *f = fopen(file_path, "wb");
     if (f) { fputs(RICH, f); fclose(f); }
     run("events", events_plain);
@@ -473,6 +519,7 @@ int main(void) {
     run("trees, deep", trees_deep);
     run("trees, many merges", trees_many);
     run("trees, a merge graph", trees_graph);
+    run("trees, costly merges", trees_costly);
     run("JSON", json_core);
     run("JSON, many merges", json_many);
     run("JSON, go-yaml v2", json_k8s);

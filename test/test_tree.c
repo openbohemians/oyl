@@ -592,6 +592,12 @@ static void test_marks(void) {
     for (int i = 0; i < 2000; i++)
         len += (size_t)snprintf(big + len, cap - len, i % 3 ? "k%d: v\n" : "k%d: \"a\n  b\"\n", i);
     ASSERT(marks_agree(big, len), "two thousand pairs");
+
+    /* a block mapping starts after its first key's anchor, so a mark kept
+     * for the mapping is past the key, which counts from the one before */
+    len = 0;
+    for (int i = 0; i < 2000; i++) len += (size_t)snprintf(big + len, cap - len, "- &x%d a: [0, 0]\n", i);
+    ASSERT(marks_agree(big, len), "keys with anchors");
     free(big);
 }
 
@@ -902,6 +908,25 @@ static void test_worked_out(void) {
     ASSERT(entries_status(&x, "m0", 0) == OYL_OK, "but not of one that doesn't");
     ASSERT(str_is(text_at(&x, "m5000.k1"), "v") && str_is(text_at(&x, "m5000.nope"), "<none>"),
            "a lookup walks the merges");
+    unload(&x);
+
+    /* an alias to a long sequence, merged by many mappings: each goes
+     * through its items, which count against the bound (50 million) */
+    len = 0;
+    len += (size_t)snprintf(big + len, cap - len, "a: &a {k: v}\ns: &s [");
+    for (int i = 0; i < 10000; i++) len += (size_t)snprintf(big + len, cap - len, i ? ",*a" : "*a");
+    len += (size_t)snprintf(big + len, cap - len, "]\nm:\n");
+    for (int j = 0; j < 5000; j++) len += (size_t)snprintf(big + len, cap - len, "- {<<: *s}\n");
+    x = load_big(big, len);
+    ASSERT(x.st == OYL_OK, "a long sequence merged often parses");
+    uint32_t seq = oyl_node_get(x.t, 0, (oyl_str){ "m", 1 }), last = oyl_node_at(x.t, seq, 4999);
+    oyl_arena *a = oyl_arena_new(1024);
+    const oyl_pair *pairs;
+    size_t np;
+    ASSERT(oyl_node_entries(x.t, last, 0, a, &pairs, &np) == OYL_ERR_LIMIT, "its entries: too costly");
+    uint32_t v = oyl_node_get(x.t, last, (oyl_str){ "k", 1 });
+    ASSERT(v != OYL_NO_NODE && str_is(oyl_node_text(x.t, v), "v"), "a lookup walks them");
+    oyl_arena_free(a);
     unload(&x);
     free(big);
 }

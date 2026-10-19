@@ -793,7 +793,8 @@ static bool merge_by_yaml(doc *d, uint32_t value, uint64_t *group) {
  * never recurses */
 static bool prepare_merges(doc *d, uint32_t count) {
     oyl_node_map merged;
-    oyl_nmap_init(&merged);
+    oyl_nmap_init(&merged, &d->t->hash_key);
+    d->memo_at.key = &d->t->hash_key;
     bool ok = true, any = false;
     for (uint32_t m = 0; m < count && ok; m++) {
         if (d->n[m].kind != OYL_NODE_MAPPING) continue;
@@ -1008,7 +1009,7 @@ oyl_status oyl_parse_json(oyl_parser *p, const oyl_schema *schema, unsigned flag
     *json = (oyl_str){ NULL, 0 };
     doc d = { .p = p, .schema = schema, .flags = flags,
               .max_depth = oyl_parser_depth_limit(p) };
-    oyl_nmap_init(&d.memo_at);
+    oyl_nmap_init(&d.memo_at, NULL);   /* keyed by prepare_merges, once there is a tree */
     /* both buffers exist even when nothing is written to them, so that
      * offsets into them are never taken from NULL */
     d.entries = malloc(64 * sizeof *d.entries);

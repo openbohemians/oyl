@@ -293,7 +293,15 @@ level), so very deep input can then overflow the stack.
 **Alias and merge expansion.** Expanding aliases can grow a small document
 exponentially (the "billion laughs" attack). The expanded stream must fit
 within the event limit; if that is disabled, expansion is capped at 16
-times the unexpanded stream plus 100,000 events.
+times the unexpanded stream plus 100,000 events. Working out merges, for
+events and for trees, is bounded at four times that, counting each pair
+looked at and each item of a merged sequence.
+
+**Hash flooding.** Anchors, keys and merged mappings are found through
+hash tables. They hash with SipHash-1-3 under a secret key that each
+parser takes from the system's randomness, so no document can be written
+whose entries all collide and slow every lookup. Nothing else depends on
+the key: output is the same from run to run.
 
 ## Error Handling
 

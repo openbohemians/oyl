@@ -58,6 +58,7 @@ typedef struct {
     uint32_t          slen, scap;
     anchor           *anchors;      /* open addressing; name.data NULL is empty */
     size_t            acap, alen;
+    const oyl_hash_key *key;        /* the parser's, once there are anchors */
     const oyl_schema *parser_schema;   /* a parser resolving tags: its tags aren't kept */
     uintptr_t         lo, hi;       /* the document's text: from its start to the input's end */
     size_t            base;
@@ -85,14 +86,8 @@ static bool out_of_memory(builder *b) {
     return fail(b, OYL_ERR_MEMORY, (oyl_mark){ 0, 0, 0 }, "out of memory");
 }
 
-static size_t name_hash(oyl_str s) {
-    uint64_t h = 14695981039346656037u;
-    for (size_t i = 0; i < s.len; i++) h = (h ^ (unsigned char)s.data[i]) * 1099511628211u;
-    return (size_t)h;
-}
-
 static anchor *anchor_slot(builder *b, oyl_str name) {
-    size_t i = name_hash(name) & (b->acap - 1);
+    size_t i = oyl_hash(b->key, name.data, name.len) & (b->acap - 1);
     while (b->anchors[i].name.data && !same(b->anchors[i].name, name)) i = (i + 1) & (b->acap - 1);
     return &b->anchors[i];
 }
@@ -101,6 +96,7 @@ static anchor *anchor_slot(builder *b, oyl_str name) {
  * an alias refers to the closest one before it */
 static bool anchor_set(builder *b, oyl_str name, uint32_t n) {
     if (2 * (b->alen + 1) > b->acap) {
+        if (!b->key) b->key = oyl_parser_hash_key(b->p);
         size_t cap = b->acap ? b->acap * 2 : 64;
         anchor *old = b->anchors;
         size_t old_cap = b->acap;
@@ -339,6 +335,7 @@ static oyl_status parse_tree(oyl_parser *p, oyl_tree **tree, bool merges) {
     }
     free(b.stack);
     free(b.anchors);
+    if (b.merge_key) t->hash_key = *oyl_parser_hash_key(p);
     if (st == OYL_OK) st = b.status;
     if (st == OYL_OK && merges && b.merge_key && t->merge != OYL_MERGE_NONE && !work_out_merges(t)) {
         oyl_parser_fail(p, OYL_ERR_MEMORY, t->doc_mark, "out of memory");
@@ -463,8 +460,12 @@ oyl_status oyl_node_value(const oyl_tree *t, uint32_t i, oyl_value *v) {
 oyl_mark oyl_node_mark(const oyl_tree *t, uint32_t i) {
     if (!t || i >= t->len) return (oyl_mark){ 0, 0, 0 };
     size_t off = t->base + t->nodes[i].start;
-    oyl_mark m = t->marks[i / MARK_EVERY];
-    if (m.offset > off) m = t->doc_mark;   /* positions aren't always in node order */
+    /* positions aren't always in node order (a block mapping starts after
+     * its first key's anchor or tag), so a mark may be past the node */
+    uint32_t at = i / MARK_EVERY;
+    oyl_mark m = t->marks[at];
+    while (m.offset > off && at > 0) m = t->marks[--at];
+    if (m.offset > off) m = t->doc_mark;
     if (m.offset > off) return (oyl_mark){ off, 0, 0 };
     /* count line breaks as YAML does: \n, \r\n, or \r alone */
     for (size_t j = m.offset; j < off; j++) {
@@ -615,11 +616,12 @@ static bool room(void **data, const void *buf, uint32_t *cap, uint32_t len, size
 
 /* oyl_node_map (oyl_internal.h) */
 
-void oyl_nmap_init(oyl_node_map *s) {
+void oyl_nmap_init(oyl_node_map *s, const oyl_hash_key *key) {
     s->node = s->node_buf;
     s->val = s->val_buf;
     s->cap = 32;
     s->len = 0;
+    s->key = key;
     memset(s->node_buf, 0xFF, sizeof s->node_buf);
 }
 
@@ -631,7 +633,7 @@ void oyl_nmap_free(oyl_node_map *s) {
 }
 
 static uint32_t nmap_slot(const oyl_node_map *s, uint32_t x) {
-    uint32_t h = x * 0x9E3779B1u, i = (h ^ (h >> 15)) & (s->cap - 1);
+    uint32_t i = (uint32_t)oyl_hash_u64(s->key, x) & (s->cap - 1);
     while (s->node[i] != NONE && s->node[i] != x) i = (i + 1) & (s->cap - 1);
     return i;
 }
@@ -644,7 +646,7 @@ uint32_t oyl_nmap_get(const oyl_node_map *s, uint32_t x) {
 bool oyl_nmap_put(oyl_node_map *s, uint32_t x, uint32_t v) {
     if ((s->len + 1) * 2 > s->cap) {
         if (s->cap > UINT32_MAX / 4) return false;
-        oyl_node_map big = { .cap = s->cap * 2, .len = s->len };
+        oyl_node_map big = { .cap = s->cap * 2, .len = s->len, .key = s->key };
         big.node = malloc((size_t)big.cap * sizeof *big.node);
         big.val = malloc((size_t)big.cap * sizeof *big.val);
         if (!big.node || !big.val) {
@@ -717,13 +719,14 @@ static uint32_t get_worked_out(const getter *g, const merged_pair *p, uint32_t n
  * in the order keys win, each mapping visited once. In YAML's merge, a
  * mapping's own keys (the last written of them), then its merges, a later
  * << first and a sequence's items in order; in go-yaml v2's, its entries
- * from the last, a merge's items in order. NONE also if out of memory. */
-static uint32_t get_merged(const getter *g, uint32_t m) {
+ * from the last, a merge's items in order. NONE also if out of memory,
+ * with *oom set. */
+static uint32_t get_merged(const getter *g, uint32_t m, bool *oom) {
     const oyl_tree *t = g->t;
     const oyl_node *n = t->nodes;
     bool ordered = t->merge == OYL_MERGE_ORDERED;
     oyl_node_map seen;
-    oyl_nmap_init(&seen);
+    oyl_nmap_init(&seen, &t->hash_key);
     uint32_t list_buf[64], *list = list_buf, nlist = 0, list_cap = 64;
     visit stack_buf[16], *stack = stack_buf;
     uint32_t nstack = 0, stack_cap = 16;
@@ -772,14 +775,22 @@ static uint32_t get_merged(const getter *g, uint32_t m) {
     oyl_nmap_free(&seen);
     if (list != list_buf) free(list);
     if (stack != stack_buf) free(stack);
+    if (!ok) *oom = true;
     return ok ? found : NONE;
 }
 
-/* The key in mapping `map` that counts for `key`, or NONE */
-static uint32_t get_key(const oyl_tree *t, uint32_t map, const oyl_key *key, oyl_str text) {
+/* The key in mapping `map` that counts for `key`, or NONE (with *oom set
+ * if memory ran out walking its merges) */
+static uint32_t get_key(const oyl_tree *t, uint32_t map, const oyl_key *key, oyl_str text, bool *oom) {
     const oyl_node *n = t->nodes;
     getter g = { .t = t, .key = key, .text = text };
-    bool merging = t->merge != OYL_MERGE_NONE;
+    /* with the merges worked out, a mapping that merges has its pairs, and
+     * one without them merges nothing: its << keys are ordinary keys */
+    if (t->merges) {
+        const merged_map *r = merged_of(t, map);
+        if (r) return get_worked_out(&g, &t->merges->pairs[r->first], r->n + (key ? 0 : r->spelled));
+    }
+    bool merging = t->merge != OYL_MERGE_NONE && !t->merges;
     uint32_t found = NONE, last_merge = NONE, k = map + 1;
     for (uint32_t c = 0; c < n[map].len; c++) {
         uint32_t v = k + n[k].span;
@@ -790,9 +801,7 @@ static uint32_t get_key(const oyl_tree *t, uint32_t map, const oyl_key *key, oyl
     /* a key written wins, in go-yaml v2's order over the merges before it */
     if (last_merge == NONE || (found != NONE && (t->merge == OYL_MERGE_YAML || found > last_merge)))
         return found;
-    const merged_map *r = merged_of(t, map);
-    if (!r) return get_merged(&g, map);
-    return get_worked_out(&g, &t->merges->pairs[r->first], r->n + (key ? 0 : r->spelled));
+    return get_merged(&g, map, oom);
 }
 
 static uint32_t value_of(const oyl_tree *t, uint32_t k) {
@@ -804,13 +813,15 @@ uint32_t oyl_node_get(const oyl_tree *t, uint32_t map, oyl_str key) {
     if (map == NONE || t->nodes[map].kind != OYL_NODE_MAPPING) return NONE;
     /* the string, else the key a scalar written as `key` is (80 for "80") */
     oyl_key str = { t->schema->default_quoted_tag, { .kind = OYL_VALUE_STR, .as = { .s = key } } };
-    uint32_t k = get_key(t, map, &str, key);
+    bool oom = false;
+    uint32_t k = get_key(t, map, &str, key, &oom);
     if (k != NONE) return value_of(t, k);
-    if ((k = get_key(t, map, NULL, key)) == NONE) return NONE;
+    if (oom) return NONE;   /* not "no string key": by text it could find another */
+    if ((k = get_key(t, map, NULL, key, &oom)) == NONE) return NONE;
     k = oyl_node_target(t, k);
     oyl_key written;
     key_of(t, k, &written);
-    return value_of(t, get_key(t, map, &written, key));
+    return value_of(t, get_key(t, map, &written, key, &oom));
 }
 
 uint32_t oyl_node_get_value(const oyl_tree *t, uint32_t map, const oyl_value *key) {
@@ -827,7 +838,8 @@ uint32_t oyl_node_get_value(const oyl_tree *t, uint32_t map, const oyl_value *ke
     }
     oyl_key want;
     oyl_key_make(&want, tag, OYL_STR_NULL, OYL_OK, key);
-    return value_of(t, get_key(t, map, &want, OYL_STR_NULL));
+    bool oom = false;
+    return value_of(t, get_key(t, map, &want, OYL_STR_NULL, &oom));
 }
 
 /* ── A mapping's entries ─────────────────────────────────── */
@@ -1065,7 +1077,7 @@ typedef struct {
     const oyl_tree     *t;
     struct oyl_merges  *mg;
     collector           c;
-    uint64_t            left;       /* the entries that may still be gathered */
+    uint64_t            left;       /* the entries and merge items it may still go through */
     source             *src;        /* a mapping's graph */
     merge_ref          *mrg;
     uint32_t           *items, *stack;
@@ -1075,6 +1087,8 @@ typedef struct {
     uint32_t           *group;      /* each entry's key */
     uint32_t           *ranked;     /* the pairs kept, by priority from the highest */
     uint32_t           *table;      /* the keys, by hash */
+    oyl_str             tag;        /* the last key's tag, and its part of a key's hash */
+    oyl_hasher          tag_hash;
     key_group          *groups;
     spelling           *spellings;
     uint32_t            scap, tcap;
@@ -1236,17 +1250,20 @@ static oyl_str key_text(const oyl_tree *t, uint32_t k) {
     return t->nodes[k].kind == OYL_NODE_SCALAR ? oyl_tree_text(t, &t->nodes[k]) : OYL_STR_NULL;
 }
 
-/* An entry's key's hash: of its value and its tag's length (equal keys'
- * tags are equal), or of the collection it is */
-static uint64_t ent_hash(const collector *c, const ent *e) {
-    if (e->form == NONE) {
-        uint64_t h = (uint64_t)oyl_node_target(c->t, e->key) * 0x9E3779B97F4A7C15u;
-        return h ^ (h >> 29);
+/* An entry's key's hash: of its tag and value, or of the collection it
+ * is (a document picks both). Most keys share a tag, their schema's, so
+ * the hash's part for the last tag is kept. */
+static uint64_t ent_hash(worker *wk, const ent *e) {
+    const collector *c = &wk->c;
+    const oyl_hash_key *hk = &wk->t->hash_key;
+    if (e->form == NONE) return oyl_hash_u64(hk, oyl_node_target(wk->t, e->key));
+    const oyl_key *k = &c->forms[e->form];
+    if (k->tag.data != wk->tag.data || k->tag.len != wk->tag.len) {
+        oyl_key_hash_tag(&wk->tag_hash, hk, k->tag);
+        wk->tag = k->tag;
     }
-    oyl_key k = c->forms[e->form];
-    size_t tag_len = k.tag.len;
-    k.tag = OYL_STR_NULL;
-    return oyl_key_hash(&k) ^ tag_len * 0xBF58476D1CE4E5B9u;
+    oyl_hasher h = wk->tag_hash;
+    return oyl_key_hash_value(&h, &k->value);
 }
 
 static int by_spelling(const void *pa, const void *pb) {
@@ -1300,7 +1317,7 @@ static bool keep(worker *wk, uint32_t m) {
     uint32_t mask = tcap - 1;
     for (uint32_t i = 0; i <= mask; i++) wk->table[i] = NONE;
     for (uint32_t p = 0; p < w; p++) {
-        uint32_t i = wk->order[p], g, s = (uint32_t)ent_hash(c, &e[i]) & mask;
+        uint32_t i = wk->order[p], g, s = (uint32_t)ent_hash(wk, &e[i]) & mask;
         while ((g = wk->table[s]) != NONE && !same_key(c, &e[wk->groups[g].win], &e[i])) s = (s + 1) & mask;
         if (g == NONE) {
             g = wk->table[s] = ng++;
@@ -1370,7 +1387,16 @@ static bool work_out(worker *wk, uint32_t m) {
     uint32_t k = m + 1, own = 0;
     for (uint32_t i = 0; i < n[m].len; i++) {
         uint32_t v = k + n[k].span;
-        if (is_merge_key(t, k) && mergeable(t, m, v)) {
+        bool merge = is_merge_key(t, k);
+        if (merge) {   /* its items, gone through here and in gather, may bring no pairs */
+            uint32_t item, count = merge_items(t, v, &item);
+            if (count > wk->left) {
+                c->status = OYL_ERR_LIMIT;
+                return false;
+            }
+            wk->left -= count;
+        }
+        if (merge && mergeable(t, m, v)) {
             merges = true;
             uint32_t item, count = merge_items(t, v, &item);
             for (uint32_t j = 0; j < count; j++, item += n[item].span) {
@@ -1412,7 +1438,7 @@ static bool work_out(worker *wk, uint32_t m) {
         return true;
     }
     c->len = c->nforms = 0;
-    oyl_nmap_init(&wk->index);
+    oyl_nmap_init(&wk->index, &t->hash_key);
     bool ok = gather(wk, m);
     oyl_nmap_free(&wk->index);
     if (!ok) return false;
@@ -1435,7 +1461,8 @@ static bool work_out_merges(oyl_tree *t) {
                   .left = ((uint64_t)t->len * 16 + 100000) * 4 };   /* as the parser's for events */
     if (!wk.mg) return false;
     if (wk.left > UINT32_MAX / 2) wk.left = UINT32_MAX / 2;
-    oyl_nmap_init(&wk.mg->index);
+    oyl_key_hash_tag(&wk.tag_hash, &t->hash_key, wk.tag);
+    oyl_nmap_init(&wk.mg->index, &t->hash_key);
     /* the pairs exist even if none are kept, so that offsets into them are
      * never taken from NULL */
     if (!grow((void **)&wk.mg->pairs, &wk.mg->pairs_cap, 0, 1, sizeof *wk.mg->pairs)) {

@@ -174,8 +174,20 @@
   (as trees do), in one pass: nothing is left unmerged, a merge inside its
   own source stays an ordinary key in copies of it too, and the work is
   bounded, with `OYL_ERR_LIMIT` past it (a chain of anchors each merging
-  the one before twice took time doubling with each one). The depth
-  limit applies as merges nest. Found by the code review.
+  the one before twice took time doubling with each one). Each item of a
+  merged sequence counts against the bound, pairs or not: 50,000
+  mappings each merging an alias to a sequence of 50,000 aliases to an
+  empty mapping took 57 s. The depth limit applies as merges nest. Found
+  by the code review.
+- With merges or alias resolution on, the parser's table of anchors
+  hashed their names with FNV-1a, whose collisions are cheap to make, so
+  65,536 anchors named to collide took 3.2 s instead of 0.02 s. Its
+  tables, and trees', now hash with SipHash-1-3 (as Python's and Rust's
+  do) under a secret key each parser takes from the system's randomness
+  (`getrandom`, `arc4random_buf` or `rand_s`) when a document first needs
+  one, so no document can be made whose anchors, keys or merged mappings
+  collide. Results never depend on the key: the tables only find things.
+  Found by the code review.
 - Running out of memory is always `OYL_ERR_MEMORY`, never a quiet
   change: the merge's anchor table and its set of keys already seen
   dropped what they couldn't add (a merge then failed as "undefined

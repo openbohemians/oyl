@@ -53,10 +53,11 @@ TEST_FLOW := $(OBJDIR)/test_flow
 TEST_JSON := $(OBJDIR)/test_json
 TEST_DIALECT := $(OBJDIR)/test_dialect
 TEST_TREE := $(OBJDIR)/test_tree
+TEST_HASH := $(OBJDIR)/test_hash
 
 .PHONY: all static shared pkgconfig install uninstall dist version \
         clean test test-suite test-schema test-emitter test-merge \
-        test-resolve test-errors test-flow test-json test-dialect test-tree test-oom test-all bench bench-parser bench-cmp bench-parser-cmp bench-compare bench-compare-tree bench-compare-emit bench-classify bench-oracle bench-parallel
+        test-resolve test-errors test-flow test-json test-dialect test-tree test-hash test-oom test-all bench bench-parser bench-cmp bench-parser-cmp bench-compare bench-compare-tree bench-compare-emit bench-classify bench-oracle bench-parallel
 
 all: $(LIB) $(TEST)
 
@@ -175,6 +176,10 @@ $(TEST_DIALECT): $(TESTDIR)/test_dialect.c $(LIB)
 $(TEST_TREE): $(TESTDIR)/test_tree.c $(LIB)
 	$(CC) $(OYL_CFLAGS) $< $(LIB) -lm -o $@
 
+# the hash is internal: nothing a caller sees depends on it
+$(TEST_HASH): $(TESTDIR)/test_hash.c $(LIB) $(SRCDIR)/oyl_internal.h
+	$(CC) $(OYL_CFLAGS) -I$(SRCDIR) $< $(LIB) -lm -o $@
+
 # Every allocation failing in turn: malloc, calloc and realloc wrapped with
 # the linker's --wrap, which GNU ld (and lld) have, so Linux only
 ifeq ($(shell uname -s),Linux)
@@ -227,6 +232,10 @@ test-tree: $(TEST_TREE)
 	@echo "─── Running tree tests ───"
 	@./$(TEST_TREE)
 
+test-hash: $(TEST_HASH)
+	@echo "─── Running hash tests ───"
+	@./$(TEST_HASH)
+
 ifdef TEST_OOM
 test-oom: $(TEST_OOM)
 	@echo "─── Running allocation failure tests ───"
@@ -236,7 +245,7 @@ test-oom:
 	@echo "─── Allocation failure tests: Linux only (the linker's --wrap) ───"
 endif
 
-test-all: test test-suite test-schema test-emitter test-merge test-resolve test-errors test-flow test-json test-dialect test-tree test-oom
+test-all: test test-suite test-schema test-emitter test-merge test-resolve test-errors test-flow test-json test-dialect test-tree test-hash test-oom
 
 bench: $(OBJDIR)/bench_scanner $(OBJDIR)/bench_parser
 	@./$(OBJDIR)/bench_scanner $(SIZE)

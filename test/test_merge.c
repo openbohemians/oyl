@@ -661,6 +661,15 @@ static void test_merges_bounded(void) {
     }
     ASSERT(parse_merged(y, 0, &events, &left) == OYL_ERR_LIMIT, "merges too costly are a limit error");
 
+    /* an alias to a long sequence of empty mappings, merged by many
+     * mappings: no pairs come of it, but each item counts against the
+     * bound (50 million steps otherwise) */
+    n = (size_t)sprintf(y, "a: &a {}\ns: &s [");
+    for (int i = 0; i < 10000; i++) n += (size_t)sprintf(y + n, i ? ",*a" : "*a");
+    n += (size_t)sprintf(y + n, "]\nm:\n");
+    for (int j = 0; j < 5000; j++) n += (size_t)sprintf(y + n, "- {<<: *s}\n");
+    ASSERT(parse_merged(y, 0, &events, &left) == OYL_ERR_LIMIT, "a long sequence merged often is a limit error");
+
     /* the depth limit holds for what merges nest */
     ASSERT(parse_merged("a: &a {x: {y: 1}}\nb: {c: 1}\n", 3, &events, &left) == OYL_OK, "within the depth limit");
     ASSERT(parse_merged("a: &a {x: {y: 1}}\nb: {c: {<<: *a}}\n", 3, &events, &left) == OYL_ERR_LIMIT,

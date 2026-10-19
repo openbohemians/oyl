@@ -193,6 +193,10 @@ struct oyl_parser {
     /* original anchor names by binding serial (see bind_anchors) */
     oyl_str *bound_names;
 
+    /* the hash tables' secret key, once one needs it (oyl_internal.h) */
+    oyl_hash_key hash_key;
+    bool         hash_keyed;
+
     /* flow-as-key lookahead cache (see flow_is_block_key) */
     bool    fk_valid;
     size_t  fk_lo, fk_hi;   /* byte range of the last scanned collection */
@@ -2284,12 +2288,6 @@ static int node_end(const oyl_event *events, int len, int idx) {
     return idx + 1;
 }
 
-static uint32_t name_hash(oyl_str s) {
-    uint32_t h = 2166136261u;
-    for (size_t i = 0; i < s.len; i++) h = (h ^ (uint8_t)s.data[i]) * 16777619u;
-    return h;
-}
-
 /* Anchor table. Merge and resolve run after bind_anchors, so each anchor
  * name is unique in the stream; the hash index maps a name to its entry. */
 typedef struct {
@@ -2304,6 +2302,7 @@ typedef struct {
     int           cap;
     int          *index;     /* entry index + 1 per slot, 0 if empty */
     size_t        index_cap; /* a power of two, or 0 without an index */
+    const oyl_hash_key *key;
 } merge_anchor_table;
 
 static void atbl_init(merge_anchor_table *t) {
@@ -2339,7 +2338,7 @@ static merge_anchor *atbl_lookup(merge_anchor_table *t, oyl_str name) {
             if (atbl_name_is(&t->entries[i], name)) return &t->entries[i];
         return NULL;
     }
-    for (size_t h = name_hash(name) & (t->index_cap - 1); t->index[h];
+    for (size_t h = oyl_hash(t->key, name.data, name.len) & (t->index_cap - 1); t->index[h];
          h = (h + 1) & (t->index_cap - 1)) {
         merge_anchor *a = &t->entries[t->index[h] - 1];
         if (atbl_name_is(a, name)) return a;
@@ -2349,8 +2348,10 @@ static merge_anchor *atbl_lookup(merge_anchor_table *t, oyl_str name) {
 
 /* The anchors of events[0, len); false (the table freed) when out of
  * memory. Without memory for an index, lookups scan. */
-static bool atbl_build(merge_anchor_table *t, const oyl_event *events, int len) {
+static bool atbl_build(merge_anchor_table *t, const oyl_hash_key *key, const oyl_event *events,
+                       int len) {
     atbl_init(t);
+    t->key = key;
     for (int i = 0; i < len; i++) {
         if (events[i].anchor.data && events[i].anchor.len > 0) {
             int end = node_end(events, len, i);
@@ -2367,7 +2368,7 @@ static bool atbl_build(merge_anchor_table *t, const oyl_event *events, int len) 
     if (!t->index) return true;
     t->index_cap = cap;
     for (int i = 0; i < t->len; i++) {
-        size_t h = name_hash(t->entries[i].name) & (cap - 1);
+        size_t h = oyl_hash(key, t->entries[i].name.data, t->entries[i].name.len) & (cap - 1);
         while (t->index[h] && !atbl_name_is(&t->entries[t->index[h] - 1], t->entries[i].name))
             h = (h + 1) & (cap - 1);
         t->index[h] = i + 1;   /* a later entry with the same name wins */
@@ -2424,16 +2425,17 @@ typedef struct {
     int       len, cap;
     uint32_t *table;   /* each slot: the index + 1 of a key, or 0 */
     size_t    tcap;    /* a power of two, at least twice len */
+    const oyl_hash_key *hk;
 } key_set;
 
-static void kset_init(key_set *ks) {
-    *ks = (key_set){ NULL, 0, 0, NULL, 0 };
+static void kset_init(key_set *ks, const oyl_hash_key *hk) {
+    *ks = (key_set){ NULL, 0, 0, NULL, 0, hk };
 }
 
 static void kset_free(key_set *ks) {
     free(ks->keys);
     free(ks->table);
-    kset_init(ks);
+    kset_init(ks, ks->hk);
 }
 
 /* The scalar key event `evt` as a key, in *k: OYL_ERR_MEMORY if its value
@@ -2450,7 +2452,7 @@ static oyl_status event_key(const oyl_parser *p, const oyl_event *evt, oyl_key *
 
 /* Is key in the set? *at: its slot, or the empty one where it would go */
 static bool kset_find(const key_set *ks, const oyl_key *key, size_t *at) {
-    for (size_t i = oyl_key_hash(key) & (ks->tcap - 1);; i = (i + 1) & (ks->tcap - 1)) {
+    for (size_t i = oyl_key_hash(ks->hk, key) & (ks->tcap - 1);; i = (i + 1) & (ks->tcap - 1)) {
         uint32_t x = ks->table[i];
         if (!x || oyl_key_cmp(&ks->keys[x - 1], key) == 0) {
             *at = i;
@@ -2471,7 +2473,7 @@ static bool kset_add(key_set *ks, const oyl_key *key) {
         uint32_t *t = calloc(nt, sizeof *t);
         if (!t) return false;
         for (int i = 0; i < ks->len; i++) {
-            size_t j = oyl_key_hash(&ks->keys[i]) & (nt - 1);
+            size_t j = oyl_key_hash(ks->hk, &ks->keys[i]) & (nt - 1);
             while (t[j]) j = (j + 1) & (nt - 1);
             t[j] = (uint32_t)i + 1;
         }
@@ -2547,7 +2549,7 @@ typedef struct {
     int                 nmaps, maps_cap;
     merged_pair        *pairs;
     int                 npairs, pairs_cap;
-    long long           budget;   /* the source pairs it may still look at */
+    long long           budget;   /* the source pairs and merge items it may still look at */
     const char         *err;      /* why it stopped, or NULL */
     int                 err_at;   /* the event where */
 } merger;
@@ -2600,12 +2602,18 @@ static const char *merge_item(const merger *m, int i, int *s, int *e) {
 
 /* Can the << value at events[v] merge into the mapping events[ms, me)?
  * 1: yes; 0: one of its mappings contains this one, so the << is an
- * ordinary key, as in trees; -1: no, with *err why. */
-static int can_merge(const merger *m, int v, int ms, int me, const char **err) {
+ * ordinary key, as in trees; -1: no, with *err why. Each item costs one
+ * from the budget, since every mapping writing an alias to a sequence
+ * goes through its items, though they may bring no pairs. */
+static int can_merge(merger *m, int v, int ms, int me, const char **err) {
     int first, end, verdict = 1;
     merge_items(m, v, &first, &end);
     for (int i = first; i < end; i = node_end(m->events, m->evt_len, i)) {
         int s, e;
+        if (--m->budget < 0) {
+            *err = merge_costly;
+            return -1;
+        }
         if ((*err = merge_item(m, i, &s, &e))) return -1;
         if (s <= ms && me <= e) verdict = 0;
     }
@@ -2719,7 +2727,7 @@ static int resolve_mapping(merger *m, int ms, int depth) {
     /* its pairs: its own, then each merge's, each key not yet seen */
     int off = m->npairs;
     key_set seen;
-    kset_init(&seen);
+    kset_init(&seen, m->anchors->key);
     bool first = true;
     for (int pos = ms + 1, j = 0; pos < me - 1 && ok;) {
         int ke = node_end(ev, m->evt_len, pos), ve = node_end(ev, m->evt_len, ke);
@@ -2823,7 +2831,7 @@ static oyl_status resolve_merges(oyl_parser *p) {
     if (!any) return OYL_OK;
 
     merge_anchor_table anchors;
-    if (!atbl_build(&anchors, p->events, p->evt_len)) return OYL_ERR_MEMORY;
+    if (!atbl_build(&anchors, oyl_parser_hash_key(p), p->events, p->evt_len)) return OYL_ERR_MEMORY;
     int limit = expansion_limit(p, p->evt_len);
     merger m = { .p = p, .events = p->events, .evt_len = p->evt_len, .anchors = &anchors,
                  .budget = (long long)limit * 4, .err_at = -1 };
@@ -2893,6 +2901,7 @@ static oyl_status bind_anchors(oyl_parser *p) {
         if (p->events[i].anchor.data && p->events[i].anchor.len) nanchors++;
     if (nanchors == 0) return OYL_OK;
 
+    const oyl_hash_key *key = oyl_parser_hash_key(p);
     size_t cap = 16;
     while (cap < (size_t)nanchors * 2) cap *= 2;
     anchor_slot *tab = calloc(cap, sizeof *tab);
@@ -2925,7 +2934,7 @@ static oyl_status bind_anchors(oyl_parser *p) {
             p->bound_names[++serial] = e->anchor;
             int n = snprintf(u + e->anchor.len, 12, "%c%u", '\0', serial);
             oyl_str bound = { u, e->anchor.len + (size_t)n };
-            size_t h = name_hash(e->anchor) & (cap - 1);
+            size_t h = oyl_hash(key, e->anchor.data, e->anchor.len) & (cap - 1);
             while (tab[h].name.data &&
                    !(tab[h].name.len == e->anchor.len &&
                      memcmp(tab[h].name.data, e->anchor.data, e->anchor.len) == 0))
@@ -2936,7 +2945,7 @@ static oyl_status bind_anchors(oyl_parser *p) {
             e->anchor = bound;
         }
         if (e->type == OYL_EVT_ALIAS) {
-            size_t h = name_hash(e->value) & (cap - 1);
+            size_t h = oyl_hash(key, e->value.data, e->value.len) & (cap - 1);
             while (tab[h].name.data) {
                 if (tab[h].name.len == e->value.len &&
                     memcmp(tab[h].name.data, e->value.data, e->value.len) == 0) {
@@ -3024,7 +3033,7 @@ static oyl_status check_eager_depth(oyl_parser *p) {
 static oyl_status resolve_aliases(oyl_parser *p) {
     /* build initial anchor table for cycle detection */
     merge_anchor_table anchors;
-    if (!atbl_build(&anchors, p->events, p->evt_len)) return OYL_ERR_MEMORY;
+    if (!atbl_build(&anchors, oyl_parser_hash_key(p), p->events, p->evt_len)) return OYL_ERR_MEMORY;
 
     if (anchors.len == 0) {
         atbl_free(&anchors);
@@ -3053,7 +3062,7 @@ static oyl_status resolve_aliases(oyl_parser *p) {
     /* expand non-cyclic aliases in passes */
     int limit = expansion_limit(p, p->evt_len);
     for (int pass = 0; pass < 32; pass++) {
-        if (!atbl_build(&anchors, p->events, p->evt_len)) {
+        if (!atbl_build(&anchors, oyl_parser_hash_key(p), p->events, p->evt_len)) {
             free(color);
             free(cyclic);
             return OYL_ERR_MEMORY;
@@ -5170,6 +5179,13 @@ const char *oyl_parser_input(const oyl_parser *p, size_t *len) {
 }
 int oyl_parser_depth_limit(const oyl_parser *p) { return p->max_depth > 0 ? p->max_depth : 0; }
 const oyl_schema *oyl_parser_schema(const oyl_parser *p) { return p->res_schema; }
+const oyl_hash_key *oyl_parser_hash_key(oyl_parser *p) {
+    if (!p->hash_keyed) {
+        oyl_hash_key_new(&p->hash_key);
+        p->hash_keyed = true;
+    }
+    return &p->hash_key;
+}
 
 const char *oyl_parser_error(oyl_parser *p) {
     if (!p || p->error_msg[0] == '\0') return NULL;
