@@ -746,7 +746,7 @@ static int walk_mergeable(const oyl_tree *t, seq_notes *sn, uint32_t m, uint32_t
         for (uint32_t c = 0, item = s + 1; c < n[s].len; c++, item += n[item].span) {
             uint32_t x = oyl_node_target(t, item);
             if (n[x].kind != OYL_NODE_MAPPING) q.maps = false;
-            else if (x <= s && s < x + n[x].span && x < q.outer) q.outer = x;
+            else if (x < q.outer && x <= s && s < x + n[x].span) q.outer = x;
         }
         sn->note[i = sn->n++] = q;
     }
