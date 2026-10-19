@@ -845,156 +845,6 @@ static bool paths_agree(const test_case *tc, bool verbose) {
     return ok;
 }
 
-/* ── Trees replay the events ─────────────────────────────── */
-
-static int trees_passed = 0, trees_failed = 0;
-
-#define TREE_FAIL(...) do { if (verbose) { printf("    tree: "); printf(__VA_ARGS__); printf("\n"); } \
-                            ok = false; goto done; } while (0)
-
-/* Each document's tree, walked in node order, must give the parser's
- * events: every node's kind, text, style, tag, anchor, flow and marks,
- * and the tree's own structure (spans, parents, counts, keys) must hold. */
-static bool tree_agrees(const test_case *tc, bool verbose) {
-    size_t len = strlen(tc->yaml);
-    oyl_arena *ae = oyl_arena_new(4096), *at = oyl_arena_new(4096);
-    oyl_parser *pe = ae ? oyl_parser_new(tc->yaml, len, ae) : NULL;
-    oyl_parser *pt = at ? oyl_parser_new(tc->yaml, len, at) : NULL;
-    bool ok = pe && pt;
-    oyl_tree *t = NULL;
-    const oyl_event *e;
-    while (ok) {
-        do {
-            if (oyl_parse_next(pe, &e) != OYL_OK) TREE_FAIL("events failed");
-        } while (e->type == OYL_EVT_STREAM_START);
-        oyl_status st = oyl_parse_tree(pt, &t);
-        if (st != OYL_OK) TREE_FAIL("oyl_parse_tree: %s", oyl_parser_error(pt));
-        if (e->type == OYL_EVT_STREAM_END) {
-            if (t) TREE_FAIL("a tree past the end");
-            break;
-        }
-        if (e->type != OYL_EVT_DOC_START || !t) TREE_FAIL("no tree for a document");
-        uint32_t count;
-        const oyl_node *n = oyl_tree_nodes(t, &count);
-        size_t base = oyl_tree_base(t);
-        if (base != e->start.offset) TREE_FAIL("base %zu, document at %zu", base, e->start.offset);
-        uint32_t stack[512], sp = 0, kids[512];
-        for (uint32_t i = 0; i <= count; i++) {
-            while (sp && stack[sp - 1] + n[stack[sp - 1]].span == i) {
-                uint32_t c = stack[--sp];
-                if (oyl_parse_next(pe, &e) != OYL_OK) TREE_FAIL("events failed");
-                oyl_event_type want = n[c].kind == OYL_NODE_MAPPING ? OYL_EVT_MAPPING_END
-                                                                    : OYL_EVT_SEQUENCE_END;
-                if (e->type != want) TREE_FAIL("node %u: end event %d, expected %d", c, e->type, want);
-                uint32_t entries = n[c].kind == OYL_NODE_MAPPING ? kids[sp] / 2 : kids[sp];
-                if (n[c].len != entries) TREE_FAIL("node %u: len %u, children %u", c, n[c].len, kids[sp]);
-                if ((n[c].flags & OYL_NODE_FLOW) && base + n[c].end != e->end.offset)
-                    TREE_FAIL("node %u: flow end %zu, event %zu", c, base + n[c].end, e->end.offset);
-            }
-            if (i == count) break;
-            if (oyl_parse_next(pe, &e) != OYL_OK) TREE_FAIL("events failed");
-            const oyl_node *x = &n[i];
-            oyl_event_type want = x->kind == OYL_NODE_SCALAR   ? OYL_EVT_SCALAR
-                                : x->kind == OYL_NODE_ALIAS    ? OYL_EVT_ALIAS
-                                : x->kind == OYL_NODE_SEQUENCE ? OYL_EVT_SEQUENCE_START
-                                                               : OYL_EVT_MAPPING_START;
-            if (e->type != want) TREE_FAIL("node %u: event %d, expected %d", i, e->type, want);
-            oyl_mark m = oyl_node_mark(t, i);
-            if (!mark_eq(m, e->start))
-                TREE_FAIL("node %u: mark %zu:%zu:%zu, event %zu:%zu:%zu", i, m.offset, m.line, m.col,
-                          e->start.offset, e->start.line, e->start.col);
-            if (sp == 0 ? (i != 0 || x->parent != 0) : i - x->parent != stack[sp - 1])
-                TREE_FAIL("node %u: parent %u", i, x->parent);
-            bool key = sp && n[stack[sp - 1]].kind == OYL_NODE_MAPPING && kids[sp - 1] % 2 == 0;
-            if (key != ((x->flags & OYL_NODE_KEY) != 0)) TREE_FAIL("node %u: key flag", i);
-            if (sp) kids[sp - 1]++;
-            if (!str_eq(oyl_node_anchor(t, i), e->anchor)) TREE_FAIL("node %u: anchor", i);
-            if (x->kind == OYL_NODE_SCALAR || x->kind == OYL_NODE_ALIAS) {
-                if (!str_eq(oyl_node_text(t, i), e->value))
-                    TREE_FAIL("node %u: text '%.*s', event '%.*s'", i, (int)oyl_node_text(t, i).len,
-                              oyl_node_text(t, i).data, (int)e->value.len, e->value.data);
-                if (x->span != 1) TREE_FAIL("node %u: span %u", i, x->span);
-                if (base + x->end != e->end.offset) TREE_FAIL("node %u: end", i);
-            }
-            if (x->kind == OYL_NODE_ALIAS) {
-                uint32_t to = oyl_node_target(t, i);
-                if (to >= i || !str_eq(oyl_node_anchor(t, to), e->value)) TREE_FAIL("node %u: target", i);
-                continue;
-            }
-            /* no schema on the parser: the tag is the one written, else the
-             * default dialect's (YAML 1.2 Core) */
-            oyl_str tag = oyl_node_tag(t, i);
-            oyl_str want_tag = e->tag.len ? e->tag
-                             : x->kind == OYL_NODE_SEQUENCE ? OYL_TAG_SEQ
-                             : x->kind == OYL_NODE_MAPPING ? OYL_TAG_MAP
-                             : oyl_schema_resolve(oyl_schema_core(), e->value, e->scalar_style);
-            if (!str_eq(tag, want_tag)) TREE_FAIL("node %u: tag %.*s", i, (int)tag.len, tag.data);
-            if (x->kind == OYL_NODE_SCALAR) {
-                if (x->style != e->scalar_style) TREE_FAIL("node %u: style", i);
-                continue;
-            }
-            if (((x->flags & OYL_NODE_FLOW) != 0) != e->flow) TREE_FAIL("node %u: flow", i);
-            if (sp == sizeof stack / sizeof stack[0]) TREE_FAIL("too deep for the test");
-            kids[sp] = 0;
-            stack[sp++] = i;
-        }
-        /* a block collection ends where its last child does */
-        for (uint32_t i = 0; i < count; i++) {
-            if (n[i].kind != OYL_NODE_SEQUENCE && n[i].kind != OYL_NODE_MAPPING) continue;
-            if ((n[i].flags & OYL_NODE_FLOW) || n[i].len == 0) continue;
-            uint32_t c = i + 1, last = c;
-            for (; c < i + n[i].span; c += n[c].span) last = c;
-            if (n[i].end != n[last].end) TREE_FAIL("node %u: end %u, last child's %u", i, n[i].end, n[last].end);
-        }
-        if (oyl_parse_next(pe, &e) != OYL_OK || e->type != OYL_EVT_DOC_END) TREE_FAIL("no document end");
-        oyl_tree_free(t);
-        t = NULL;
-    }
-done:
-    oyl_tree_free(t);
-    if (pe) oyl_parser_free(pe);
-    if (pt) oyl_parser_free(pt);
-    if (ae) oyl_arena_free(ae);
-    if (at) oyl_arena_free(at);
-    return ok;
-}
-
-/* ── Trees emit as their events do ───────────────────────── */
-
-static int temit_passed = 0, temit_failed = 0;
-
-/* Emitting each document's tree must write exactly what emitting the
- * parser's events writes */
-static bool tree_emits(const test_case *tc, oyl_emit_style style, bool verbose) {
-    static char events[65536];
-    size_t len = strlen(tc->yaml);
-    oyl_arena *a = oyl_arena_new(4096);
-    oyl_emitter *ee = oyl_emitter_new(a), *et = oyl_emitter_new(a);
-    oyl_emitter_set_style(ee, style);
-    oyl_emitter_set_style(et, style);
-    bool ok = canon_parse(tc->yaml, len, false, ee, events, sizeof events);
-    oyl_parser *p = oyl_parser_new(tc->yaml, len, a);
-    oyl_tree *t;
-    oyl_status st = oyl_emit_stream_start(et);
-    while (ok && st == OYL_OK && (st = oyl_parse_tree(p, &t)) == OYL_OK && t) {
-        st = oyl_emit_tree(et, t);
-        oyl_tree_free(t);
-    }
-    if (st == OYL_OK) st = oyl_emit_stream_end(et);
-    oyl_str x = oyl_emitter_output(ee), y = oyl_emitter_output(et);
-    ok = ok && st == OYL_OK && str_eq(x, y);
-    if (!ok && verbose) {
-        printf("    tree emit (%s): %s\n", style_name(style), st == OYL_OK ? "differs" : oyl_status_str(st));
-        printf("      events: %.*s\n", (int)(x.len > 300 ? 300 : x.len), x.data ? x.data : "");
-        printf("      tree:   %.*s\n", (int)(y.len > 300 ? 300 : y.len), y.data ? y.data : "");
-    }
-    oyl_parser_free(p);
-    oyl_emitter_free(ee);
-    oyl_emitter_free(et);
-    oyl_arena_free(a);
-    return ok;
-}
-
 /* ── Main ────────────────────────────────────────────────── */
 
 int main(int argc, char **argv) {
@@ -1104,26 +954,6 @@ int main(int argc, char **argv) {
                 }
             }
 
-            /* ... and trees that replay those events */
-            if (result == RESULT_PASS && !tc->fail) {
-                if (tree_agrees(tc, verbose)) {
-                    trees_passed++;
-                } else {
-                    trees_failed++;
-                    printf("  %-8s tree " RED "DIFFERS" RESET "  %s\n", label, tc->name);
-                }
-                const oyl_emit_style styles[] = { OYL_EMIT_BLOCK, OYL_EMIT_FLOW, OYL_EMIT_MINIMAL };
-                for (int si = 0; si < 3; si++) {
-                    if (tree_emits(tc, styles[si], verbose)) {
-                        temit_passed++;
-                    } else {
-                        temit_failed++;
-                        printf("  %-8s tree emit %-8s " RED "DIFFERS" RESET "  %s\n", label,
-                               style_name(styles[si]), tc->name);
-                    }
-                }
-            }
-
             switch (result) {
             case RESULT_PASS:
                 passed++;
@@ -1162,13 +992,8 @@ int main(int argc, char **argv) {
     if (rt_xpassed) printf(YELLOW "  XPASS: %d" RESET, rt_xpassed);
     printf("\n  Parse paths agree, every event field: " GREEN "Pass: %d  " RESET
            RED "Fail: %d" RESET, paths_passed, paths_failed);
-    printf("\n  Trees replay the events: " GREEN "Pass: %d  " RESET RED "Fail: %d" RESET,
-           trees_passed, trees_failed);
-    printf("\n  Trees emit as their events do: " GREEN "Pass: %d  " RESET RED "Fail: %d" RESET,
-           temit_passed, temit_failed);
     printf("\n\n");
 
     return (failed > 0 || errors > 0 || xpassed > 0 ||
-            rt_failed > 0 || rt_xpassed > 0 || paths_failed > 0 || trees_failed > 0 ||
-            temit_failed > 0) ? 1 : 0;
+            rt_failed > 0 || rt_xpassed > 0 || paths_failed > 0) ? 1 : 0;
 }

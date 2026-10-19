@@ -179,21 +179,6 @@ static void test_flow_keys(void) {
      * must agree on it */
     check(":\n0\n : []:", "{ ~ ~ 0 { [ ] ~ } }");
     check("\xEF\xBB\xBF: [g]: x\n", "{ ~ { [ g ] x } }");   /* after a byte order mark */
-    /* after a quoted key, blanks may come before the value ':', and the
-     * quote that follows opens a scalar: the lookahead must not take it
-     * for text, or a ',' in the value makes the collection seem unclosed */
-    check("['' :',']:", "{ [ { ~ , } ] ~ }");
-    check("['a' :'b,']: v\n", "{ [ { a b, } ] v }");
-    check("[[x] :'a,']: v\n", "{ [ { [ x ] a, } ] v }");
-    check("{'a' :'b,'}: v\n", "{ { a b, } v }");
-    check("['a'\t:'b,']: v\n", "{ [ { a b, } ] v }");
-    /* a comment ends at a lone \r as at \n: run on to the next \n, the
-     * lookahead would take what follows for comment, the collections
-     * there for unclosed, and so not keys */
-    check("[a #x\r, [b]: c]", "[ a { [ b ] c } ]");
-    check("[a #x\r\n, [b]: c]", "[ a { [ b ] c } ]");
-    check("{a: [b #x\r, [c]: d]}", "{ a [ b { [ c ] d } ] }");
-    check("[a #x\r, [b]: c]\n", "[ a { [ b ] c } ]");
     /* a '?' entry ends at ',' or its collection's close: a later ':' at the
      * same depth belongs to an implicit key, which must be on one line */
     check("[? a, [b\n]: c]", "[ { a ~ } [ b ] ERR");

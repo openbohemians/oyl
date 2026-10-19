@@ -14,19 +14,9 @@
 #include "oyl_internal.h"
 #include "oyl_simd.h"
 #include <limits.h>
-#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-
-/* Code the 2026-10-18 review found unreachable is kept under #if 0, to be
- * deleted once more fuzzing agrees. Where its guard was, fuzzing builds
- * trap if it is ever reached. */
-#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
-#define DEAD_CODE_REACHED() __builtin_trap()
-#else
-#define DEAD_CODE_REACHED() ((void)0)
-#endif
 
 /* ── Context types ───────────────────────────────────────── */
 
@@ -38,8 +28,8 @@ typedef enum {
 } ctx_type;
 
 typedef struct {
-    ctx_type  type;
-    ptrdiff_t indent;
+    ctx_type type;
+    int      indent;
 } ctx_entry;
 
 /* ── Incremental parser states ──────────────────────────── */
@@ -51,21 +41,19 @@ typedef enum {
     ST_BLOCK_NODE, ST_BLOCK_NODE_SCALAR, ST_BLOCK_NODE_SCALAR_KEY,
     ST_BLOCK_NODE_ALIAS, ST_BLOCK_NODE_ALIAS_KEY,
     ST_BLOCK_NODE_SEQ, ST_BLOCK_NODE_EXPLICIT_KEY, ST_BLOCK_NODE_BARE_VALUE,
+    ST_BLOCK_NODE_EMPTY,
     ST_BLOCK_MAP_LOOP, ST_BLOCK_MAP_EXPLICIT_KEY, ST_BLOCK_MAP_SIMPLE_KEY,
-    ST_BLOCK_MAP_POST_KEY, ST_BLOCK_MAP_VALUE,
+    ST_BLOCK_MAP_POST_KEY, ST_BLOCK_MAP_VALUE, ST_BLOCK_MAP_VALUE_NODE,
     ST_BLOCK_MAP_END,
-    ST_BLOCK_SEQ_LOOP, ST_BLOCK_SEQ_ENTRY,
+    ST_BLOCK_SEQ_LOOP, ST_BLOCK_SEQ_ENTRY, ST_BLOCK_SEQ_ENTRY_NODE,
     ST_BLOCK_SEQ_END,
-#if 0   /* dead, to be deleted: nothing can enter these (see DEAD_CODE_REACHED) */
-    ST_BLOCK_NODE_EMPTY, ST_BLOCK_MAP_VALUE_NODE, ST_BLOCK_SEQ_ENTRY_NODE,
-    ST_UNROLL, ST_FLOW_SEQ_CHECK_COLON,
-#endif
+    ST_UNROLL,
     /* Flow sequence (incremental) */
     ST_FLOW_SEQ_LOOP, ST_FLOW_SEQ_ENTRY, ST_FLOW_SEQ_ENTRY_KEY,
     ST_FLOW_SEQ_IMPLICIT_END,
     ST_FLOW_SEQ_EXPLICIT_KEY, ST_FLOW_SEQ_EXPLICIT_VALUE,
     ST_FLOW_SEQ_EXPLICIT_END,
-    ST_FLOW_SEQ_SEP, ST_FLOW_SEQ_END,
+    ST_FLOW_SEQ_CHECK_COLON, ST_FLOW_SEQ_SEP, ST_FLOW_SEQ_END,
     /* Flow mapping (incremental) */
     ST_FLOW_MAP_LOOP, ST_FLOW_MAP_VALUE, ST_FLOW_MAP_SEP, ST_FLOW_MAP_END,
     /* Flow node dispatch (incremental) */
@@ -76,7 +64,7 @@ typedef enum {
 
 typedef struct {
     ctx_type     type;
-    ptrdiff_t    indent;
+    int          indent;
     parser_state return_state;
 } state_frame;
 
@@ -109,7 +97,7 @@ struct oyl_parser {
     bool    has_anchor;
     bool    has_tag;
     size_t  props_line;  /* line where first prop was consumed */
-    ptrdiff_t props_col;   /* column (0-based) where first prop was consumed */
+    int     props_col;   /* column (0-based) where first prop was consumed */
     oyl_mark props_start; /* full mark of first property token */
 
     /* tag directives: handle → prefix mapping */
@@ -126,22 +114,6 @@ struct oyl_parser {
 
     /* schema (optional, for tag resolution) */
     const oyl_schema *schema;
-    const oyl_schema *res_schema;   /* the current document's, when resolving */
-
-    /* dialects: the default, those documents may choose by directive, and
-     * the current document's */
-    const oyl_dialect *default_dialect;   /* NULL: YAML 1.2, with `schema` if set */
-    oyl_dialect        schema_dialect;    /* that default when only a schema is set */
-    struct { char version[16]; const oyl_dialect *d; } dialect_versions[8];
-    int                n_dialect_versions;
-    struct { char prefix[256]; const oyl_dialect *d; } dialect_prefixes[8];
-    int                n_dialect_prefixes;
-    const oyl_dialect *doc_dialect;
-    bool               doc_has_version;   /* the document's %YAML, if it has one */
-    int                doc_major, doc_minor;
-    oyl_mark           yaml_dir_mark;
-
-    oyl_warn_state warn;
 
     /* merge key resolution (opt-in) */
     bool merge_enabled;
@@ -162,7 +134,6 @@ struct oyl_parser {
     oyl_mark error_mark;
     bool     oom;         /* stop parsing (see stop_status) */
     oyl_status stop_status; /* why oom was set: 0 = allocation failure */
-    oyl_status failed;    /* the first error returned: every later call returns it */
 
     /* incremental state machine */
     bool         incremental;   /* true = state machine, false = eager */
@@ -174,11 +145,9 @@ struct oyl_parser {
     int          out_len;
     int          out_cursor;
     oyl_event    saved_node;    /* saved scalar/alias for : lookahead */
-    ptrdiff_t    saved_node_col;
+    int          saved_node_col;
     bool         have_saved_node;
-#if 0   /* dead, to be deleted: ST_UNROLL's */
     parser_state unroll_return;
-#endif
     parser_state node_return;  /* where to go after a block node completes */
     int          events_delivered; /* events returned to caller (for eager fallback skip) */
     uint64_t     delivered_sig;    /* running signature of their types */
@@ -269,13 +238,13 @@ static inline bool enqueue(oyl_parser *p, const oyl_event *evt) {
     oyl_event *dst = &p->events[p->evt_len++];
     *dst = *evt;
     /* resolve tag via schema if set and no explicit tag */
-    if (p->res_schema && dst->tag.data == NULL) {
+    if (p->schema && dst->tag.data == NULL) {
         if (dst->type == OYL_EVT_SCALAR)
-            dst->tag = oyl_schema_resolve(p->res_schema, dst->value, dst->scalar_style);
+            dst->tag = oyl_schema_resolve(p->schema, dst->value, dst->scalar_style);
         else if (dst->type == OYL_EVT_MAPPING_START)
-            dst->tag = p->res_schema->default_map_tag;
+            dst->tag = p->schema->default_map_tag;
         else if (dst->type == OYL_EVT_SEQUENCE_START)
-            dst->tag = p->res_schema->default_seq_tag;
+            dst->tag = p->schema->default_seq_tag;
     }
     return true;
 }
@@ -298,7 +267,7 @@ static inline bool dequeue(oyl_parser *p, oyl_event *evt) {
     return true;
 }
 
-static inline bool push_ctx(oyl_parser *p, ctx_type type, ptrdiff_t indent) {
+static inline bool push_ctx(oyl_parser *p, ctx_type type, int indent) {
     if ((type == CTX_BLOCK_MAP || type == CTX_BLOCK_SEQ) && p->doc_start_line &&
         p->current.start.line == p->doc_start_line) {
         stop_with(p, OYL_ERR_PARSE, "block collection cannot start on the '---' line");
@@ -355,8 +324,8 @@ static inline oyl_token_type tok_type(oyl_parser *p) {
 }
 
 /* Token column (0-based) */
-static inline ptrdiff_t tok_col(oyl_parser *p) {
-    return (ptrdiff_t)p->current.start.col - 1;
+static inline int tok_col(oyl_parser *p) {
+    return (int)p->current.start.col - 1;
 }
 
 /* ── Context helpers ─────────────────────────────────────── */
@@ -373,13 +342,8 @@ static inline bool in_flow(oyl_parser *p) {
     return top && (top->type == CTX_FLOW_MAP || top->type == CTX_FLOW_SEQ);
 }
 
-/* Close all block contexts. Dead, to be deleted with its calls: a
- * document's contexts are closed when it ends, so they are open here only
- * when parsing went on after an error, which it no longer does. */
+/* Close all block contexts */
 static void unroll_all(oyl_parser *p, oyl_mark mark) {
-    if (p->ctx_len > 0 && !in_flow(p)) DEAD_CODE_REACHED();
-    (void)mark;
-#if 0
     while (p->ctx_len > 0) {
         ctx_entry *top = top_ctx(p);
         if (top->type == CTX_FLOW_MAP || top->type == CTX_FLOW_SEQ) break;
@@ -391,7 +355,6 @@ static void unroll_all(oyl_parser *p, oyl_mark mark) {
         enqueue(p, &evt);
         pop_ctx(p);
     }
-#endif
 }
 
 /* ── Attach pending anchor/tag ───────────────────────────── */
@@ -426,9 +389,9 @@ static void move_props_to_key_map(oyl_parser *p, int at, oyl_event *map_evt,
     map_evt->tag = tag;         /* insert_event applies the schema default */
     coll->anchor = OYL_STR_NULL;
     coll->tag = OYL_STR_NULL;
-    if (p->res_schema)
-        coll->tag = coll->type == OYL_EVT_MAPPING_START ? p->res_schema->default_map_tag
-                                                        : p->res_schema->default_seq_tag;
+    if (p->schema)
+        coll->tag = coll->type == OYL_EVT_MAPPING_START ? p->schema->default_map_tag
+                                                        : p->schema->default_seq_tag;
     coll->start = coll_start;
 }
 
@@ -569,7 +532,7 @@ static bool props_continuation_ok(oyl_parser *p) {
     if (!(p->has_anchor || p->has_tag)) return true;
     if (p->current.start.line == p->props_line || in_flow(p)) return true;
     ctx_entry *top = top_ctx(p);
-    ptrdiff_t parent = top ? top->indent : -1;
+    int parent = top ? top->indent : -1;
     return tok_col(p) > parent;
 }
 
@@ -641,9 +604,9 @@ static oyl_status parse_block_node(oyl_parser *p);
 static oyl_status parse_flow_node(oyl_parser *p);
 static oyl_status parse_flow_sequence(oyl_parser *p);
 static oyl_status parse_flow_mapping(oyl_parser *p);
-static oyl_status parse_block_sequence(oyl_parser *p, ptrdiff_t seq_indent);
-static oyl_status parse_block_mapping(oyl_parser *p, ptrdiff_t map_indent);
-static oyl_status parse_block_map_value(oyl_parser *p, ptrdiff_t map_indent);
+static oyl_status parse_block_sequence(oyl_parser *p, int seq_indent);
+static oyl_status parse_block_mapping(oyl_parser *p, int map_indent);
+static oyl_status parse_block_map_value(oyl_parser *p, int map_indent);
 
 /* ── Parse flow sequence contents ────────────────────────── */
 
@@ -894,7 +857,7 @@ static oyl_status parse_flow_node(oyl_parser *p) {
     }
 
     if (tt == OYL_TOK_FLOW_SEQ_START) {
-        ptrdiff_t col = tok_col(p);
+        int col = tok_col(p);
         oyl_mark open_start = p->current.start;
         oyl_mark open_end = p->current.end;
         consume_token(p);
@@ -909,7 +872,7 @@ static oyl_status parse_flow_node(oyl_parser *p) {
     }
 
     if (tt == OYL_TOK_FLOW_MAP_START) {
-        ptrdiff_t col = tok_col(p);
+        int col = tok_col(p);
         oyl_mark open_start = p->current.start;
         oyl_mark open_end = p->current.end;
         consume_token(p);
@@ -953,7 +916,7 @@ static oyl_status parse_flow_node(oyl_parser *p) {
 
 /* ── Parse block map value ───────────────────────────────── */
 
-static oyl_status parse_block_map_value(oyl_parser *p, ptrdiff_t map_indent) {
+static oyl_status parse_block_map_value(oyl_parser *p, int map_indent) {
     if (p->oom) return OOM_STATUS(p);
     oyl_status st = peek_token(p);
     if (st != OYL_OK) return st;
@@ -969,7 +932,7 @@ static oyl_status parse_block_map_value(oyl_parser *p, ptrdiff_t map_indent) {
     if (st != OYL_OK) return st;
 
     oyl_token_type tt = tok_type(p);
-    ptrdiff_t col = tok_col(p);
+    int col = tok_col(p);
 
     /* empty value cases */
     if (tt == OYL_TOK_STREAM_END || tt == OYL_TOK_DOC_START ||
@@ -994,7 +957,7 @@ static oyl_status parse_block_map_value(oyl_parser *p, ptrdiff_t map_indent) {
 
 /* ── Parse block mapping ─────────────────────────────────── */
 
-static oyl_status parse_block_mapping(oyl_parser *p, ptrdiff_t map_indent) {
+static oyl_status parse_block_mapping(oyl_parser *p, int map_indent) {
     oyl_status st;
 
     for (;;) {
@@ -1003,7 +966,7 @@ static oyl_status parse_block_mapping(oyl_parser *p, ptrdiff_t map_indent) {
         st = peek_token(p);
         if (st != OYL_OK) return st;
 
-        ptrdiff_t col = tok_col(p);
+        int col = tok_col(p);
         oyl_token_type tt = tok_type(p);
 
         /* explicit key ? */
@@ -1076,7 +1039,7 @@ static oyl_status parse_block_mapping(oyl_parser *p, ptrdiff_t map_indent) {
         }
 
         /* consume properties that might be on the key */
-        ptrdiff_t key_start_col = col; /* remember where the key (or its props) started */
+        int key_start_col = col; /* remember where the key (or its props) started */
         st = consume_props(p);
         if (st != OYL_OK) return st;
 
@@ -1172,7 +1135,7 @@ static oyl_status parse_block_mapping(oyl_parser *p, ptrdiff_t map_indent) {
 
 /* ── Parse block sequence ────────────────────────────────── */
 
-static oyl_status parse_block_sequence(oyl_parser *p, ptrdiff_t seq_indent) {
+static oyl_status parse_block_sequence(oyl_parser *p, int seq_indent) {
     oyl_status st;
 
     for (;;) {
@@ -1231,7 +1194,7 @@ static oyl_status parse_block_node(oyl_parser *p) {
     if (st != OYL_OK) return st;
 
     oyl_token_type tt = tok_type(p);
-    ptrdiff_t col = tok_col(p);
+    int col = tok_col(p);
 
     /* a block sequence must start on a new line after its properties */
     if (tt == OYL_TOK_BLOCK_SEQ_ENTRY && (p->has_anchor || p->has_tag) &&
@@ -1270,7 +1233,7 @@ static oyl_status parse_block_node(oyl_parser *p) {
         p->pending_tag = OYL_STR_NULL;
 
         /* Consume inner node's props to peek at the real structure */
-        ptrdiff_t inner_col = tok_col(p);   /* where the inner node (a key?) starts */
+        int inner_col = tok_col(p);   /* where the inner node (a key?) starts */
         size_t inner_line = p->current.start.line;
         st = consume_props(p);
         if (st != OYL_OK) return st;
@@ -1306,7 +1269,7 @@ static oyl_status parse_block_node(oyl_parser *p) {
 
             /* the key starts at its props when they share its line
              * ("&k a: b" is a key at the column of "&k") */
-            ptrdiff_t scalar_col = evt.start.line == inner_line ? inner_col : col;
+            int scalar_col = evt.start.line == inner_line ? inner_col : col;
             consume_token(p);
 
             st = peek_token(p);
@@ -1404,7 +1367,7 @@ static oyl_status parse_block_node(oyl_parser *p) {
          * is the first key of an implicit block mapping that takes the
          * outer props; otherwise both sets of props are the collection's. */
         if (tt == OYL_TOK_FLOW_SEQ_START || tt == OYL_TOK_FLOW_MAP_START) {
-            ptrdiff_t key_col = p->current.start.line == inner_line ? inner_col : col;
+            int key_col = p->current.start.line == inner_line ? inner_col : col;
             oyl_mark flow_open = p->current.start;
             oyl_mark flow_open_end = p->current.end;
             int coll_idx = p->evt_len;   /* where the collection starts */
@@ -1496,7 +1459,7 @@ static oyl_status parse_block_node(oyl_parser *p) {
         evt.value = p->current.value;
         evt.start = p->current.start;
         evt.end = p->current.end;
-        ptrdiff_t alias_col = col;
+        int alias_col = col;
         consume_token(p);
 
         st = peek_token(p);
@@ -1535,7 +1498,7 @@ static oyl_status parse_block_node(oyl_parser *p) {
     /* flow sequence */
     if (tt == OYL_TOK_FLOW_SEQ_START) {
         /* a key with props on its line starts at them ("&x [a]: b") */
-        ptrdiff_t flow_col = ((p->has_anchor || p->has_tag) &&
+        int flow_col = ((p->has_anchor || p->has_tag) &&
                         p->props_line == p->current.start.line) ? p->props_col : col;
         bool props_before_line = (p->has_anchor || p->has_tag) &&
                                  p->props_line != p->current.start.line;
@@ -1594,7 +1557,7 @@ static oyl_status parse_block_node(oyl_parser *p) {
     /* flow mapping */
     if (tt == OYL_TOK_FLOW_MAP_START) {
         /* a key with props on its line starts at them ("&x [a]: b") */
-        ptrdiff_t flow_col = ((p->has_anchor || p->has_tag) &&
+        int flow_col = ((p->has_anchor || p->has_tag) &&
                         p->props_line == p->current.start.line) ? p->props_col : col;
         bool props_before_line = (p->has_anchor || p->has_tag) &&
                                  p->props_line != p->current.start.line;
@@ -1661,15 +1624,6 @@ static oyl_status parse_block_node(oyl_parser *p) {
         enqueue(p, &empty_evt);
         return OYL_OK;
     }
-    /* Dead, to be deleted: a '-' on the props' line is an error, and one
-     * on a later line not indented past its block has had its empty
-     * scalar from the check at the top */
-    if ((p->has_anchor || p->has_tag) && tt == OYL_TOK_BLOCK_SEQ_ENTRY) {
-        ctx_entry *ctx = top_ctx(p);
-        if (ctx && (col < ctx->indent || (ctx->type == CTX_BLOCK_SEQ && col == ctx->indent)))
-            DEAD_CODE_REACHED();
-    }
-#if 0
     if ((p->has_anchor || p->has_tag) && tt == OYL_TOK_BLOCK_SEQ_ENTRY) {
         ctx_entry *ctx = top_ctx(p);
         /* If '-' is below (strictly less than) the current context's indent,
@@ -1690,7 +1644,6 @@ static oyl_status parse_block_node(oyl_parser *p) {
             return OYL_OK;
         }
     }
-#endif
 
     /* block sequence */
     if (tt == OYL_TOK_BLOCK_SEQ_ENTRY) {
@@ -1734,7 +1687,7 @@ static oyl_status parse_block_node(oyl_parser *p) {
         evt.end = p->current.end;
         size_t scalar_line = p->current.start.line;
 
-        ptrdiff_t scalar_col = col;
+        int scalar_col = col;
         consume_token(p);
 
         /* peek for : → simple key (starts a nested mapping) */
@@ -1742,10 +1695,10 @@ static oyl_status parse_block_node(oyl_parser *p) {
         if (st != OYL_OK) return st;
 
         if (key_colon_follows(p, scalar_line)) {
-            ptrdiff_t colon_col = tok_col(p);
+            int colon_col = tok_col(p);
             /* The effective key column considers props on the same line:
              * e.g., "!!str a:" has effective col = 0 (the tag col) */
-            ptrdiff_t eff_key_col = scalar_col;
+            int eff_key_col = scalar_col;
             if ((p->has_anchor || p->has_tag) &&
                 p->props_line == scalar_line &&
                 p->props_col < scalar_col) {
@@ -1768,7 +1721,7 @@ static oyl_status parse_block_node(oyl_parser *p) {
                                     p->props_line != scalar_line;
 
                 /* mapping indent uses effective key col (considers props) */
-                ptrdiff_t map_col = eff_key_col;
+                int map_col = eff_key_col;
 
                 if (props_on_map) {
                     map_evt.start = evt.start;
@@ -1841,7 +1794,7 @@ static oyl_status parse_block_node(oyl_parser *p) {
          * and the mapping starts at them; props on an earlier line belong
          * on the mapping (handled by attach below) */
         if ((p->has_anchor || p->has_tag) && p->props_line == p->current.start.line) {
-            ptrdiff_t map_col = p->props_col;
+            int map_col = p->props_col;
             map_evt.start = p->props_start;
             map_evt.end = p->props_start;
             enqueue(p, &map_evt);
@@ -1943,18 +1896,6 @@ static oyl_status parse_directive(oyl_parser *p, bool *had_yaml) {
         while (i < l1 && w1[i] >= '0' && w1[i] <= '9') i++;
         if (i != l1 || i == dot + 1)
             PARSE_ERROR(p, "invalid %YAML version");
-        /* only major version 1: the spec rejects a higher one, and for a
-         * lower one follows libyaml, which rejects it too */
-        size_t z = 0;
-        while (z + 1 < dot && w1[z] == '0') z++;
-        if (dot - z != 1 || w1[z] != '1')
-            PARSE_ERROR(p, "unsupported %YAML version: only 1.x is accepted");
-        int minor = 0;
-        for (size_t k = dot + 1; k < l1; k++) minor = minor < 100000 ? minor * 10 + (w1[k] - '0') : minor;
-        p->doc_has_version = true;
-        p->doc_major = 1;
-        p->doc_minor = minor;
-        p->yaml_dir_mark = p->current.start;
         if (directive_word(&cur, end, &extra, &lx))
             PARSE_ERROR(p, "unexpected text after %YAML version");
         return OYL_OK;
@@ -1999,96 +1940,15 @@ static oyl_status parse_directive(oyl_parser *p, bool *had_yaml) {
     return OYL_OK;
 }
 
-/* ── Dialects ────────────────────────────────────────────── */
-
-void oyl_warn(oyl_warn_state *w, oyl_warning code, oyl_mark mark, const char *msg) {
-    if (!w->fn) return;
-    unsigned c = (unsigned)code & 7;
-    if (w->seen[c] && mark.offset <= w->last[c]) return;   /* re-read input */
-    w->seen[c] = true;
-    w->last[c] = mark.offset;
-    w->fn(w->user, code, mark, msg);
-}
-
-void oyl_parser_warn(oyl_parser *p, oyl_warning code, oyl_mark mark, const char *msg) {
-    if (p->warn.fn) p->warn.fn(p->warn.user, code, mark, msg);
-}
-
-static const oyl_dialect *default_dialect(oyl_parser *p) {
-    if (p->default_dialect) return p->default_dialect;
-    if (p->schema) {
-        p->schema_dialect = (oyl_dialect){ .schema = p->schema, .syntax = 0, .merge = OYL_MERGE_YAML };
-        return &p->schema_dialect;
-    }
-    return oyl_dialect_yaml12();
-}
-
-/* Make `d` the current document's dialect: its syntax for the scanner, its
- * schema for tag resolution (if on) */
-static void use_dialect(oyl_parser *p, const oyl_dialect *d) {
-    p->doc_dialect = d;
-    oyl_scanner_set_syntax(p->scanner, d->syntax, &p->warn);
-    p->res_schema = p->schema ? oyl_dialect_schema(d) : NULL;
-}
-
-/* After a document's directives: its %TAG !! prefix, if a dialect is
- * registered for it, else its %YAML version, else the default */
-static oyl_status select_dialect(oyl_parser *p) {
-    const oyl_dialect *d = NULL;
-    char msg[320];
-    for (int i = 0; i < p->tag_dir_count && !d; i++) {
-        if (strcmp(p->tag_directives[i].handle, "!!") != 0) continue;
-        const char *prefix = p->tag_directives[i].prefix;
-        for (int j = 0; j < p->n_dialect_prefixes && !d; j++)
-            if (strcmp(p->dialect_prefixes[j].prefix, prefix) == 0) d = p->dialect_prefixes[j].d;
-        if (!d && strcmp(prefix, "tag:yaml.org,2002:") != 0) {
-            snprintf(msg, sizeof msg, "no dialect registered for %%TAG !! %s: untagged values "
-                     "keep the standard types", prefix);
-            oyl_warn(&p->warn, OYL_WARN_DIALECT, p->current.start, msg);
-        }
-    }
-    if (!d && p->doc_has_version) {
-        char v[24];
-        snprintf(v, sizeof v, "%d.%d", p->doc_major, p->doc_minor);
-        for (int j = 0; j < p->n_dialect_versions && !d; j++)
-            if (strcmp(p->dialect_versions[j].version, v) == 0) d = p->dialect_versions[j].d;
-        if (!d && p->doc_minor == 1) d = oyl_dialect_yaml11();
-        if (!d) {
-            d = oyl_dialect_yaml12();
-            if (p->doc_minor != 2) {
-                snprintf(msg, sizeof msg, "%%YAML %s: read as YAML 1.2", v);
-                oyl_warn(&p->warn, OYL_WARN_YAML_VERSION, p->yaml_dir_mark, msg);
-            }
-        }
-    }
-    if (!d) d = default_dialect(p);
-    use_dialect(p, d);
-    /* a world that takes %YAML 1.1 only, by the document's dialect or the
-     * default (go-yaml v2's), rejects any other version */
-    if (((d->syntax | default_dialect(p)->syntax) & OYL_SYNTAX_YAML11_ONLY) && p->doc_has_version &&
-        !(p->doc_major == 1 && p->doc_minor == 1)) {
-        p->error_mark = p->yaml_dir_mark;
-        snprintf(p->error_msg, sizeof p->error_msg,
-                 "found incompatible YAML document: the dialect takes %%YAML 1.1 only");
-        return OYL_ERR_PARSE;
-    }
-    return OYL_OK;
-}
-
 static oyl_status parse_document(oyl_parser *p) {
     if (p->oom) return OOM_STATUS(p);
-    /* a document without directives has the default dialect; the tokens
-     * before a dialect is chosen (directives, ---) read alike in all */
-    use_dialect(p, default_dialect(p));
     oyl_status st = peek_token(p);
     if (st != OYL_OK) return st;
 
     /* a new document starts here (unless this is only a '...' or the end
      * of the stream); %TAG handles apply to the next document only */
-    if (tok_type(p) != OYL_TOK_DOC_END && tok_type(p) != OYL_TOK_STREAM_END) {
+    if (tok_type(p) != OYL_TOK_DOC_END && tok_type(p) != OYL_TOK_STREAM_END)
         p->tag_dir_count = 0;
-        p->doc_has_version = false;
-    }
 
     /* directives (%YAML, %TAG) */
     bool had_directive = false, had_yaml = false;
@@ -2104,10 +1964,6 @@ static oyl_status parse_document(oyl_parser *p) {
     }
     if (had_directive && tok_type(p) != OYL_TOK_DOC_START)
         PARSE_ERROR(p, "directives must be followed by a document start marker '---'");
-    if (had_directive) {
-        st = select_dialect(p);
-        if (st != OYL_OK) return st;
-    }
 
     if (tok_type(p) == OYL_TOK_DOC_START) {
         /* explicit doc start */
@@ -2300,15 +2156,14 @@ static void atbl_free(merge_anchor_table *t) {
     atbl_init(t);
 }
 
-static bool atbl_add(merge_anchor_table *t, oyl_str name, int start, int end) {
+static void atbl_add(merge_anchor_table *t, oyl_str name, int start, int end) {
     if (t->len >= t->cap) {
         int nc = t->cap ? t->cap * 2 : 16;
-        merge_anchor *ne = realloc(t->entries, (size_t)nc * sizeof(merge_anchor));
-        if (!ne) return false;
+        merge_anchor *ne = realloc(t->entries, nc * sizeof(merge_anchor));
+        if (!ne) return;
         t->entries = ne; t->cap = nc;
     }
     t->entries[t->len++] = (merge_anchor){name, start, end};
-    return true;
 }
 
 static bool atbl_name_is(const merge_anchor *a, oyl_str name) {
@@ -2330,24 +2185,19 @@ static merge_anchor *atbl_lookup(merge_anchor_table *t, oyl_str name) {
     return NULL;
 }
 
-/* The anchors of events[0, len); false (the table freed) when out of
- * memory. Without memory for an index, lookups scan. */
-static bool atbl_build(merge_anchor_table *t, const oyl_event *events, int len) {
+static void atbl_build(merge_anchor_table *t, const oyl_event *events, int len) {
     atbl_init(t);
     for (int i = 0; i < len; i++) {
         if (events[i].anchor.data && events[i].anchor.len > 0) {
             int end = node_end(events, len, i);
-            if (!atbl_add(t, events[i].anchor, i, end)) {
-                atbl_free(t);
-                return false;
-            }
+            atbl_add(t, events[i].anchor, i, end);
         }
     }
-    if (t->len == 0) return true;
+    if (t->len == 0) return;
     size_t cap = 16;
     while (cap < (size_t)t->len * 2) cap *= 2;
     t->index = calloc(cap, sizeof *t->index);
-    if (!t->index) return true;
+    if (!t->index) return;
     t->index_cap = cap;
     for (int i = 0; i < t->len; i++) {
         size_t h = name_hash(t->entries[i].name) & (cap - 1);
@@ -2355,7 +2205,6 @@ static bool atbl_build(merge_anchor_table *t, const oyl_event *events, int len) 
             h = (h + 1) & (cap - 1);
         t->index[h] = i + 1;   /* a later entry with the same name wins */
     }
-    return true;
 }
 
 /* Dynamic event array for building output */
@@ -2405,10 +2254,9 @@ static void ebuf_push_range(evt_buf *b, const oyl_event *events, int start, int 
         ebuf_push(b, events[i]);
 }
 
-/* Key set for tracking seen keys (override semantics), compared as YAML
- * compares keys: by tag and value, in the document's schema */
+/* Key set for tracking seen keys (override semantics) */
 typedef struct {
-    oyl_key *keys;
+    oyl_str *keys;
     int      len;
     int      cap;
 } key_set;
@@ -2422,207 +2270,118 @@ static void kset_free(key_set *ks) {
     ks->keys = NULL; ks->len = 0; ks->cap = 0;
 }
 
-/* The scalar event `evt` as a key */
-static void event_key(const oyl_parser *p, const oyl_event *evt, oyl_key *k) {
-    const oyl_schema *s = p->res_schema ? p->res_schema : oyl_dialect_schema(p->doc_dialect);
-    oyl_str tag = evt->tag.len ? evt->tag : oyl_schema_resolve(s, evt->value, evt->scalar_style);
-    oyl_value v;
-    oyl_status st = oyl_schema_value_of(s, evt->value, evt->scalar_style, evt->tag, &v);
-    oyl_key_make(k, oyl_key_tag(s, tag), evt->value, st, &v);
-}
-
-static bool kset_contains(const key_set *ks, const oyl_key *key) {
-    for (int i = 0; i < ks->len; i++)
-        if (oyl_key_cmp(&ks->keys[i], key) == 0) return true;
+static bool kset_contains(const key_set *ks, oyl_str key) {
+    for (int i = 0; i < ks->len; i++) {
+        /* empty keys may have NULL data: don't pass it to memcmp */
+        if (ks->keys[i].len == key.len &&
+            (key.len == 0 || memcmp(ks->keys[i].data, key.data, key.len) == 0))
+            return true;
+    }
     return false;
 }
 
-/* Add a key; false when out of memory */
-static bool kset_add(key_set *ks, const oyl_key *key) {
-    if (kset_contains(ks, key)) return true;
+static void kset_add(key_set *ks, oyl_str key) {
+    if (kset_contains(ks, key)) return;
     if (ks->len >= ks->cap) {
         int nc = ks->cap ? ks->cap * 2 : 16;
-        oyl_key *nk = realloc(ks->keys, (size_t)nc * sizeof(oyl_key));
-        if (!nk) return false;
+        oyl_str *nk = realloc(ks->keys, nc * sizeof(oyl_str));
+        if (!nk) return;
         ks->keys = nk; ks->cap = nc;
     }
-    ks->keys[ks->len++] = *key;
-    return true;
+    ks->keys[ks->len++] = key;
 }
 
-/* A merge's error message for running out of memory, told apart from the
- * others by its address: it is OYL_ERR_MEMORY, not a parse error */
-static const char merge_oom[] = "out of memory";
-
-/* Is evt a merge key? << untagged and plain, or tagged !!merge. A schema
- * tags a plain << itself: YAML 1.1's as !!merge, and one without a merge
- * type (YAML 1.2's) as a string, which can't be told from a !!str written
- * on it, so that << is a merge key too. */
-static bool is_merge_key(const oyl_parser *p, const oyl_event *evt) {
-    if (evt->type != OYL_EVT_SCALAR || evt->value.len != 2 || memcmp(evt->value.data, "<<", 2) != 0)
-        return false;
-    if (evt->tag.len == OYL_TAG_MERGE.len && memcmp(evt->tag.data, OYL_TAG_MERGE.data, evt->tag.len) == 0)
-        return true;
-    if (evt->scalar_style != OYL_SCALAR_PLAIN) return false;
-    if (!evt->tag.len) return true;
-    if (!p->res_schema) return false;
-    oyl_str r = oyl_schema_resolve(p->res_schema, evt->value, evt->scalar_style);
-    return r.len == evt->tag.len && memcmp(r.data, evt->tag.data, r.len) == 0;
+static bool is_merge_key(const oyl_event *evt) {
+    return evt->type == OYL_EVT_SCALAR
+        && evt->scalar_style == OYL_SCALAR_PLAIN
+        && evt->value.len == 2
+        && evt->value.data[0] == '<' && evt->value.data[1] == '<';
 }
 
-/* How deep merges may nest (a merge's source with merges of its own) */
-#define MAX_MERGE_DEPTH 256
+/* Merge key-value pairs from a source mapping into buf, skipping already-seen keys */
+static void merge_from_mapping(const oyl_event *events, int evt_len,
+                               int map_start, int map_end,
+                               evt_buf *out, key_set *seen) {
+    /* iterate key-value pairs inside the mapping (skip MAPPING_START/END) */
+    int pos = map_start + 1;
+    while (pos < map_end - 1) {
+        int key_start = pos;
+        int key_end = node_end(events, evt_len, pos);
+        int val_start = key_end;
+        int val_end = node_end(events, evt_len, val_start);
 
-/* Merging into one mapping: the events, and the keys it has so far */
-typedef struct {
-    const oyl_parser   *p;
-    const oyl_event    *events;
-    int                 evt_len;
-    merge_anchor_table *anchors;
-    evt_buf            *out;
-    key_set            *seen;
-    int                 err_key;   /* the << that failed, or -1 */
-} merger;
+        /* only scalar keys participate in override checking */
+        bool is_scalar_key = (key_end - key_start == 1 &&
+                              events[key_start].type == OYL_EVT_SCALAR);
+        bool skip = false;
+        if (is_scalar_key) {
+            oyl_str kv = events[key_start].value;
+            if (kset_contains(seen, kv)) {
+                skip = true;
+            } else {
+                kset_add(seen, kv);
+            }
+        }
 
-/* The items of the << value at events[v], [*first, *end): a sequence's
- * items, also through an alias, as YAML's merge reads it; otherwise the
- * value itself. */
-static void merge_items(const merger *m, int v, int *first, int *end) {
-    int s = v;
-    if (m->events[v].type == OYL_EVT_ALIAS) {
-        merge_anchor *a = atbl_lookup(m->anchors, m->events[v].value);
-        if (a && m->events[a->start].type == OYL_EVT_SEQUENCE_START) s = a->start;
-    }
-    if (m->events[s].type == OYL_EVT_SEQUENCE_START) {
-        *first = s + 1;
-        *end = node_end(m->events, m->evt_len, s) - 1;
-    } else {
-        *first = v;
-        *end = v + 1;
+        if (!skip) {
+            /* copy key events; copies carry no anchors (not new definitions) */
+            for (int j = key_start; j < key_end && !out->oom; j++) {
+                oyl_event copy = events[j];
+                copy.anchor = OYL_STR_NULL;
+                ebuf_push(out, copy);
+            }
+            /* copy value events */
+            for (int j = val_start; j < val_end && !out->oom; j++) {
+                oyl_event copy = events[j];
+                copy.anchor = OYL_STR_NULL;
+                ebuf_push(out, copy);
+            }
+        }
+
+        pos = val_end;
     }
 }
 
-/* The mapping merge item events[i] stands for, events[*s, *e): the item,
- * or the mapping an alias refers to. Returns an error message, or NULL. */
-static const char *merge_item(const merger *m, int i, int *s, int *e) {
-    if (m->events[i].type == OYL_EVT_MAPPING_START) {
-        *s = i;
-        *e = node_end(m->events, m->evt_len, i);
+/* Merge one merge source: an inline mapping or an alias to a mapping.
+ * Returns an error message, or NULL. */
+static const char *merge_source(const oyl_event *events, int evt_len, int pos,
+                                merge_anchor_table *anchors,
+                                evt_buf *out, key_set *seen) {
+    if (events[pos].type == OYL_EVT_MAPPING_START) {
+        merge_from_mapping(events, evt_len, pos, node_end(events, evt_len, pos),
+                           out, seen);
         return NULL;
     }
-    if (m->events[i].type == OYL_EVT_ALIAS) {
-        merge_anchor *a = atbl_lookup(m->anchors, m->events[i].value);
+    if (events[pos].type == OYL_EVT_ALIAS) {
+        merge_anchor *a = atbl_lookup(anchors, events[pos].value);
         if (!a) return "merge key refers to an undefined anchor";
-        if (m->events[a->start].type != OYL_EVT_MAPPING_START)
+        if (events[a->start].type != OYL_EVT_MAPPING_START)
             return "merge key must refer to a mapping";
-        *s = a->start;
-        *e = a->end;
+        merge_from_mapping(events, evt_len, a->start, a->end, out, seen);
         return NULL;
     }
     return "merge value must be a mapping or a sequence of mappings";
 }
 
-/* Can the << value at events[v] merge into the mapping events[ms, me)?
- * 1: yes; 0: one of its mappings contains this one, so the << is an
- * ordinary key, as in trees; -1: no, with *err why. */
-static int can_merge(const merger *m, int v, int ms, int me, const char **err) {
-    int first, end, verdict = 1;
-    merge_items(m, v, &first, &end);
-    for (int i = first; i < end; i = node_end(m->events, m->evt_len, i)) {
-        int s, e;
-        if ((*err = merge_item(m, i, &s, &e))) return -1;
-        if (s <= ms && me <= e) verdict = 0;
-    }
-    return verdict;
-}
+/* Process a merge key's value: a mapping, an alias to one, or a sequence
+ * of those (earlier sources win on conflicts). Returns an error message,
+ * or NULL. */
+static const char *process_merge_value(const oyl_event *events, int evt_len,
+                                       int val_start, int val_end,
+                                       merge_anchor_table *anchors,
+                                       evt_buf *out, key_set *seen) {
+    if (events[val_start].type != OYL_EVT_SEQUENCE_START)
+        return merge_source(events, evt_len, val_start, anchors, out, seen);
 
-/* Is the pair at events[k] a merge of the mapping events[ms, me), rather
- * than one of its pairs? (A merge that fails counts: it is reported.) */
-static bool is_merge(const merger *m, int k, int ms, int me) {
-    const char *err;
-    return is_merge_key(m->p, &m->events[k]) &&
-           can_merge(m, node_end(m->events, m->evt_len, k), ms, me, &err) != 0;
-}
-
-static const char *merge_merges(merger *m, int ms, int me, int depth);
-
-/* Merge the mapping events[s, e) into m->out: its pairs, then its own
- * merges, each key not yet seen. Returns an error message, or NULL. */
-static const char *merge_from(merger *m, int s, int e, int depth) {
-    if (depth > MAX_MERGE_DEPTH) {
-        m->err_key = s;
-        return "merges nest too deep";
+    /* <<: [*a, {k: v}, ...] */
+    int pos = val_start + 1;
+    int seq_end = val_end - 1; /* SEQUENCE_END */
+    while (pos < seq_end) {
+        const char *err = merge_source(events, evt_len, pos, anchors, out, seen);
+        if (err) return err;
+        pos = node_end(events, evt_len, pos);
     }
-    /* a key written twice in it is copied twice, as in the mapping
-     * merged into: the last one wins */
-    for (int step = 0; step < 2; step++) {
-        for (int pos = s + 1; pos < e - 1;) {
-            int ke = node_end(m->events, m->evt_len, pos);
-            int ve = node_end(m->events, m->evt_len, ke);
-            if (!is_merge(m, pos, s, e)) {
-                bool scalar_key = ke - pos == 1 && m->events[pos].type == OYL_EVT_SCALAR;
-                oyl_key key;
-                if (scalar_key) event_key(m->p, &m->events[pos], &key);
-                if (step == 1) {
-                    if (scalar_key && !kset_add(m->seen, &key)) {
-                        m->err_key = pos;
-                        return merge_oom;
-                    }
-                } else if (!scalar_key || !kset_contains(m->seen, &key)) {
-                    /* copies carry no anchors (not new definitions) */
-                    for (int j = pos; j < ve && !m->out->oom; j++) {
-                        oyl_event copy = m->events[j];
-                        copy.anchor = OYL_STR_NULL;
-                        ebuf_push(m->out, copy);
-                    }
-                }
-            }
-            pos = ve;
-        }
-    }
-    return merge_merges(m, s, e, depth);
-}
-
-/* Merge the merges of the mapping events[ms, me) into m->out: a later <<
- * first, so that it wins over an earlier one, as in PyYAML, and a
- * sequence's items in order, so that an earlier one wins. Returns an
- * error message, or NULL. */
-static const char *merge_merges(merger *m, int ms, int me, int depth) {
-    int buf[8], *keys = buf, n = 0, cap = 8;
-    const char *err = NULL;
-    for (int pos = ms + 1; pos < me - 1 && !err;) {
-        int ke = node_end(m->events, m->evt_len, pos);
-        int ve = node_end(m->events, m->evt_len, ke);
-        if (is_merge_key(m->p, &m->events[pos])) {
-            int verdict = can_merge(m, ke, ms, me, &err);
-            if (verdict < 0) {
-                m->err_key = pos;
-            } else if (verdict > 0) {
-                if (n == cap) {
-                    int *nk = malloc((size_t)cap * 2 * sizeof *nk);
-                    if (!nk) { err = merge_oom; m->err_key = pos; break; }
-                    memcpy(nk, keys, (size_t)n * sizeof *nk);
-                    if (keys != buf) free(keys);
-                    keys = nk;
-                    cap *= 2;
-                }
-                keys[n++] = pos;
-            }
-        }
-        pos = ve;
-    }
-    while (!err && n-- > 0) {
-        int first, end;
-        merge_items(m, node_end(m->events, m->evt_len, keys[n]), &first, &end);
-        for (int i = first; i < end && !err; i = node_end(m->events, m->evt_len, i)) {
-            int s, e;
-            err = merge_item(m, i, &s, &e);
-            if (!err) err = merge_from(m, s, e, depth + 1);
-        }
-        if (err && m->err_key < 0) m->err_key = keys[n];
-    }
-    if (keys != buf) free(keys);
-    return err;
+    return NULL;
 }
 
 /* Event budget for merge/alias expansion. Expansion can grow the stream
@@ -2648,7 +2407,7 @@ static oyl_status resolve_merges(oyl_parser *p) {
 
     for (int pass = 0; pass < MAX_MERGE_PASSES; pass++) {
         merge_anchor_table anchors;
-        if (!atbl_build(&anchors, p->events, p->evt_len)) return OYL_ERR_MEMORY;
+        atbl_build(&anchors, p->events, p->evt_len);
 
         evt_buf out;
         ebuf_init(&out, p->evt_len * 2, limit);
@@ -2666,16 +2425,16 @@ static oyl_status resolve_merges(oyl_parser *p) {
             int map_start = i;
             int map_end = node_end(p->events, p->evt_len, i);
 
-            key_set seen;
-            kset_init(&seen);
-            merger mg = { p, p->events, p->evt_len, &anchors, &out, &seen, -1 };
-
-            /* does this mapping merge? */
+            /* check if this mapping has any merge keys */
             bool has_merge = false;
-            for (int pos = map_start + 1; pos < map_end - 1 && !has_merge;) {
-                int ke = node_end(p->events, p->evt_len, pos);
-                has_merge = is_merge(&mg, pos, map_start, map_end);
-                pos = node_end(p->events, p->evt_len, ke);
+            {
+                int pos = map_start + 1;
+                while (pos < map_end - 1) {
+                    int ke = node_end(p->events, p->evt_len, pos);
+                    if (is_merge_key(&p->events[pos])) { has_merge = true; break; }
+                    int ve = node_end(p->events, p->evt_len, ke);
+                    pos = ve;
+                }
             }
 
             if (!has_merge) {
@@ -2690,32 +2449,70 @@ static oyl_status resolve_merges(oyl_parser *p) {
             /* this mapping has merges — rebuild it */
             changed = true;
 
-            /* its pairs, then its merges, each key not written in it */
-            for (int step = 0; step < 2; step++) {
-                if (step == 1) ebuf_push(&out, p->events[map_start]);
-                for (int pos = map_start + 1; pos < map_end - 1;) {
-                    int ke = node_end(p->events, p->evt_len, pos);
-                    int ve = node_end(p->events, p->evt_len, ke);
-                    if (!is_merge(&mg, pos, map_start, map_end)) {
-                        if (step == 1)
-                            ebuf_push_range(&out, p->events, pos, ve);
-                        else if (ke - pos == 1 && p->events[pos].type == OYL_EVT_SCALAR) {
-                            oyl_key key;
-                            event_key(p, &p->events[pos], &key);
-                            if (!kset_add(&seen, &key)) out.oom = true;
+            /* first collect explicit (non-merge) keys */
+            key_set seen;
+            kset_init(&seen);
+
+            /* pass 1: record all explicit keys */
+            {
+                int pos = map_start + 1;
+                while (pos < map_end - 1) {
+                    int key_start = pos;
+                    int key_end = node_end(p->events, p->evt_len, pos);
+                    int val_end = node_end(p->events, p->evt_len, key_end);
+
+                    if (!is_merge_key(&p->events[key_start])) {
+                        if (key_end - key_start == 1 &&
+                            p->events[key_start].type == OYL_EVT_SCALAR) {
+                            kset_add(&seen, p->events[key_start].value);
                         }
                     }
-                    pos = ve;
+                    pos = val_end;
                 }
             }
-            const char *err = merge_merges(&mg, map_start, map_end, 0);
-            if (err) {
-                kset_free(&seen);
-                atbl_free(&anchors);
-                ebuf_free(&out);
-                snprintf(p->error_msg, sizeof(p->error_msg), "%s", err);
-                p->error_mark = p->events[mg.err_key >= 0 ? mg.err_key : map_start].start;
-                return err == merge_oom ? OYL_ERR_MEMORY : OYL_ERR_PARSE;
+
+            /* emit MAPPING_START */
+            ebuf_push(&out, p->events[map_start]);
+
+            /* pass 2: emit explicit pairs first */
+            {
+                int pos = map_start + 1;
+                while (pos < map_end - 1) {
+                    int key_start = pos;
+                    int key_end = node_end(p->events, p->evt_len, pos);
+                    int val_end = node_end(p->events, p->evt_len, key_end);
+
+                    if (!is_merge_key(&p->events[key_start])) {
+                        ebuf_push_range(&out, p->events, key_start, val_end);
+                    }
+                    pos = val_end;
+                }
+            }
+
+            /* pass 3: process merge keys in order, injecting non-duplicate pairs */
+            {
+                int pos = map_start + 1;
+                while (pos < map_end - 1) {
+                    int key_start = pos;
+                    int key_end = node_end(p->events, p->evt_len, pos);
+                    int val_start = key_end;
+                    int val_end = node_end(p->events, p->evt_len, key_end);
+
+                    if (is_merge_key(&p->events[key_start])) {
+                        const char *err = process_merge_value(
+                            p->events, p->evt_len, val_start, val_end,
+                            &anchors, &out, &seen);
+                        if (err) {
+                            kset_free(&seen);
+                            atbl_free(&anchors);
+                            ebuf_free(&out);
+                            snprintf(p->error_msg, sizeof(p->error_msg), "%s", err);
+                            p->error_mark = p->events[key_start].start;
+                            return OYL_ERR_PARSE;
+                        }
+                    }
+                    pos = val_end;
+                }
             }
 
             /* emit MAPPING_END */
@@ -2904,7 +2701,7 @@ static oyl_status check_eager_depth(oyl_parser *p) {
 static oyl_status resolve_aliases(oyl_parser *p) {
     /* build initial anchor table for cycle detection */
     merge_anchor_table anchors;
-    if (!atbl_build(&anchors, p->events, p->evt_len)) return OYL_ERR_MEMORY;
+    atbl_build(&anchors, p->events, p->evt_len);
 
     if (anchors.len == 0) {
         atbl_free(&anchors);
@@ -2933,11 +2730,7 @@ static oyl_status resolve_aliases(oyl_parser *p) {
     /* expand non-cyclic aliases in passes */
     int limit = expansion_limit(p, p->evt_len);
     for (int pass = 0; pass < 32; pass++) {
-        if (!atbl_build(&anchors, p->events, p->evt_len)) {
-            free(color);
-            free(cyclic);
-            return OYL_ERR_MEMORY;
-        }
+        atbl_build(&anchors, p->events, p->evt_len);
 
         evt_buf out;
         ebuf_init(&out, p->evt_len * 2, limit);
@@ -3025,16 +2818,12 @@ ALWAYS_INLINE int fk_quote_kind(const char *input, size_t i, size_t qend) {
     char c = input[i - 1];          /* i > 0: the scan starts at a bracket */
     if (c != ' ' && c != '\t') {
         /* directly after an entry start, or after a value ':' that
-         * follows a closed scalar or collection, blanks allowed between
-         * ({"a":"b"}, [a]:'b', ['a' :'b']) */
+         * follows a closed scalar or collection ({"a":"b"}, [a]:'b') */
         if (c == '[' || c == '{' || c == ',') return 1;
-        if (c == ':' && i >= 2) {
-            size_t k = i - 2;
-            while (k > 0 && (input[k] == ' ' || input[k] == '\t')) k--;
-            if (((input[k] == '"' || input[k] == '\'') && k + 1 == qend) ||
-                input[k] == ']' || input[k] == '}')
-                return 1;
-        }
+        if (c == ':' && i >= 2 &&
+            (((input[i - 2] == '"' || input[i - 2] == '\'') && i - 1 == qend) ||
+             input[i - 2] == ']' || input[i - 2] == '}'))
+            return 1;
         /* inside a word: plain text, or a tag or anchor name, since a
          * quoted scalar only starts a token */
         return 0;
@@ -3055,9 +2844,10 @@ static bool fk_colon_follows(const char *input, size_t len, size_t i) {
     for (size_t j = i + 1; j < len; j++) {
         char nc = input[j];
         if (nc == ' ' || nc == '\t' || nc == '\n' || nc == '\r') continue;
-        if (nc == '#') {   /* a comment runs to a line break: \n or \r */
-            while (j < len && input[j] != '\n' && input[j] != '\r') j++;
-            if (j == len) return false;
+        if (nc == '#') {
+            const char *nl = memchr(input + j, '\n', len - j);
+            if (!nl) return false;
+            j = (size_t)(nl - input);
             continue;
         }
         return nc == ':';
@@ -3177,12 +2967,11 @@ static bool fk_scan(oyl_parser *p, size_t offset) {
             }
             break;
         case '#':
-            /* a comment runs to the next line break (\n or \r, which
-             * the scanner takes as one too), and consumes it */
+            /* a comment runs to the next \n, which it consumes */
             if (i > 0 && (input[i - 1] == ' ' || input[i - 1] == '\t' ||
                           input[i - 1] == '\n' || input[i - 1] == '\r')) {
                 size_t k;
-                while ((k = fk_next(&cur)) != len && input[k] != '\n' && input[k] != '\r') {}
+                while ((k = fk_next(&cur)) != len && input[k] != '\n') {}
                 if (k == len) goto unterminated;
             }
             break;
@@ -3278,7 +3067,7 @@ static inline void inc_emit(oyl_parser *p, const oyl_event *evt) {
         p->out_buf[p->out_len++] = *evt;
 }
 
-static inline void inc_push_frame(oyl_parser *p, ctx_type type, ptrdiff_t indent,
+static inline void inc_push_frame(oyl_parser *p, ctx_type type, int indent,
                                    parser_state return_state) {
     if ((type == CTX_BLOCK_MAP || type == CTX_BLOCK_SEQ) && p->doc_start_line &&
         p->current.start.line == p->doc_start_line) {
@@ -3455,7 +3244,7 @@ static oyl_status inc_end_document(oyl_parser *p) {
 
 static oyl_status parser_step_flow(oyl_parser *p) {
     oyl_token_type tt;
-    ptrdiff_t col;
+    int col;
     oyl_event evt;
 
     switch (p->state) {
@@ -3882,7 +3671,6 @@ static oyl_status parser_step_flow(oyl_parser *p) {
         return OYL_OK;
     }
 
-#if 0   /* dead, to be deleted (see the enum): flow_is_block_key decides first */
     case ST_FLOW_SEQ_CHECK_COLON: {
         /* After nested flow collection entry, check for ':' */
         peek_token(p);
@@ -3894,7 +3682,6 @@ static oyl_status parser_step_flow(oyl_parser *p) {
         p->state = ST_FLOW_SEQ_SEP;
         return OYL_OK;
     }
-#endif
 
     case ST_FLOW_SEQ_SEP: {
         peek_token(p);
@@ -3936,7 +3723,7 @@ static oyl_status parser_step_flow(oyl_parser *p) {
 
 static oyl_status parser_step(oyl_parser *p) {
     oyl_token_type tt;
-    ptrdiff_t col;
+    int col;
     oyl_mark mark;
     oyl_event evt;
     state_frame *top;
@@ -3991,21 +3778,14 @@ static oyl_status parser_step(oyl_parser *p) {
             /* doc end without content, emit implicit doc */
             consume_token(p);
             p->state = ST_STREAM_DOC_LOOP;
-#if 0   /* dead, to be deleted: ST_STREAM_DOC_LOOP took STREAM_END */
         } else if (tt == OYL_TOK_STREAM_END) {
             p->state = ST_STREAM_END;
-#endif
         } else {
-            if (tt == OYL_TOK_STREAM_END) DEAD_CODE_REACHED();
             p->state = ST_DOC_START_IMPLICIT;
         }
         return OYL_OK;
 
     case ST_DOC_START_EXPLICIT: {
-        /* dead, to be deleted: the document before is closed (and its
-         * frames popped) before ST_STREAM_DOC_LOOP */
-        if (p->doc_open) DEAD_CODE_REACHED();
-#if 0
         /* close previous doc if open */
         if (p->doc_open) {
             /* unroll any open collections */
@@ -4022,7 +3802,6 @@ static oyl_status parser_step(oyl_parser *p) {
             inc_emit(p, &evt);
             p->doc_open = false;
         }
-#endif
         peek_token(p);
         mark = p->current.start;
         oyl_mark marker_end = p->current.end;            /* the "---" */
@@ -4039,8 +3818,6 @@ static oyl_status parser_step(oyl_parser *p) {
     }
 
     case ST_DOC_START_IMPLICIT: {
-        if (p->doc_open) DEAD_CODE_REACHED();   /* dead, as at ST_DOC_START_EXPLICIT */
-#if 0
         if (p->doc_open) {
             if (p->frame_len > 0) {
                 p->unroll_return = ST_DOC_START_IMPLICIT;
@@ -4055,7 +3832,6 @@ static oyl_status parser_step(oyl_parser *p) {
             inc_emit(p, &evt);
             p->doc_open = false;
         }
-#endif
         peek_token(p);
         p->doc_start_line = 0;
         evt = evt_simple(OYL_EVT_DOC_START);
@@ -4178,20 +3954,13 @@ static oyl_status parser_step(oyl_parser *p) {
         if (tt == OYL_TOK_DIRECTIVE)
             PARSE_ERROR(p, "directive requires a preceding document end marker '...'");
 
-        /* dead, to be deleted: every way into ST_BLOCK_NODE has taken
-         * DOC_START, DOC_END and STREAM_END; should one come, the eager
-         * parser reads it */
-        DEAD_CODE_REACHED();
-#if 0
         /* DOC_START, DOC_END, STREAM_END → empty node */
         p->state = ST_BLOCK_NODE_EMPTY;
-        return OYL_OK;
-#endif
-        p->state = ST_EAGER_DRAIN;
         return OYL_OK;
 
     case ST_BLOCK_NODE_SCALAR: {
         peek_token(p);
+        mark = p->current.start;
         col = tok_col(p);
         evt = (oyl_event){
             .type = OYL_EVT_SCALAR,
@@ -4244,6 +4013,7 @@ static oyl_status parser_step(oyl_parser *p) {
 
     case ST_BLOCK_NODE_ALIAS: {
         peek_token(p);
+        mark = p->current.start;
         col = tok_col(p);
         evt = (oyl_event){
             .type = OYL_EVT_ALIAS,
@@ -4286,7 +4056,7 @@ static oyl_status parser_step(oyl_parser *p) {
 
     case ST_BLOCK_NODE_SEQ: {
         peek_token(p);
-        ptrdiff_t seq_indent = tok_col(p);
+        int seq_indent = tok_col(p);
         evt = evt_simple(OYL_EVT_SEQUENCE_START);
         evt.start = p->current.start;
         evt.end = p->current.end;                         /* the "-" */
@@ -4300,7 +4070,7 @@ static oyl_status parser_step(oyl_parser *p) {
     case ST_BLOCK_NODE_EXPLICIT_KEY: {
         /* ? key: starts a mapping */
         peek_token(p);
-        ptrdiff_t map_indent = tok_col(p);
+        int map_indent = tok_col(p);
         evt = evt_simple(OYL_EVT_MAPPING_START);
         evt.start = p->current.start;
         evt.end = p->current.end;                         /* the "?" */
@@ -4314,7 +4084,7 @@ static oyl_status parser_step(oyl_parser *p) {
     case ST_BLOCK_NODE_BARE_VALUE: {
         /* : at start → mapping with empty key */
         peek_token(p);
-        ptrdiff_t map_indent = tok_col(p);
+        int map_indent = tok_col(p);
         evt = evt_simple(OYL_EVT_MAPPING_START);
         evt.start = p->current.start;
         evt.end = p->current.end;                         /* the ":" */
@@ -4332,7 +4102,6 @@ static oyl_status parser_step(oyl_parser *p) {
         return OYL_OK;
     }
 
-#if 0   /* dead, to be deleted (see the enum) */
     case ST_BLOCK_NODE_EMPTY: {
         peek_token(p);
         evt = evt_simple(OYL_EVT_SCALAR);
@@ -4344,14 +4113,13 @@ static oyl_status parser_step(oyl_parser *p) {
         p->state = p->node_return;
         return OYL_OK;
     }
-#endif
 
     case ST_BLOCK_MAP_LOOP: {
         peek_token(p);
         tt = tok_type(p);
         col = tok_col(p);
         top = inc_top_frame(p);
-        ptrdiff_t map_indent = top ? top->indent : 0;
+        int map_indent = top ? top->indent : 0;
 
         /* check if we're still in this mapping's indent level */
         if (tt == OYL_TOK_BLOCK_MAP_KEY && col == map_indent) {
@@ -4404,7 +4172,7 @@ static oyl_status parser_step(oyl_parser *p) {
         peek_token(p);
         tt = tok_type(p);
         top = inc_top_frame(p);
-        ptrdiff_t ek_indent = top ? top->indent : 0;
+        int ek_indent = top ? top->indent : 0;
 
         if (tok_col(p) < ek_indent ||
             (tok_col(p) == ek_indent && tt != OYL_TOK_BLOCK_SEQ_ENTRY) ||
@@ -4430,6 +4198,8 @@ static oyl_status parser_step(oyl_parser *p) {
         tt = tok_type(p);
 
         if (tt == OYL_TOK_SCALAR) {
+            mark = p->current.start;
+            col = tok_col(p);
             evt = (oyl_event){
                 .type = OYL_EVT_SCALAR,
                 .value = p->current.value,
@@ -4450,6 +4220,7 @@ static oyl_status parser_step(oyl_parser *p) {
                 p->state = ST_EAGER_DRAIN;
             }
         } else if (tt == OYL_TOK_ALIAS) {
+            mark = p->current.start;
             evt = (oyl_event){
                 .type = OYL_EVT_ALIAS,
                 .value = p->current.value,
@@ -4476,7 +4247,7 @@ static oyl_status parser_step(oyl_parser *p) {
         peek_token(p);
         tt = tok_type(p);
         top = inc_top_frame(p);
-        ptrdiff_t map_indent = top ? top->indent : 0;
+        int map_indent = top ? top->indent : 0;
 
         if (tt == OYL_TOK_BLOCK_MAP_VALUE && tok_col(p) == map_indent) {
             p->state = ST_BLOCK_MAP_VALUE;
@@ -4515,7 +4286,7 @@ static oyl_status parser_step(oyl_parser *p) {
         tt = tok_type(p);
         col = tok_col(p);
         top = inc_top_frame(p);
-        ptrdiff_t map_indent = top ? top->indent : 0;
+        int map_indent = top ? top->indent : 0;
 
         p->value_colon_line = colon_line;
         p->value_colon_starts_line = colon_starts_line;
@@ -4565,12 +4336,10 @@ static oyl_status parser_step(oyl_parser *p) {
         return OYL_OK;
     }
 
-#if 0   /* dead, to be deleted (see the enum) */
     case ST_BLOCK_MAP_VALUE_NODE:
         /* After parsing the value node, continue the map loop */
         p->state = ST_BLOCK_MAP_LOOP;
         return OYL_OK;
-#endif
 
     case ST_BLOCK_MAP_END: {
         state_frame frame = inc_pop_frame(p);
@@ -4591,7 +4360,7 @@ static oyl_status parser_step(oyl_parser *p) {
         tt = tok_type(p);
         col = tok_col(p);
         top = inc_top_frame(p);
-        ptrdiff_t seq_indent = top ? top->indent : 0;
+        int seq_indent = top ? top->indent : 0;
 
         if (tt == OYL_TOK_BLOCK_SEQ_ENTRY && col == seq_indent) {
             p->state = ST_BLOCK_SEQ_ENTRY;
@@ -4613,7 +4382,7 @@ static oyl_status parser_step(oyl_parser *p) {
         tt = tok_type(p);
         col = tok_col(p);
         top = inc_top_frame(p);
-        ptrdiff_t seq_indent = top ? top->indent : 0;
+        int seq_indent = top ? top->indent : 0;
 
         /* empty entry: an entry's content is indented past its '-', so
          * anything at or left of it (the next '-', an enclosing ':', ...)
@@ -4642,11 +4411,9 @@ static oyl_status parser_step(oyl_parser *p) {
         return OYL_OK;
     }
 
-#if 0   /* dead, to be deleted (see the enum) */
     case ST_BLOCK_SEQ_ENTRY_NODE:
         p->state = ST_BLOCK_SEQ_LOOP;
         return OYL_OK;
-#endif
 
     case ST_BLOCK_SEQ_END: {
         state_frame frame = inc_pop_frame(p);
@@ -4661,7 +4428,6 @@ static oyl_status parser_step(oyl_parser *p) {
         return OYL_OK;
     }
 
-#if 0   /* dead, to be deleted (see the enum) */
     case ST_UNROLL: {
         /* Pop one frame per step, emit the corresponding end event */
         if (p->frame_len > 0) {
@@ -4681,7 +4447,6 @@ static oyl_status parser_step(oyl_parser *p) {
         p->state = p->unroll_return;
         return OYL_OK;
     }
-#endif
 
     case ST_DOC_END_EXPLICIT:
         return inc_end_document(p);
@@ -4692,7 +4457,7 @@ static oyl_status parser_step(oyl_parser *p) {
     case ST_FLOW_SEQ_LOOP: case ST_FLOW_SEQ_ENTRY: case ST_FLOW_SEQ_ENTRY_KEY:
     case ST_FLOW_SEQ_IMPLICIT_END: case ST_FLOW_SEQ_EXPLICIT_KEY:
     case ST_FLOW_SEQ_EXPLICIT_VALUE: case ST_FLOW_SEQ_EXPLICIT_END:
-    case ST_FLOW_SEQ_SEP: case ST_FLOW_SEQ_END:
+    case ST_FLOW_SEQ_CHECK_COLON: case ST_FLOW_SEQ_SEP: case ST_FLOW_SEQ_END:
         return parser_step_flow(p);
 
     case ST_EAGER_DRAIN:
@@ -4710,10 +4475,6 @@ static oyl_status parser_step(oyl_parser *p) {
 /* ── Public API ──────────────────────────────────────────── */
 
 oyl_parser *oyl_parser_new(const char *input, size_t len, oyl_arena *a) {
-    if (!input) {   /* as in oyl_scanner_new */
-        if (len) return NULL;
-        input = "";
-    }
     oyl_parser *p = calloc(1, sizeof(oyl_parser));
     if (!p) return NULL;
 
@@ -4754,7 +4515,6 @@ oyl_parser *oyl_parser_new(const char *input, size_t len, oyl_arena *a) {
     /* incremental state machine — use eager mode when merge/alias needed */
     p->incremental = true;
     p->state = ST_STREAM_START;
-    p->doc_dialect = oyl_dialect_yaml12();
     p->frame_cap = 16;
     p->frames = malloc(p->frame_cap * sizeof(state_frame));
     if (!p->frames) {
@@ -4943,10 +4703,7 @@ static oyl_status next_event(oyl_parser *p, oyl_event *evt) {
 }
 
 oyl_status oyl_parse_next(oyl_parser *p, const oyl_event **evt) {
-    /* an error is final: the stream isn't read past it, where the open
-     * collections would be closed and the rest taken as it comes */
-    oyl_status st = p->failed ? p->failed : next_event(p, &p->out_evt);
-    if (st != OYL_OK) p->failed = st;
+    oyl_status st = next_event(p, &p->out_evt);
     *evt = st == OYL_OK ? &p->out_evt : NULL;
     return st;
 }
@@ -4955,58 +4712,7 @@ void oyl_parser_set_schema(oyl_parser *p, const oyl_schema *schema) {
     if (p) {
         p->schema = schema;
         if (schema) p->incremental = false;
-        use_dialect(p, default_dialect(p));
     }
-}
-
-void oyl_parser_set_dialect(oyl_parser *p, const oyl_dialect *d) {
-    if (!p) return;
-    p->default_dialect = d;
-    use_dialect(p, default_dialect(p));
-}
-
-oyl_status oyl_parser_add_dialect(oyl_parser *p, const oyl_dialect *d, const char *version,
-                                  const char *tag_prefix) {
-    if (!p || !d || (version == NULL) == (tag_prefix == NULL)) return OYL_ERR_INPUT;
-    if (version) {
-        if (strlen(version) >= sizeof p->dialect_versions[0].version) return OYL_ERR_INPUT;
-        for (int i = 0; i < p->n_dialect_versions; i++)
-            if (strcmp(p->dialect_versions[i].version, version) == 0) {
-                p->dialect_versions[i].d = d;
-                return OYL_OK;
-            }
-        if (p->n_dialect_versions == 8) return OYL_ERR_LIMIT;
-        strcpy(p->dialect_versions[p->n_dialect_versions].version, version);
-        p->dialect_versions[p->n_dialect_versions++].d = d;
-    } else {
-        if (strlen(tag_prefix) >= sizeof p->dialect_prefixes[0].prefix) return OYL_ERR_INPUT;
-        for (int i = 0; i < p->n_dialect_prefixes; i++)
-            if (strcmp(p->dialect_prefixes[i].prefix, tag_prefix) == 0) {
-                p->dialect_prefixes[i].d = d;
-                return OYL_OK;
-            }
-        if (p->n_dialect_prefixes == 8) return OYL_ERR_LIMIT;
-        strcpy(p->dialect_prefixes[p->n_dialect_prefixes].prefix, tag_prefix);
-        p->dialect_prefixes[p->n_dialect_prefixes++].d = d;
-    }
-    return OYL_OK;
-}
-
-const oyl_dialect *oyl_parser_document_dialect(oyl_parser *p) {
-    return p ? p->doc_dialect : NULL;
-}
-
-bool oyl_parser_yaml_version(oyl_parser *p, int *major, int *minor) {
-    if (!p || !p->doc_has_version) return false;
-    if (major) *major = p->doc_major;
-    if (minor) *minor = p->doc_minor;
-    return true;
-}
-
-void oyl_parser_set_warn(oyl_parser *p, oyl_warn_fn fn, void *user) {
-    if (!p) return;
-    p->warn.fn = fn;
-    p->warn.user = user;
 }
 
 void oyl_parser_set_merge(oyl_parser *p, bool enable) {
@@ -5030,25 +4736,6 @@ void oyl_parser_set_max_events(oyl_parser *p, int max) {
 void oyl_parser_set_max_depth(oyl_parser *p, int max) {
     if (p) p->max_depth = max;
 }
-
-void oyl_parser_fail(oyl_parser *p, oyl_status status, oyl_mark mark, const char *msg) {
-    if (p->failed) return;   /* the first error stands */
-    snprintf(p->error_msg, sizeof(p->error_msg), "%s", msg);
-    p->error_mark = mark;
-    p->failed = status;
-}
-
-oyl_arena *oyl_parser_arena(const oyl_parser *p) { return p->arena; }
-bool oyl_parser_owns_dialect(const oyl_parser *p, const oyl_dialect *d) {
-    return d == &p->schema_dialect;
-}
-
-const char *oyl_parser_input(const oyl_parser *p, size_t *len) {
-    *len = p->input_len;
-    return p->input;
-}
-int oyl_parser_depth_limit(const oyl_parser *p) { return p->max_depth > 0 ? p->max_depth : 0; }
-const oyl_schema *oyl_parser_schema(const oyl_parser *p) { return p->res_schema; }
 
 const char *oyl_parser_error(oyl_parser *p) {
     if (!p || p->error_msg[0] == '\0') return NULL;

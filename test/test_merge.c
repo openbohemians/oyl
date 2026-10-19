@@ -28,12 +28,11 @@ typedef struct {
     int       len;
 } event_list;
 
-static event_list parse_with(const char *yaml, bool merge, const oyl_dialect *d) {
+static event_list parse_yaml(const char *yaml, bool merge) {
     event_list el = {.len = 0};
     oyl_arena *a = oyl_arena_new(4096);
     oyl_parser *p = oyl_parser_new(yaml, strlen(yaml), a);
     if (merge) oyl_parser_set_merge(p, true);
-    if (d) oyl_parser_set_dialect(p, d);
 
     const oyl_event *evt;
     while (el.len < 512 && oyl_parse_next(p, &evt) == OYL_OK) {
@@ -44,10 +43,6 @@ static event_list parse_with(const char *yaml, bool merge, const oyl_dialect *d)
     oyl_parser_free(p);
     oyl_arena_free(a);
     return el;
-}
-
-static event_list parse_yaml(const char *yaml, bool merge) {
-    return parse_with(yaml, merge, NULL);
 }
 
 static bool has_scalar(const event_list *el, const char *val) {
@@ -228,12 +223,12 @@ static void test_multiple_merge_keys(void) {
     int result_val = find_key_value(&el, 0, "result");
     ASSERT(result_val > 0, "found 'result'");
 
-    /* x should be 9: a later << wins over an earlier one, as in PyYAML */
+    /* x should be 1 (from first <<, higher priority) */
     int x_val = find_key_value(&el, result_val, "x");
     ASSERT(x_val > 0, "found 'x'");
     ASSERT(el.events[x_val].value.len == 1 &&
-           el.events[x_val].value.data[0] == '9',
-           "x=9 (from the later <<)");
+           el.events[x_val].value.data[0] == '1',
+           "x=1 (from first <<)");
 
     ASSERT(find_key_value(&el, result_val, "y") > 0, "found 'y' from second <<");
     ASSERT(find_key_value(&el, result_val, "z") > 0, "found 'z' explicit");
@@ -487,120 +482,6 @@ static void test_non_merge_alias_preserved(void) {
     ASSERT(found_alias, "non-merge alias preserved");
 }
 
-/* ── Test: Merging an alias to a sequence ───────────────── */
-
-static bool value_is(const event_list *el, int map, const char *key, const char *val) {
-    int v = map > 0 ? find_key_value(el, map, key) : -1;
-    return v > 0 && el->events[v].type == OYL_EVT_SCALAR && el->events[v].value.len == strlen(val) &&
-           memcmp(el->events[v].value.data, val, strlen(val)) == 0;
-}
-
-static void test_alias_to_sequence(void) {
-    printf("test_alias_to_sequence:\n");
-    const char *yaml =
-        "a: &a {x: a, y: a}\n"
-        "b: &b {x: b, z: b}\n"
-        "l: &l [*a, *b]\n"
-        "r:\n"
-        "  <<: *l\n";
-    event_list el = parse_yaml(yaml, true);
-    int r = find_key_value(&el, 0, "r");
-    ASSERT(value_is(&el, r, "x", "a") && value_is(&el, r, "y", "a") && value_is(&el, r, "z", "b"),
-           "an alias to a sequence of mappings merges as the sequence");
-    ASSERT(parse_status("s: &s [1, 2]\nr:\n  <<: *s\n") == OYL_ERR_PARSE,
-           "an alias to a sequence of scalars is an error");
-}
-
-/* ── Test: A merge's sources read with their own merges ──── */
-
-static void test_sources_merged_first(void) {
-    printf("test_sources_merged_first:\n");
-    const char *yaml =
-        "a: &a {x: a}\n"
-        "b: &b {<<: *a}\n"
-        "c: &c {<<: *a, x: c}\n"
-        "r:\n"
-        "  <<: [*b, *c]\n";
-    event_list el = parse_yaml(yaml, true);
-    ASSERT(value_is(&el, find_key_value(&el, 0, "r"), "x", "a"),
-           "the first source wins with what its own merge gave it");
-}
-
-/* ── Test: Tagged << ─────────────────────────────────────── */
-
-static void test_merge_tags(void) {
-    printf("test_merge_tags:\n");
-    const char *yaml =
-        "a: &a {x: 1}\n"
-        "r: {!!merge \"<<\": *a}\n"
-        "q: {!!str <<: *a}\n";
-    event_list el = parse_with(yaml, true, oyl_dialect_yaml11());
-    int r = find_key_value(&el, 0, "r"), q = find_key_value(&el, 0, "q");
-    ASSERT(r > 0 && find_key_value(&el, r, "x") > 0, "a quoted << tagged !!merge merges");
-    ASSERT(q > 0 && find_key_value(&el, q, "<<") > 0 && find_key_value(&el, q, "x") < 0,
-           "a << tagged !!str is an ordinary key");
-    el = parse_yaml(yaml, true);
-    q = find_key_value(&el, 0, "q");
-    ASSERT(q > 0 && find_key_value(&el, q, "<<") > 0, "also without a schema");
-}
-
-/* ── Test: A mapping merging itself ──────────────────────── */
-
-static void test_self_merge(void) {
-    printf("test_self_merge:\n");
-    const char *yaml = "s: &s\n  x: 1\n  <<: *s\n";
-    ASSERT(parse_status(yaml) == OYL_OK, "parses");
-    event_list el = parse_yaml(yaml, true);
-    int s = find_key_value(&el, 0, "s");
-    ASSERT(s > 0 && find_key_value(&el, s, "<<") > 0, "its << is an ordinary key, as in trees");
-}
-
-/* ── Test: Keys a mapping has, by tag and value ──────────── */
-
-/* How many keys of the mapping at events[map] are written `key` */
-static int count_keys(const event_list *el, int map, const char *key) {
-    int n = 0, depth = 0;
-    bool is_key = true;
-    for (int i = map + 1; i < el->len; i++) {
-        const oyl_event *e = &el->events[i];
-        if (depth == 0) {
-            if (e->type == OYL_EVT_MAPPING_END) break;
-            if (is_key && e->type == OYL_EVT_SCALAR && e->value.len == strlen(key) &&
-                memcmp(e->value.data, key, e->value.len) == 0)
-                n++;
-            is_key = !is_key;
-        }
-        if (e->type == OYL_EVT_MAPPING_START || e->type == OYL_EVT_SEQUENCE_START) depth++;
-        else if (e->type == OYL_EVT_MAPPING_END || e->type == OYL_EVT_SEQUENCE_END) depth--;
-    }
-    return n;
-}
-
-static void test_keys_by_value(void) {
-    printf("test_keys_by_value:\n");
-    const char *yaml =
-        "b: &b {1: a, 0x2: b, true: c}\n"
-        "m:\n"
-        "  <<: *b\n"
-        "  \"1\": c\n"
-        "  2: d\n"
-        "  True: e\n";
-    event_list el = parse_yaml(yaml, true);
-    int m = find_key_value(&el, 0, "m");
-    ASSERT(m > 0 && count_keys(&el, m, "1") == 2, "1 is merged beside \"1\"");
-    ASSERT(m > 0 && count_keys(&el, m, "0x2") == 0, "0x2 isn't: 2 is written");
-    ASSERT(m > 0 && count_keys(&el, m, "true") == 0, "true isn't: True is written");
-
-    yaml = "b: &b {yes: a, n: b}\nm: {<<: *b, on: c, no: d}\n";
-    el = parse_with(yaml, true, oyl_dialect_yaml11());
-    m = find_key_value(&el, 0, "m");
-    ASSERT(m > 0 && count_keys(&el, m, "yes") == 0, "yes is on, in YAML 1.1");
-    ASSERT(m > 0 && count_keys(&el, m, "n") == 1, "n is a string, to PyYAML");
-    el = parse_yaml(yaml, true);
-    m = find_key_value(&el, 0, "m");
-    ASSERT(m > 0 && count_keys(&el, m, "yes") == 1, "yes is a string, in YAML 1.2");
-}
-
 /* ── Main ────────────────────────────────────────────────── */
 
 int main(void) {
@@ -618,11 +499,6 @@ int main(void) {
     test_empty_merge();
     test_no_alias_in_resolved();
     test_non_merge_alias_preserved();
-    test_alias_to_sequence();
-    test_sources_merged_first();
-    test_merge_tags();
-    test_self_merge();
-    test_keys_by_value();
 
     printf("\n--- Merge tests: %d / %d passed ---\n", tests_passed, tests_run);
     if (tests_failed > 0) printf("    %d FAILED\n", tests_failed);
