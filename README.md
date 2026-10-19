@@ -169,8 +169,7 @@ oyl_scanner_free(scanner);
 | `oyl_token` | Scanner output (`type`, `value`, `scalar_style`, `start`, `end`), owned by the scanner |
 | `oyl_event` | Parser output (`type`, `value`, `anchor`, `tag`, `scalar_style`, `flow`), owned by the parser |
 | `oyl_schema` | Opaque tag resolution schema (failsafe, JSON, core, or custom) |
-| `oyl_emitter` | Writes YAML from events or trees, configured with setters |
-| `oyl_tree` | A document in memory: an array of `oyl_node` in document order |
+| `oyl_emitter` | Event-to-YAML emitter, configured with setters |
 
 Tokens and events are only ever allocated by the library and read through
 `const` pointers, and configuration goes through functions, so new fields
@@ -238,10 +237,9 @@ production:
 With merge enabled, `production` expands to contain `adapter`, `host`, and
 `database` as direct entries. Explicit keys override merged ones. The merge
 value can be an alias to a mapping, an inline mapping (`<<: {k: v}`), or a
-sequence of those, also through an alias, which merges all of them (first
-wins on conflicts). Of two `<<` in one mapping, the later wins, as in
-PyYAML. Any other value, or an alias to an undefined anchor, is a parse
-error. Quoted `"<<"` is treated as a normal key.
+sequence of those, which merges all of them (first wins on conflicts). Any
+other value, or an alias to an undefined anchor, is a parse error. Quoted
+`"<<"` is treated as a normal key.
 
 ## Alias Resolution
 
@@ -328,12 +326,6 @@ built-in schemas ship as presets:
 | **Failsafe** | Everything is `!!str` / `!!seq` / `!!map` |
 | **JSON** | `null`, `true`/`false`, integers, floats |
 | **Core** | JSON + `Null`/`NULL`/`~`, `True`/`TRUE`/`False`/`FALSE`, `0x`/`0o` ints |
-| **go-yaml v2** | As Kubernetes reads YAML: `yes`/`no`/`on`/`off` booleans, `0777` octal, `0b` binary, `1_000`, timestamps |
-
-The JSON preset shares Core's number rules, so it is looser than the YAML
-1.2 JSON schema (section 10.2): `+1`, `01`, `0x1F`, `0o17`, `.inf` and `.nan`
-resolve as numbers, and other plain scalars as `!!str` rather than an
-error.
 
 Schema is opt-in -- without `oyl_parser_set_schema()`, scalars have no tag.
 
@@ -347,13 +339,6 @@ oyl_parser_set_schema(parser, oyl_schema_core());
  *   "null"  -> tag:yaml.org,2002:null
  * quoted scalars always resolve to !!str
  * explicit tags (!!str, !foo) are never overwritten */
-```
-
-A schema also gives a scalar's value, parsed by the rule that typed it:
-
-```c
-oyl_value v;
-oyl_schema_value(oyl_schema_goyaml2(), evt, &v);   /* "0777" -> OYL_VALUE_INT, 511 */
 ```
 
 ### Custom Schemas
@@ -382,125 +367,6 @@ oyl_parser_set_schema(parser, schema);
 
 Rules are matched in order (first match wins). Match types: `OYL_MATCH_EXACT`,
 `OYL_MATCH_ICASE`, and `OYL_MATCH_BUILTIN` (procedural int/float matchers).
-Each rule is a tag bound to a parser: the int and float parsers take
-dialect flags (`oyl_schema_builder_add_int_flags`, `..._float_flags`), and
-`oyl_schema_builder_add_type` binds any tag, a built-in one included, to
-your own parser. See [docs/api](docs/api/index.md#tag-schemas).
-
-## Dialects and Directives
-
-A dialect is what varies between YAML worlds: a schema (types and
-values), syntax leniencies, and how `<<` merges. Each is a dialect of one
-YAML version. Each document's directives choose its dialect, among those
-the program allows:
-
-1. `%TAG !! <prefix>`: the dialect registered for that prefix types the
-   document's explicit `!!` tags and its untagged values alike
-2. `%YAML <version>`: the program's dialect for that version, the one
-   registered for it or else the default if it is of that version; else
-   the built-in one: `1.1` with PyYAML's types (`yes` is true, `0777` is
-   octal) and merge, so a document PyYAML reads gets the same values
-   (`oyl.h` has the two exceptions), `1.2` by the Core schema
-3. otherwise the parser's default dialect
-
-The document picks the version, the program the dialect for each: with
-go-yaml v2 as the default, `%YAML 1.1` keeps go-yaml v2, a dialect of 1.1,
-and with a schema set, `%YAML 1.2` keeps that schema.
-
-```c
-oyl_parser_set_dialect(p, oyl_dialect_goyaml2());           /* the default */
-oyl_parser_add_dialect(p, my_dialect, NULL, "tag:acme.com,2026:");
-```
-
-Built in: `oyl_dialect_yaml12()`, `oyl_dialect_yaml11()` and
-`oyl_dialect_goyaml2()` (go-yaml v2's types and merge order, with its
-leniencies: `\'` in double quotes, `%YAML` 1.1 only, and no line feed for a
-block scalar ending the input, as in libyaml). `oyl_dialect_new` builds one
-of any version from any schema.
-YAML 1.2 applies a `%TAG !!` prefix to explicit tags only; Oyl applies it
-to untagged values too, which is what `!!` was meant for in YAML 1.2's
-design: `!` for the application's types, `!!` for the underlying schema.
-
-Warnings go to a callback (`oyl_parser_set_warn`): a `%YAML` 1.x version
-other than 1.1 or 1.2, a `%TAG !!` prefix with no dialect, each leniency a
-dialect used, and in go-yaml v2's merge order a merge overriding a key
-written before it.
-
-## YAML to JSON
-
-`oyl_parse_json` reads a document and writes it as JSON. With the go-yaml
-v2 dialect, the output is byte for byte what Kubernetes gets from
-`sigs.k8s.io/yaml`'s `YAMLToJSON`, about six times faster on real
-manifests:
-
-```c
-oyl_parser *p = oyl_parser_new(yaml, len, arena);
-oyl_parser_set_dialect(p, oyl_dialect_goyaml2());
-oyl_str json;
-if (oyl_parse_json(p, NULL, 0, &json) == OYL_OK && json.data)   /* NULL: the document's dialect */
-    puts(json.data);          /* {"apiVersion":"v1","kind":"Pod",...} */
-```
-
-Keys are sorted, numbers and strings are written as Go's `encoding/json`
-writes them, aliases are expanded, and `<<` merges follow go-yaml v2's
-order (a merge overrides the keys before it). For standard JSON use the
-Core schema and `OYL_JSON_MERGE`, YAML's merge, where keys written in the
-mapping win. Each call reads one document; at the end of the stream the
-result is empty.
-
-The go-yaml v2 dialect takes on go-yaml v2's leniencies that occur in real
-manifests. Others it doesn't copy: `?x` as an explicit key, anchor names
-cut at `:`, and everything after the first document's root node ignored.
-
-## Trees
-
-`oyl_parse_tree` reads a document into memory: lookups, iteration and
-typed values, without handling events yourself.
-
-```c
-oyl_parser *p = oyl_parser_new(yaml, len, arena);
-oyl_tree *t;
-if (oyl_parse_tree(p, &t) == OYL_OK && t) {
-    uint32_t spec = oyl_node_get(t, 0, OYL_STR_LIT("spec"));     /* 0 is the root */
-    uint32_t replicas = oyl_node_get(t, spec, OYL_STR_LIT("replicas"));
-    oyl_value v;
-    if (oyl_node_value(t, replicas, &v) == OYL_OK && v.kind == OYL_VALUE_INT)
-        printf("%lld replicas\n", (long long)v.as.i);
-    oyl_tree_free(t);
-}
-```
-
-A tree is one array of 32-byte nodes in document order. A collection
-records the size of its subtree, so its first child is the next node and
-the next sibling of node `i` is `i + span`; a mapping's children alternate
-key, value. Walking needs no function calls:
-
-```c
-uint32_t count;
-const oyl_node *n = oyl_tree_nodes(t, &count);
-for (uint32_t c = 0, k = m + 1; c < n[m].len; c++) {   /* the pairs of mapping m */
-    uint32_t v = k + n[k].span;                         /* n[k] is a key, n[v] its value */
-    k = v + n[v].span;
-}
-```
-
-Nodes hold offsets, not pointers: text stays in the input, except text
-the parser rewrote (escapes, folded lines), which goes into the tree's
-pool. So a binding can copy a tree's arrays whole, or read them in place.
-Each plain scalar is typed while the tree is built, by the document's
-dialect. Aliases and `<<` merge keys stay as written: `oyl_node_get`
-follows aliases and applies merges in the dialect's order, and
-`oyl_node_entries` gives a mapping's pairs with merges applied. The
-merges are worked out once as the tree is built, so reading a mapping
-costs only its pairs, however the merges nest. Keys are
-equal as YAML compares them, by tag and value: `0x50` and `80` are one
-key, `80` and `"80"` two. `oyl_node_get` takes a key's text (`"80"`
-finds the string, else `80`), `oyl_node_get_value` its value. A finished
-tree is read-only, so threads can share it. Each call reads one document;
-at the end of the stream the tree is NULL.
-
-`oyl_emit_tree` writes a tree back out as YAML, as emitting its
-document's events would.
 
 ## Architecture
 
@@ -572,117 +438,10 @@ Where the speed comes from:
 - Tags, schemas, merge keys and alias resolution use an eager parse of the
   whole document instead.
 
-### Building trees
-
-Throughput in MB/s building each library's tree, measured with
-`make bench-compare-tree` on the same machine and compiler, median of 11
-runs in each of 3 passes (passes agree within 8%, except rapidyaml's
-fresh tree on the CRD, 19%), October 2026:
-
-| Input | Oyl | libyaml 0.2.5 | libfyaml 0.9.6 | rapidyaml 0.16 | rapidyaml, reused |
-|---|---:|---:|---:|---:|---:|
-| **Generated, 10 MB** | | | | | |
-| block mappings and sequences | 110 | 47 | 32 | 108 | 167 |
-| mixed block, flow and quoted | 137 | 57 | 41 | 116 | 191 |
-| JSON | 130 | 48 | 34 | 122 | 195 |
-| config files (comments, block scalars, anchors) | 238 | 85 | 66 | 194 | 280 |
-| **Real files, repeated to ~10 MB** | | | | | |
-| travis.yml | 405 | 106 | 113 | 202 | 297 |
-| appveyor.yml | 342 | 94 | 91 | 205 | 302 |
-| compile_commands.json | 1831 | 188 | 257 | 854 | 1140 |
-| **Kubernetes** | | | | | |
-| 854 manifests in one stream, 7.3 MB | 524 | fails¹ | 142 | fails² | fails² |
-| the largest CRD, 1.4 MB | 504 | 168 | 154 | 275 | 410 |
-| **Scalar-heavy text** | | | | | |
-| literal block scalars (`\|`) | 2693 | 269 | 279 | 914 | 1022 |
-| folded block scalars (`>`) | 1842 | 271 | 277 | 823 | 930 |
-| multi-line double-quoted | 2628 | 210 | 318 | 358 | 375 |
-| multi-line single-quoted | 2408 | 213 | 320 | 368 | 381 |
-| multi-line plain | 853 | 199 | 407 | 304 | 317 |
-
-Each library builds its own tree: `oyl_parse_tree`, libyaml's
-`yaml_parser_load`, libfyaml's `fy_parse_load_document` (with duplicate
-keys allowed, as the others allow them), and rapidyaml's `parse_in_place`,
-with a new tree for each parse like the others, and with its parser and
-tree reused and reserved to size, its fastest mode. The Kubernetes inputs
-are public manifests (kubernetes/examples, the kubernetes.io examples, and
-the Argo CD, cert-manager and Prometheus Operator install bundles), one of
-them left out for an escape YAML 1.2 doesn't have (`\'`).
-
-¹ libyaml implements YAML 1.1, which doesn't allow a document to follow
-`...` without `---`. ² rapidyaml's trees can't hold a collection as a key,
-as in a Helm template's `config: {{config_data}}`.
-
-Oyl builds trees 2.3–12.5× faster than libyaml and 2.1–9.7× faster than
-libfyaml. Against rapidyaml building a new tree each time, it's about even
-on the generated block mappings and 1.1–7.3× faster on everything else.
-rapidyaml reusing its buffers leads on the generated inputs (1.2–1.5×);
-Oyl leads on the real files and long scalars (1.1–7×).
-
-The memory the trees hold after parsing, in MB per MB of YAML:
-
-| Input | Oyl | libyaml | libfyaml | rapidyaml |
-|---|---:|---:|---:|---:|
-| block mappings and sequences | 6.5 | 33 | 74 | 14 |
-| JSON | 6.5 | 32 | 67 | 14 |
-| config files | 7.1 | 15 | 37 | 7.2 |
-| travis.yml | 2.7 | 11 | 20 | 7.2 |
-| Kubernetes manifests | 1.9 | fails | 12 | fails |
-| the largest CRD | 1.5 | 7.6 | 15 | 3.4 |
-| literal block scalars | 2.0 | 1.9 | 1.0 | 0.22 |
-| multi-line plain | 1.1 | 1.9 | 1.0 | 0.22 |
-
-An Oyl node is 32 bytes and points into the input, so on structured input
-its trees are 2–3× smaller than rapidyaml's (the same on the config
-files), 2–5× smaller than libyaml's and 5–11× smaller than libfyaml's.
-Text the parser rewrites (escapes, folded lines) is copied into the tree,
-while rapidyaml rewrites the input buffer in place and libfyaml decodes
-text when it's read, so on long scalars they hold less. Measured from
-glibc's heap (`mallinfo2`) with the trees of the whole input kept.
-
-### Writing YAML
-
-Throughput in MB/s of input writing each library's trees, built
-beforehand, back out as YAML, measured with `make bench-compare-emit` the
-same way (passes agree within 6%, except libfyaml on the CRD, 17%):
-
-| Input | Oyl | libyaml 0.2.5 | libfyaml 0.9.6 | rapidyaml 0.16 |
-|---|---:|---:|---:|---:|
-| **Generated, 10 MB** | | | | |
-| block mappings and sequences | 328 | 68 | 94 | 373 |
-| mixed block, flow and quoted | 411 | 86 | 118 | 372 |
-| JSON | 382 | 70 | 92 | 368 |
-| config files (comments, block scalars, anchors) | 629 | 143 | 127 | 555 |
-| **Real files, repeated to ~10 MB** | | | | |
-| travis.yml | 1095 | 204 | 373 | 897 |
-| appveyor.yml | 704 | 186 | 205 | 752 |
-| compile_commands.json | 1316 | 258 | 650 | 718 |
-| **Kubernetes** | | | | |
-| 854 manifests in one stream, 7.3 MB | 1306 | fails¹ | 185 | fails² |
-| the largest CRD, 1.4 MB | 1482 | 319 | 517 | 1770 |
-| **Scalar-heavy text** | | | | |
-| literal block scalars (`\|`) | 1401 | 278 | 96 | 1398 |
-| folded block scalars (`>`) | 1665 | 251 | 256 | 1752 |
-| multi-line double-quoted | 1489 | 253 | 92 | 613 |
-| multi-line single-quoted | 1551 | 250 | 97 | 1346 |
-| multi-line plain | 2431 | 252 | 99 | 1954 |
-
-Each library writes in its default style: `oyl_emit_tree`, libyaml's
-`yaml_emitter_dump` (which consumes its documents, so they're loaded again
-before each run, untimed), libfyaml's `fy_emit_document_to_string`, and
-rapidyaml's `emitrs_yaml`. ¹ ² As above: the trees can't be built.
-
-Oyl writes YAML 3.8–9.6× faster than libyaml and 2–25× faster than
-libfyaml. Against rapidyaml it's faster on 8 of the 13 inputs both can
-read (up to 2.4×, on double-quoted text), even on literal block scalars,
-and slower on 4, by 5–19%: block mappings, appveyor.yml, folded block
-scalars and the CRD.
-
-Run `make bench` to measure Oyl alone. `make bench-compare` runs the event
-table above with whichever libraries are installed,
-`make bench-compare-tree` the tree tables and `make bench-compare-emit`
-the emitter's; see `bench/compare/run.sh` for adding rapidyaml
-(`RYML_HEADER`, `RYML_SRC`) and your own files (`CASES`).
+Run `make bench` to measure Oyl alone. `make bench-compare` runs the table
+above with whichever libraries are installed; see `bench/compare/run.sh`
+for adding rapidyaml (`RYML_HEADER`, `RYML_SRC`) and your own files
+(`CASES`).
 
 ## Conformance and Testing
 
