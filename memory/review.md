@@ -29,9 +29,24 @@ merging again. Rework: each mapping's merged pairs worked out once at its
 place (as trees), copied run by run, one pass writing out; a budget of
 4x the expansion limit (OYL_ERR_LIMIT "merges too costly to expand");
 hash set for seen keys; the depth limit checked while writing. Same
-values as PyYAML on 12,000 random documents. Still: trees and JSON
-refuse such a diamond with OYL_ERR_LIMIT (bounded, but PyYAML reads it);
-memoizing there too is open.
+values as PyYAML on 12,000 random documents.
+**Trees and JSON on the diamond: fixed in `19cb677`** (the user chose
+it, 2026-10-19). Found on the way: `oyl_node_get` answered "not found"
+for a present key past 256 nested merges or a spent budget (a test had
+even asserted it). Trees now walk the merge graph visiting each mapping
+once (get: priority order, first match; entries: priority order for
+values, written order for positions), iteratively, no budget or depth
+limit. JSON in YAML's merge memoizes each merged mapping (prepared at
+the first merge, in end order, so no recursion), budget as the parser's
+for events with max_events off; Kubernetes mode unchanged (go-yaml v2
+refuses these too). **Open, for the user to decide:** a tree lookup is
+linear in the merge graph, so reading *every* mapping of an adversarial
+graph is quadratic (a 300 KB 10,000-link diamond: 3 s; 1 MB about 35 s;
+before, it failed fast with LIMIT). Events and JSON are linear (per-
+document memo). Fix would be a document-level cache for trees (trees are
+shared read-only across threads, so built once, published atomically, and
+bounded), or a per-query cap with LIMIT from entries (get can't report
+errors).
 **(2) and (3) fixed in `08d17c4`** (the user decided 2026-10-19, "the
 document wins"): each dialect is of one YAML version (`oyl_dialect_new`
 takes it; go-yaml v2's is 1.1). `%YAML` gets the dialect registered for
