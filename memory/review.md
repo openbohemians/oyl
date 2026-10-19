@@ -55,6 +55,8 @@ doc: parse 18 ms (was 11), entries 2.4 (was 12.5). Verified against the
 walk (10,000 random docs, 3 dialects, every key by text; 855 k8s files),
 PyYAML (5,000), fuzzer checks worked-out vs walked lookups (370k runs).
 Internal hook `oyl_tree_forget_merges` (tests, fuzzer) forces the walk.
+CI's UBSan then caught `&pairs[0]` on a NULL array (empty first record): fixed
+in `792d5ae` (local clang 23 no longer reports a zero offset on NULL in C).
 **(2) and (3) fixed in `08d17c4`** (the user decided 2026-10-19, "the
 document wins"): each dialect is of one YAML version (`oyl_dialect_new`
 takes it; go-yaml v2's is 1.1). `%YAML` gets the dialect registered for
