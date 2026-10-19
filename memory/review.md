@@ -33,20 +33,28 @@ values as PyYAML on 12,000 random documents.
 **Trees and JSON on the diamond: fixed in `19cb677`** (the user chose
 it, 2026-10-19). Found on the way: `oyl_node_get` answered "not found"
 for a present key past 256 nested merges or a spent budget (a test had
-even asserted it). Trees now walk the merge graph visiting each mapping
-once (get: priority order, first match; entries: priority order for
-values, written order for positions), iteratively, no budget or depth
-limit. JSON in YAML's merge memoizes each merged mapping (prepared at
-the first merge, in end order, so no recursion), budget as the parser's
-for events with max_events off; Kubernetes mode unchanged (go-yaml v2
-refuses these too). **Open, for the user to decide:** a tree lookup is
-linear in the merge graph, so reading *every* mapping of an adversarial
-graph is quadratic (a 365 KB 10,000-link diamond: 3.2 s; 1 MB, 27,000 links: 27 s;
-before, it failed fast with LIMIT). Events and JSON are linear (per-
-document memo). Fix would be a document-level cache for trees (trees are
-shared read-only across threads, so built once, published atomically, and
-bounded), or a per-query cap with LIMIT from entries (get can't report
-errors).
+even asserted it). Trees walked the merge graph visiting each mapping
+once; JSON in YAML's merge memoizes each merged mapping (prepared at the
+first merge, in end order, so no recursion), budget as the parser's for
+events with max_events off; Kubernetes mode unchanged (go-yaml v2
+refuses these too).
+**The quadratic case, fixed in `4ca3737`** (the user said build the
+cache, 2026-10-19): reading every mapping of a hostile graph was
+quadratic (365 KB of doubling links: 3.2 s; 1 MB: 27 s). `oyl_parse_tree`
+now works out every merging mapping's pairs as it builds (post-order,
+each from its direct sources' pairs; sharing; no sorting: hash pass in
+written order, counted ranks), keeping overridden keys spelled otherwise
+(`0x1` under `1`) for get-by-text. Built at parse, not on first lookup as
+first proposed: no locking, the tree stays read-only. Past the parser's
+bound (4x(16 nodes + 100,000) entries) nothing is kept: entries give
+`OYL_ERR_LIMIT` for a merging mapping, get walks (still right). Not
+"fall back to the walk" for entries, as first proposed: past a bound an
+attacker could exhaust it with a chain and put the diamond after. 1 MB
+diamond 18 ms; costly docs stop at 0.23-0.33 s/MB; ordinary merge-heavy
+doc: parse 18 ms (was 11), entries 2.4 (was 12.5). Verified against the
+walk (10,000 random docs, 3 dialects, every key by text; 855 k8s files),
+PyYAML (5,000), fuzzer checks worked-out vs walked lookups (370k runs).
+Internal hook `oyl_tree_forget_merges` (tests, fuzzer) forces the walk.
 **(2) and (3) fixed in `08d17c4`** (the user decided 2026-10-19, "the
 document wins"): each dialect is of one YAML version (`oyl_dialect_new`
 takes it; go-yaml v2's is 1.1). `%YAML` gets the dialect registered for

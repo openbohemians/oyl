@@ -208,7 +208,11 @@ the user before `cargo publish --workspace`. **At the re-vendor, since
 oyl-sys declaration, add `oyl_dialect_version`), and the docs of
 `Dialect` and `Parser::dialect` (oyl/src/lib.rs, "unless it starts with
 `%YAML 1.1`") must say the new rule: `%YAML 1.1` keeps a default of 1.1
-(go-yaml v2), `%YAML 1.2` a schema set alone. **Step 3 done 2026-10-18
+(go-yaml v2), `%YAML 1.2` a schema set alone. **Also since `4ca3737`:**
+`Node::entries` (and serde's maps) can now fail with `ErrorKind::Limit`
+for a mapping that merges when the document's merges were too costly to
+work out; say so in its docs, and test it (a chain of 5,000 anchors each
+merging the one before and adding a key). **Step 3 done 2026-10-18
 (`e433cfa`):** the `serde` feature: `from_str`/`from_slice`/`from_reader`
 (YAML 1.2), `from_str_with`/`from_slice_with` (a dialect), `from_node`;
 strict duplicate keys (an error whatever the target type: serde_yaml
