@@ -17,9 +17,10 @@
   `OYL_ENTRIES_STRICT` reports a repeat by the same rule, the first in
   the document. `oyl_node_get`
   takes a key's text (the string, else the key so written: `"80"` finds
-  `80`), `oyl_node_get_value` its value. Every valid YAML Test Suite
-  case's tree replays the parser's events exactly, and the fuzzer checks
-  the same.
+  `80`), `oyl_node_get_value` its value. Lookups visit each mapping
+  merged once, however the merges nest, so one costs at most the size of
+  the tree. Every valid YAML Test Suite case's tree replays the parser's
+  events exactly, and the fuzzer checks the same.
 - `oyl_schema_value_of` gives a scalar's value from its parts (text,
   style, tag), as `oyl_schema_value` does from an event: for bindings,
   which shouldn't make events of their own.
@@ -35,6 +36,15 @@
   YAML, the fuzz corpus), at the same speed. The one difference: an alias
   to an unknown anchor is now reported before an alias inside its own
   anchor, as go-yaml v2 reports them.
+- In YAML's merge, `oyl_parse_json` works out each mapping merged once
+  and reuses its entries, within the parser's bound on merges for events
+  (`OYL_ERR_LIMIT`, "merges too costly to expand"). Before, it worked
+  each path out again and counted that as go-yaml v2 counts aliasing, so
+  a chain of 10 anchors each merging the one before twice failed as
+  "excessive aliasing" though PyYAML reads it; now 10,000 take 11 ms.
+  go-yaml v2's merge order (`OYL_JSON_KUBERNETES`) is unchanged, as
+  go-yaml v2 refuses such documents too. Of a document's errors, a bad
+  merge may now be reported before another.
 
 ### Performance
 

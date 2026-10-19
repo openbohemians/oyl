@@ -127,6 +127,40 @@ static void test_merges(void) {
     check(list, err_parse);
 }
 
+/* Merges along many paths to one mapping: YAML's merge works each mapping
+ * out once; go-yaml v2 decodes each path, and refuses as it does */
+static void test_merges_bounded(void) {
+    printf("test_merges_bounded:\n");
+    size_t cap = 1 << 20, len = 0;
+    char *y = malloc(cap);
+    len += (size_t)snprintf(y + len, cap - len, "m0: &m0 {k: v}\n");
+    for (int i = 1; i <= 1000; i++)
+        len += (size_t)snprintf(y + len, cap - len, "m%d: &m%d {<<: [*m%d, *m%d]}\n", i, i, i - 1, i - 1);
+    char *got = malloc(cap);
+    json_of(y, oyl_schema_core(), OYL_JSON_MERGE, 0, got, cap);
+    tests_run++;
+    if (strncmp(got, "{\"m0\":{\"k\":\"v\"},\"m1\":{\"k\":\"v\"}", 26) == 0 &&
+        strstr(got, "\"m1000\":{\"k\":\"v\"}")) tests_passed++;
+    else printf("  FAIL: 2^1000 paths, YAML's merge: %.80s\n", got);
+    json_of(y, oyl_schema_goyaml2(), OYL_JSON_KUBERNETES, 0, got, cap);
+    tests_run++;
+    if (strcmp(got, err_limit) == 0) tests_passed++;
+    else printf("  FAIL: 2^1000 paths, go-yaml v2: %.80s\n", got);
+
+    /* merges whose output grows as the square of the input are bounded,
+     * as the parser bounds them for events */
+    len = 0;
+    len += (size_t)snprintf(y + len, cap - len, "m0: &m0 {k0: v}\n");
+    for (int i = 1; i <= 3000; i++)
+        len += (size_t)snprintf(y + len, cap - len, "m%d: &m%d {<<: *m%d, k%d: v}\n", i, i, i - 1, i);
+    json_of(y, oyl_schema_core(), OYL_JSON_MERGE, 0, got, cap);
+    tests_run++;
+    if (strcmp(got, err_limit) == 0) tests_passed++;
+    else printf("  FAIL: merges too costly: %.80s\n", got);
+    free(y);
+    free(got);
+}
+
 static void test_strict(void) {
     printf("test_strict:\n");
     check_with("a: 1\na: 2\n", oyl_schema_goyaml2(), OYL_JSON_KUBERNETES | OYL_JSON_STRICT, err_parse);
@@ -216,6 +250,7 @@ int main(void) {
     test_kubernetes();
     test_numbers();
     test_merges();
+    test_merges_bounded();
     test_strict();
     test_errors();
     test_standard();

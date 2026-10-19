@@ -453,8 +453,11 @@ the end of the stream it returns `OYL_OK` with an empty `json`. Errors are
 reported like parse errors (`oyl_parser_error`, `oyl_parser_error_mark`):
 `OYL_ERR_PARSE` for what JSON can't hold or the schema rejects (a null,
 collection or uint64 key; inf or NaN; an unknown anchor; `!!int "abc"`),
-`OYL_ERR_LIMIT` for too much aliasing (go-yaml v2's ratio) or nesting (the
-parser's depth limit, counted through aliases). Leave the parser's own
+`OYL_ERR_LIMIT` for too much aliasing (go-yaml v2's ratio), merging or
+nesting (the parser's depth limit, counted through aliases). In YAML's
+merge, each mapping merged is worked out once, within the bound the
+parser puts on merges for events with `max_events` off; go-yaml v2's
+merge order counts its work as go-yaml v2 does. Leave the parser's own
 merge and alias resolution off.
 
 | Flag | Effect |
@@ -555,8 +558,10 @@ through an alias; or the mapping itself) is an ordinary key.
 order keys first appear. Collection keys are all kept.
 `OYL_ENTRIES_STRICT` makes a key written twice an error, as YAML has it
 (`OYL_ERR_PARSE`, with `*n` the first key written again): `true` and
-`True` are a repeat, `1` and `"1"` aren't. Merges nested more than 256
-deep, or too costly to expand, give `OYL_ERR_LIMIT`.
+`True` are a repeat, `1` and `"1"` aren't. Lookups visit each mapping
+merged once, however the merges nest (a chain of anchors each merging the
+one before twice has 2^n paths to its start), so one costs at most the
+size of the tree.
 
 An alias may refer to a collection that contains it (YAML allows cycles):
 code that expands aliases has to check (`target <= i < target + span`).

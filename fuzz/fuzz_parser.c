@@ -351,8 +351,7 @@ static void check_one_tree(oyl_parser *pe, oyl_emitter *ee, oyl_status *est, con
         size_t np;
         oyl_status st = oyl_node_entries(t, i, (i & 1) ? OYL_ENTRIES_STRICT : 0, a, &pairs, &np);
         if (st == OYL_ERR_PARSE && (i & 1)) continue;
-        if (st == OYL_ERR_LIMIT) continue;
-        if (st != OYL_OK) __builtin_trap();
+        if (st != OYL_OK) __builtin_trap();   /* merges have no limit: each mapping is visited once */
         /* a string key's text finds its value, as does a key's value when
          * its tag is its kind's; any key's text finds one of the entries */
         for (size_t j = 0; j < np && j < 256; j++) {

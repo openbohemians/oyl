@@ -207,6 +207,21 @@ void              oyl_parser_warn(oyl_parser *p, oyl_warning code, oyl_mark mark
 
 /* ── Trees, for oyl_json.c ───────────────────────────────── */
 
+/* Numbers by node (as the mappings merges visit), on the stack until they
+ * outgrow it */
+typedef struct {
+    uint32_t *node, *val;   /* node UINT32_MAX: an empty slot */
+    uint32_t  cap, len;
+    uint32_t  node_buf[32], val_buf[32];
+} oyl_node_map;
+
+void     oyl_nmap_init(oyl_node_map *s);
+void     oyl_nmap_free(oyl_node_map *s);
+/* Node x's number, or UINT32_MAX */
+uint32_t oyl_nmap_get(const oyl_node_map *s, uint32_t x);
+/* Number node x (not there yet) v; false if out of memory */
+bool     oyl_nmap_put(oyl_node_map *s, uint32_t x, uint32_t v);
+
 struct oyl_tree {
     const char        *input;       /* the whole input */
     size_t             input_len;

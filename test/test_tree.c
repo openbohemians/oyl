@@ -743,11 +743,11 @@ static void test_errors(void) {
     ASSERT(x.st == OYL_ERR_LIMIT && x.t == NULL, "its depth limit");
     unload(&x);
 
-    /* merges nested past the limit */
-    size_t cap = 1 << 16, len = 0;
+    /* merges nested deep: each mapping is visited once, without recursing */
+    size_t cap = 1 << 20, len = 0;
     char *deep = malloc(cap);
     len += (size_t)snprintf(deep + len, cap - len, "m0: &m0 {k: v}\n");
-    for (int i = 1; i <= 300; i++)
+    for (int i = 1; i <= 20000; i++)
         len += (size_t)snprintf(deep + len, cap - len, "m%d: &m%d {<<: *m%d}\n", i, i, i - 1);
     x.a = oyl_arena_new(4096);
     x.p = oyl_parser_new(deep, len, x.a);
@@ -755,18 +755,18 @@ static void test_errors(void) {
     x.st = oyl_parse_tree(x.p, &x.t);
     x.n = oyl_tree_nodes(x.t, &x.count);
     ASSERT(x.st == OYL_OK, "a long chain of merges parses");
-    ASSERT(str_is(text_at(&x, "m200.k"), "v"), "a lookup through 200 merges");
-    ASSERT(str_is(text_at(&x, "m300.k"), "<none>"), "not through 300");
+    ASSERT(str_is(text_at(&x, "m20000.k"), "v"), "a lookup through 20,000 merges");
+    ASSERT(str_is(text_at(&x, "m20000.nope"), "<none>"), "and a miss");
     char got[64];
-    render_entries(&x, oyl_node_get(x.t, 0, S("m300")), 0, got, sizeof got);
-    ASSERT(strncmp(got, "ERROR 6", 7) == 0, "entries: too deep");
+    render_entries(&x, oyl_node_get(x.t, 0, S("m20000")), 0, got, sizeof got);
+    ASSERT(strcmp(got, "k=v") == 0, "entries through 20,000 merges");
     unload(&x);
 
-    /* each mapping merging the one before twice: without a limit, the
-     * work would double at each step */
+    /* each mapping merging the one before twice: 2^1000 paths lead to m0,
+     * each mapping visited once */
     len = 0;
     len += (size_t)snprintf(deep + len, cap - len, "m0: &m0 {k: v}\n");
-    for (int i = 1; i <= 60; i++)
+    for (int i = 1; i <= 1000; i++)
         len += (size_t)snprintf(deep + len, cap - len, "m%d: &m%d {<<: [*m%d, *m%d], j%d: x}\n",
                                 i, i, i - 1, i - 1, i);
     x.a = oyl_arena_new(4096);
@@ -774,10 +774,17 @@ static void test_errors(void) {
     oyl_parser_set_max_events(x.p, 0);
     x.st = oyl_parse_tree(x.p, &x.t);
     x.n = oyl_tree_nodes(x.t, &x.count);
-    ASSERT(x.st == OYL_OK && str_is(text_at(&x, "m60.k"), "v"), "doubling merges: a lookup");
-    ASSERT(str_is(text_at(&x, "m60.nope"), "<none>"), "and a miss, in time");
-    render_entries(&x, oyl_node_get(x.t, 0, S("m60")), 0, got, sizeof got);
-    ASSERT(strncmp(got, "ERROR 6", 7) == 0, "entries: too costly");
+    ASSERT(x.st == OYL_OK && str_is(text_at(&x, "m1000.k"), "v"), "doubling merges: a lookup");
+    ASSERT(str_is(text_at(&x, "m1000.j1"), "x"), "... another");
+    ASSERT(str_is(text_at(&x, "m1000.nope"), "<none>"), "and a miss");
+    render_entries(&x, oyl_node_get(x.t, 0, S("m3")), 0, got, sizeof got);
+    ASSERT(strcmp(got, "k=v j1=x j2=x j3=x") == 0, "entries, in the order keys first appear");
+    oyl_arena *ea = oyl_arena_new(1024);
+    const oyl_pair *pairs;
+    size_t np;
+    ASSERT(oyl_node_entries(x.t, oyl_node_get(x.t, 0, S("m1000")), 0, ea, &pairs, &np) == OYL_OK &&
+           np == 1001, "all 1,001 keys of m1000");
+    oyl_arena_free(ea);
     unload(&x);
     free(deep);
 }

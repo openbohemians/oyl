@@ -23,9 +23,6 @@
 
 /* struct oyl_tree is in oyl_internal.h, for oyl_json.c */
 
-/* How deep merges may nest (a merge's source with merges of its own) */
-#define MAX_MERGE_DEPTH 256
-
 static bool same(oyl_str a, oyl_str b) {
     return a.len == b.len && (a.len == 0 || memcmp(a.data, b.data, a.len) == 0);
 }
@@ -527,14 +524,96 @@ static void key_of(const oyl_tree *t, uint32_t k, oyl_key *key) {
     oyl_key_make(key, oyl_key_tag(t->schema, oyl_node_tag(t, k)), oyl_node_text(t, k), st, &v);
 }
 
+/* ── Merges ──────────────────────────────────────────────── */
+
+/* A mapping's merges make a graph of mappings, each merging others in
+ * turn. It has no cycles (aliases refer back, and a mapping can't merge
+ * one containing it), but a mapping may be reached along many paths: in a
+ * chain of mappings each merging the one before twice, 2^n lead to its
+ * start. A lookup visits each mapping once, in the order keys win (the
+ * key oyl_node_get finds, the values of oyl_node_entries) or the order
+ * they are written in (the order of oyl_node_entries); a mapping met again
+ * has nothing to add. So its cost follows the mappings merged and their
+ * keys, at most the tree, however the merges nest. */
+
+/* Room for one more in an array that starts in a buffer on the stack
+ * (most mappings are small), and moves to the heap when it's full */
+static bool room(void **data, const void *buf, uint32_t *cap, uint32_t len, size_t size) {
+    if (len < *cap) return true;
+    if (*data != buf) return grow_slow(data, cap, len, 1, size);
+    void *p = malloc((size_t)*cap * 2 * size);
+    if (!p) return false;
+    memcpy(p, buf, (size_t)len * size);
+    *data = p;
+    *cap *= 2;
+    return true;
+}
+
+/* oyl_node_map (oyl_internal.h) */
+
+void oyl_nmap_init(oyl_node_map *s) {
+    s->node = s->node_buf;
+    s->val = s->val_buf;
+    s->cap = 32;
+    s->len = 0;
+    memset(s->node_buf, 0xFF, sizeof s->node_buf);
+}
+
+void oyl_nmap_free(oyl_node_map *s) {
+    if (s->node != s->node_buf) {
+        free(s->node);
+        free(s->val);
+    }
+}
+
+static uint32_t nmap_slot(const oyl_node_map *s, uint32_t x) {
+    uint32_t h = x * 0x9E3779B1u, i = (h ^ (h >> 15)) & (s->cap - 1);
+    while (s->node[i] != NONE && s->node[i] != x) i = (i + 1) & (s->cap - 1);
+    return i;
+}
+
+uint32_t oyl_nmap_get(const oyl_node_map *s, uint32_t x) {
+    uint32_t i = nmap_slot(s, x);
+    return s->node[i] == x ? s->val[i] : NONE;
+}
+
+bool oyl_nmap_put(oyl_node_map *s, uint32_t x, uint32_t v) {
+    if ((s->len + 1) * 2 > s->cap) {
+        if (s->cap > UINT32_MAX / 4) return false;
+        oyl_node_map big = { .cap = s->cap * 2, .len = s->len };
+        big.node = malloc((size_t)big.cap * sizeof *big.node);
+        big.val = malloc((size_t)big.cap * sizeof *big.val);
+        if (!big.node || !big.val) {
+            free(big.node);
+            free(big.val);
+            return false;
+        }
+        memset(big.node, 0xFF, (size_t)big.cap * sizeof *big.node);
+        for (uint32_t i = 0; i < s->cap; i++)
+            if (s->node[i] != NONE) {
+                uint32_t j = nmap_slot(&big, s->node[i]);
+                big.node[j] = s->node[i];
+                big.val[j] = s->val[i];
+            }
+        oyl_nmap_free(s);
+        s->node = big.node;
+        s->val = big.val;
+        s->cap = big.cap;
+    }
+    uint32_t i = nmap_slot(s, x);
+    s->node[i] = x;
+    s->val[i] = v;
+    s->len++;
+    return true;
+}
+
+/* ── Finding keys ────────────────────────────────────────── */
+
 /* A lookup: by key, or by text */
 typedef struct {
     const oyl_tree *t;
     const oyl_key  *key;    /* the key equal to this, or */
     oyl_str         text;   /* any scalar key with this text */
-    struct { uint32_t map, key; } memo[64];   /* sources already searched */
-    int             nmemo;
-    size_t          budget;
 } getter;
 
 static bool matches(const getter *g, uint32_t k) {
@@ -550,60 +629,91 @@ static bool matches(const getter *g, uint32_t k) {
     return oyl_key_cmp(&key, g->key) == 0;
 }
 
-static uint32_t get_in(getter *g, uint32_t m, int depth) {
+/* A mapping in a lookup's walk: its entries list[lo, at) still to look
+ * at, from the last, and the items of the merge being looked at */
+typedef struct {
+    uint32_t map, lo, at;
+    uint32_t item, left;
+} visit;
+
+/* The key that counts in mapping m, which merges: the first that matches
+ * in the order keys win, each mapping visited once. In YAML's merge, a
+ * mapping's own keys (the last written of them), then its merges, a later
+ * << first and a sequence's items in order; in go-yaml v2's, its entries
+ * from the last, a merge's items in order. NONE also if out of memory. */
+static uint32_t get_merged(const getter *g, uint32_t m) {
     const oyl_tree *t = g->t;
     const oyl_node *n = t->nodes;
-    for (int j = 0; j < g->nmemo; j++)
-        if (g->memo[j].map == m) return g->memo[j].key;
-    if (depth > MAX_MERGE_DEPTH) return NONE;
-    bool merging = t->merge != OYL_MERGE_NONE, ordered = t->merge == OYL_MERGE_ORDERED;
-    bool merges = false;
-    uint32_t found = NONE, k = m + 1;
-    for (uint32_t c = 0; c < n[m].len; c++) {
-        uint32_t v = k + n[k].span, next = v + n[v].span;
-        if (g->budget == 0) return NONE;
-        g->budget--;
-        if (merging && is_merge_key(t, k) && mergeable(t, m, v)) {
-            merges = true;
-            if (ordered) {   /* a merge sets what it has, the first item winning */
-                uint32_t item, count = merge_items(t, v, &item);
-                for (uint32_t j = 0; j < count; j++, item += n[item].span) {
-                    uint32_t r = get_in(g, oyl_node_target(t, item), depth + 1);
-                    if (r != NONE) { found = r; break; }
+    bool ordered = t->merge == OYL_MERGE_ORDERED;
+    oyl_node_map seen;
+    oyl_nmap_init(&seen);
+    uint32_t list_buf[64], *list = list_buf, nlist = 0, list_cap = 64;
+    visit stack_buf[16], *stack = stack_buf;
+    uint32_t nstack = 0, stack_cap = 16;
+    uint32_t found = NONE, next = m;   /* next: a mapping to enter */
+    bool ok = oyl_nmap_put(&seen, m, 0);
+    while (ok) {
+        if (next != NONE) {
+            /* YAML's merge looks at its own keys now and keeps its merges
+             * for later; go-yaml v2's order keeps all its entries */
+            uint32_t s = next, lo = nlist, k = s + 1;
+            next = NONE;
+            for (uint32_t c = 0; c < n[s].len && ok; c++) {
+                uint32_t v = k + n[k].span;
+                if (!ordered && !(is_merge_key(t, k) && mergeable(t, s, v))) {
+                    if (matches(g, k)) found = k;
+                } else if ((ok = room((void **)&list, list_buf, &list_cap, nlist, sizeof *list))) {
+                    list[nlist++] = k;
                 }
+                k = v + n[v].span;
             }
-        } else if (matches(g, k)) {
-            found = k;
+            if (!ok || found != NONE) break;
+            if ((ok = room((void **)&stack, stack_buf, &stack_cap, nstack, sizeof *stack)))
+                stack[nstack++] = (visit){ .map = s, .lo = lo, .at = nlist };
+            continue;
         }
-        k = next;
-    }
-    if (found == NONE && merges && !ordered) {
-        /* YAML's merge: keys written win, then the merges, a later <<
-         * over an earlier one (as PyYAML) and a sequence's earlier items
-         * over its later ones */
-        k = m + 1;
-        for (uint32_t c = 0; c < n[m].len; c++) {
-            uint32_t v = k + n[k].span, next = v + n[v].span;
-            if (is_merge_key(t, k) && mergeable(t, m, v)) {
-                uint32_t item, count = merge_items(t, v, &item), r = NONE;
-                for (uint32_t j = 0; j < count && r == NONE; j++, item += n[item].span)
-                    r = get_in(g, oyl_node_target(t, item), depth + 1);
-                if (r != NONE) found = r;
+        if (!nstack) break;
+        visit *f = &stack[nstack - 1];
+        if (f->left) {   /* the merge's next mapping, unless visited */
+            uint32_t x = oyl_node_target(t, f->item);
+            f->item += n[f->item].span;
+            f->left--;
+            if (oyl_nmap_get(&seen, x) == NONE && (ok = oyl_nmap_put(&seen, x, 0))) next = x;
+        } else if (f->at > f->lo) {
+            uint32_t k = list[--f->at], v = k + n[k].span;
+            if (is_merge_key(t, k) && mergeable(t, f->map, v)) {
+                f->left = merge_items(t, v, &f->item);
+            } else if (matches(g, k)) {
+                found = k;
+                break;
             }
-            k = next;
+        } else {
+            nlist = f->lo;
+            nstack--;
         }
     }
-    if (depth > 0 && g->nmemo < (int)(sizeof g->memo / sizeof g->memo[0])) {
-        g->memo[g->nmemo].map = m;
-        g->memo[g->nmemo++].key = found;
-    }
-    return found;
+    oyl_nmap_free(&seen);
+    if (list != list_buf) free(list);
+    if (stack != stack_buf) free(stack);
+    return ok ? found : NONE;
 }
 
 /* The key in mapping `map` that counts for `key`, or NONE */
 static uint32_t get_key(const oyl_tree *t, uint32_t map, const oyl_key *key, oyl_str text) {
-    getter g = { .t = t, .key = key, .text = text, .budget = (size_t)t->len * 16 + 100000 };
-    return get_in(&g, map, 0);
+    const oyl_node *n = t->nodes;
+    getter g = { .t = t, .key = key, .text = text };
+    bool merging = t->merge != OYL_MERGE_NONE;
+    uint32_t found = NONE, last_merge = NONE, k = map + 1;
+    for (uint32_t c = 0; c < n[map].len; c++) {
+        uint32_t v = k + n[k].span;
+        if (merging && is_merge_key(t, k) && mergeable(t, map, v)) last_merge = k;
+        else if (matches(&g, k)) found = k;
+        k = v + n[v].span;
+    }
+    /* a key written wins, in go-yaml v2's order over the merges before it */
+    if (last_merge == NONE || (found != NONE && (t->merge == OYL_MERGE_YAML || found > last_merge)))
+        return found;
+    return get_merged(&g, map);
 }
 
 static uint32_t value_of(const oyl_tree *t, uint32_t k) {
@@ -660,27 +770,11 @@ typedef struct {
     uint32_t        len, cap, tmp_cap;
     oyl_key        *forms, *forms_buf;   /* the scalar keys as compared, apart: entries move */
     uint32_t        nforms, forms_cap;
-    size_t          budget;
     oyl_status      status;
     uint32_t        bad;   /* the repeated key, under OYL_ENTRIES_STRICT */
 } collector;
 
-/* Room for one more in an array that starts in a buffer on the stack
- * (most mappings are small), and moves to the heap when it's full */
-static bool room(void **data, const void *buf, uint32_t *cap, uint32_t len, size_t size) {
-    if (len < *cap) return true;
-    if (*data != buf) return grow_slow(data, cap, len, 1, size);
-    void *p = malloc((size_t)*cap * 2 * size);
-    if (!p) return false;
-    memcpy(p, buf, (size_t)len * size);
-    *data = p;
-    *cap *= 2;
-    return true;
-}
-
-static bool push_ent(collector *c, ent e) {
-    if (c->budget == 0) { c->status = OYL_ERR_LIMIT; return false; }
-    c->budget--;
+ALWAYS_INLINE bool push_ent(collector *c, ent e) {
     if (!room((void **)&c->e, c->e_buf, &c->cap, c->len, sizeof *c->e)) { c->status = OYL_ERR_MEMORY; return false; }
     uint32_t k = oyl_node_target(c->t, e.key);
     e.form = NONE;
@@ -745,10 +839,11 @@ static bool same_key(const collector *c, const ent *a, const ent *b) {
     return by_key(c, &x, &y) == 0;
 }
 
-/* Settle the entries from `base`: one per key, the highest priority at the
- * first position, in order of position */
-static bool settle(collector *c, uint32_t base, bool top) {
-    uint32_t n = c->len - base;
+
+/* Settle the entries: one per key, the highest priority at the first
+ * position, in order of position */
+static bool settle(collector *c) {
+    uint32_t n = c->len;
     if (n == 0) return true;
     if (n > 16 && n > c->tmp_cap) {
         ent *tmp = realloc(c->tmp, n * sizeof *tmp);
@@ -756,7 +851,7 @@ static bool settle(collector *c, uint32_t base, bool top) {
         c->tmp = tmp;
         c->tmp_cap = n;
     }
-    ent *e = c->e + base;
+    ent *e = c->e;
     sort_ents(c, e, c->tmp, n, by_key);
     uint32_t out = 0, repeat = NONE;   /* the first key written again */
     for (uint32_t i = 0; i < n;) {
@@ -765,7 +860,7 @@ static bool settle(collector *c, uint32_t base, bool top) {
             if (e[j].pos < pos) pos = e[j].pos;
             written += e[j++].written;
         }
-        if (top && written > 1 && (c->flags & OYL_ENTRIES_STRICT)) {
+        if (written > 1 && (c->flags & OYL_ENTRIES_STRICT)) {
             uint32_t first = NONE, second = NONE;
             for (uint32_t w = i; w < j; w++) {
                 if (!e[w].written) continue;
@@ -784,47 +879,189 @@ static bool settle(collector *c, uint32_t base, bool top) {
         return false;
     }
     sort_ents(c, e, c->tmp, out, by_pos);
-    c->len = base + out;
+    c->len = out;
     return true;
 }
 
-/* Append mapping m's entries, settled, to c->e */
-static bool collect(collector *c, uint32_t m, int depth, bool top) {
+/* A mapping in the graph a mapping's merges make: its own entries, its
+ * merges, and a walk's place in it */
+typedef struct {
+    uint32_t node;
+    uint32_t base, n;           /* its own entries: c->e[base, base + n) */
+    uint32_t merges, nmerges;   /* its merges: g->mrg[merges, merges + nmerges) */
+    uint32_t w, m, i;           /* a walk's place: own entries, merges, items */
+    bool     seen;              /* by the walk */
+} source;
+
+/* A merge, in the mapping that has it */
+typedef struct {
+    uint32_t before;    /* the mapping's own entries before it */
+    uint32_t items, n;  /* its mappings, as sources: g->items[items, items + n) */
+} merge_ref;
+
+typedef struct {
+    source    *src;
+    merge_ref *mrg;
+    uint32_t  *items, *stack;
+    uint32_t   nsrc, src_cap, nmrg, mrg_cap, nitems, items_cap;
+    oyl_node_map index;   /* each mapping's source, by node */
+} graph;
+
+/* The graph from mapping m: each mapping it merges, directly or not, once,
+ * with its own entries pushed (m's first) and its merges */
+static bool gather(collector *c, graph *g, uint32_t m) {
     const oyl_tree *t = c->t;
     const oyl_node *n = t->nodes;
-    if (depth > MAX_MERGE_DEPTH) { c->status = OYL_ERR_LIMIT; return false; }
-    bool merging = t->merge != OYL_MERGE_NONE, ordered = t->merge == OYL_MERGE_ORDERED;
-    uint32_t base = c->len, pos = 0;
-    uint64_t counter = 0, merged = 0;
-    const uint64_t written_prio = (uint64_t)1 << 63, merged_prio = (uint64_t)1 << 62;
+    if (!grow((void **)&g->src, &g->src_cap, 0, 1, sizeof *g->src) || !oyl_nmap_put(&g->index, m, 0))
+        goto oom;
+    g->src[g->nsrc++] = (source){ .node = m };
+    for (uint32_t q = 0; q < g->nsrc; q++) {
+        uint32_t s = g->src[q].node, k = s + 1, base = c->len, first = g->nmrg, own = 0;
+        for (uint32_t i = 0; i < n[s].len; i++) {
+            uint32_t v = k + n[k].span;
+            if (is_merge_key(t, k) && mergeable(t, s, v)) {
+                uint32_t item, count = merge_items(t, v, &item);
+                if (!grow((void **)&g->mrg, &g->mrg_cap, g->nmrg, 1, sizeof *g->mrg) ||
+                    !grow((void **)&g->items, &g->items_cap, g->nitems, count, sizeof *g->items))
+                    goto oom;
+                g->mrg[g->nmrg++] = (merge_ref){ .before = own, .items = g->nitems, .n = count };
+                for (uint32_t j = 0; j < count; j++, item += n[item].span) {
+                    uint32_t x = oyl_node_target(t, item), at = oyl_nmap_get(&g->index, x);
+                    if (at == NONE) {
+                        at = g->nsrc;
+                        if (!grow((void **)&g->src, &g->src_cap, g->nsrc, 1, sizeof *g->src) ||
+                            !oyl_nmap_put(&g->index, x, at))
+                            goto oom;
+                        g->src[g->nsrc++] = (source){ .node = x };
+                    }
+                    g->items[g->nitems++] = at;
+                }
+            } else {
+                if (!push_ent(c, (ent){ .key = k, .value = v, .written = q == 0 })) return false;
+                own++;
+            }
+            k = v + n[v].span;
+        }
+        source *src = &g->src[q];
+        src->base = base;
+        src->n = own;
+        src->merges = first;
+        src->nmerges = g->nmrg - first;
+    }
+    return true;
+oom:
+    c->status = OYL_ERR_MEMORY;
+    return false;
+}
+
+/* Number the entries in the order they are written: the mappings' own
+ * entries, a merge's mappings where it stands, each mapping once */
+static void walk_written(collector *c, graph *g) {
+    uint32_t pos = 0, top = 0;
+    for (uint32_t q = 0; q < g->nsrc; q++) {
+        source *s = &g->src[q];
+        s->w = s->m = s->i = 0;
+        s->seen = false;
+    }
+    g->stack[top++] = 0;
+    g->src[0].seen = true;
+    while (top) {
+        source *s = &g->src[g->stack[top - 1]];
+        if (s->m < s->nmerges) {
+            const merge_ref *r = &g->mrg[s->merges + s->m];
+            while (s->w < r->before) c->e[s->base + s->w++].pos = pos++;
+            if (s->i < r->n) {
+                uint32_t x = g->items[r->items + s->i++];
+                if (!g->src[x].seen) {
+                    g->src[x].seen = true;
+                    g->stack[top++] = x;
+                }
+            } else {
+                s->m++;
+                s->i = 0;
+            }
+            continue;
+        }
+        while (s->w < s->n) c->e[s->base + s->w++].pos = pos++;
+        top--;
+    }
+}
+
+/* Rank the entries in the order keys win, the first highest. YAML's
+ * merge: a mapping's own entries, the last written first, then its
+ * merges, a later << first, a sequence's items in order. go-yaml v2's
+ * order: its entries from the last, a merge's items in order. */
+static void walk_winning(collector *c, graph *g, bool ordered) {
+    uint64_t prio = UINT64_MAX;
+    uint32_t top = 0;
+    for (uint32_t q = 0; q < g->nsrc; q++) {
+        source *s = &g->src[q];
+        s->w = s->n;
+        s->m = s->nmerges;
+        s->i = 0;
+        s->seen = false;
+    }
+    g->stack[top++] = 0;
+    g->src[0].seen = true;
+    while (top) {
+        source *s = &g->src[g->stack[top - 1]];
+        if (!ordered) while (s->w > 0) c->e[s->base + --s->w].prio = prio--;
+        if (s->m > 0) {
+            const merge_ref *r = &g->mrg[s->merges + s->m - 1];
+            while (s->w > r->before) c->e[s->base + --s->w].prio = prio--;
+            if (s->i < r->n) {
+                uint32_t x = g->items[r->items + s->i++];
+                if (!g->src[x].seen) {
+                    g->src[x].seen = true;
+                    g->stack[top++] = x;
+                }
+            } else {
+                s->m--;
+                s->i = 0;
+            }
+            continue;
+        }
+        while (s->w > 0) c->e[s->base + --s->w].prio = prio--;
+        top--;
+    }
+}
+
+/* Mapping m's entries, which merges, settled into c->e */
+NOINLINE bool collect_merged(collector *c, uint32_t m) {
+    c->len = c->nforms = 0;
+    graph g = { 0 };
+    oyl_nmap_init(&g.index);
+    bool ok = gather(c, &g, m);
+    if (ok && !(g.stack = malloc(g.nsrc * sizeof *g.stack))) {
+        c->status = OYL_ERR_MEMORY;
+        ok = false;
+    }
+    if (ok) {
+        walk_written(c, &g);
+        walk_winning(c, &g, c->t->merge == OYL_MERGE_ORDERED);
+        ok = settle(c);
+    }
+    free(g.src);
+    free(g.mrg);
+    free(g.items);
+    free(g.stack);
+    oyl_nmap_free(&g.index);
+    return ok;
+}
+
+/* Mapping m's entries, settled, into c->e */
+static bool collect(collector *c, uint32_t m) {
+    const oyl_tree *t = c->t;
+    const oyl_node *n = t->nodes;
+    bool merging = t->merge != OYL_MERGE_NONE;
     uint32_t k = m + 1;
     for (uint32_t i = 0; i < n[m].len; i++) {
-        uint32_t v = k + n[k].span, next = v + n[v].span;
-        if (merging && is_merge_key(t, k) && mergeable(t, m, v)) {
-            uint32_t item, count = merge_items(t, v, &item);
-            for (uint32_t j = 0; j < count; j++, item += n[item].span) {
-                uint32_t from = c->len;
-                if (!collect(c, oyl_node_target(t, item), depth + 1, false)) return false;
-                /* go-yaml v2: a merge overrides what came before, its first
-                 * item winning; YAML: keys written win, then the merges, a
-                 * later << over an earlier one (as PyYAML), its first item
-                 * winning */
-                uint64_t prio = ordered ? counter + (count - j) : merged_prio + merged + (count - j);
-                for (uint32_t x = from; x < c->len; x++) {
-                    c->e[x].prio = prio;
-                    c->e[x].pos = pos++;
-                    c->e[x].written = false;
-                }
-            }
-            if (ordered) counter += count;
-            else merged += count;
-        } else {
-            uint64_t prio = ordered || !merging ? ++counter : written_prio + ++counter;
-            if (!push_ent(c, (ent){ .key = k, .value = v, .prio = prio, .pos = pos++, .written = top })) return false;
-        }
-        k = next;
+        uint32_t v = k + n[k].span;
+        if (merging && is_merge_key(t, k) && mergeable(t, m, v)) return collect_merged(c, m);
+        if (!push_ent(c, (ent){ .key = k, .value = v, .prio = i, .pos = i, .written = true })) return false;
+        k = v + n[v].span;
     }
-    return settle(c, base, top);
+    return settle(c);
 }
 
 oyl_status oyl_node_entries(const oyl_tree *t, uint32_t map, unsigned flags, oyl_arena *a,
@@ -838,10 +1075,9 @@ oyl_status oyl_node_entries(const oyl_tree *t, uint32_t map, unsigned flags, oyl
     ent e_buf[32];
     oyl_key forms_buf[32];
     collector c = { .t = t, .flags = flags, .e = e_buf, .e_buf = e_buf, .cap = 32,
-                    .forms = forms_buf, .forms_buf = forms_buf, .forms_cap = 32,
-                    .budget = (size_t)t->len * 16 + 100000 };
+                    .forms = forms_buf, .forms_buf = forms_buf, .forms_cap = 32 };
     oyl_status st = OYL_OK;
-    if (!collect(&c, map, 0, true)) {
+    if (!collect(&c, map)) {
         st = c.status;
         if (st == OYL_ERR_PARSE) *n = c.bad;
     } else {
