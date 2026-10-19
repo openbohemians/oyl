@@ -60,18 +60,35 @@ a human security audit (OSTIF, OpenSSF Alpha-Omega) once 1.2.0 is used.
     ahead of time. Wired back in, it would mismatch the eager parser.
   - Also dead: the eager "empty scalar before '-'" block in
     `parse_block_node`, and ST_DOC_DIRECTIVES' STREAM_END branch.
-  **Open: delete them** (recommended, for the user to decide).
-- **Errors aren't sticky** (**Open**, found by the same subagent).
+  **Under `#if 0` in `ab35c3e`** (the user, 2026-10-18: comment them
+  out, marked for deletion, and delete after more fuzzer runs). Where
+  each was guarded, `DEAD_CODE_REACHED()` traps in fuzzing builds
+  (`FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION`, set by ClusterFuzzLite's
+  image, the Makefile and build.sh). With traps armed: tests pass,
+  113,142 corpus inputs replay, 2.7 million fuzz runs, none reached.
+  **Open: delete them** once ClusterFuzzLite's batch runs have gone
+  some days clean with the traps (no crash means none was reached).
+- **Errors aren't sticky: fixed in `eba0f29`** (the user agreed,
+  2026-10-18): the parser keeps its first error and returns it on every
+  later call (events, trees, JSON; their own errors via
+  `oyl_parser_fail(p, status, ...)`). Was:
   Calling `oyl_parse_next` again after an error goes on parsing: eager
   mode closes the open collections with `unroll_all` and silently drops
   content (`&x a:\n  b: c\n  d\n---\ne` loses `d`); incremental mode
   gives a second `+DOC` and then "please report". `oyl.h` doesn't say
-  what happens. Suggested: keep the first error and return it on every
-  later call; then `unroll_all` can go too.
-- **Out-of-memory paths never run** (**Open**): every allocation failure
-  branch (parser, tree, JSON, scanner copy). A fault-injection test
-  (fail the Nth allocation, for every N, over a few documents, under
-  ASan) would exercise them; leaks and double frees hide there.
+  what happens. `unroll_all`'s loop became dead with the fix (under
+  `#if 0` too).
+- **Out-of-memory paths: tested, four bugs fixed in `f29f219`** (the
+  user said go, 2026-10-18). `test/test_oom.c`: 19 scenarios (its commit
+  message says 23, wrongly), each run once per allocation with that one
+  failing (`-Wl,--wrap`, Linux only); each must give OYL_ERR_MEMORY or
+  exactly the unfailed result. In test-all and `just sanitize`; under
+  ASan no leaks (a deliberate leak through the wrapper is reported).
+  Found: atbl_add and kset_add dropping entries (merges: "undefined
+  anchor" or a key kept), the merge's "out of memory" as a parse error,
+  three unchecked indent_push calls in the scanner, base64's failed
+  allocation read as invalid data, and oyl_emitter_output's NULL meaning
+  both empty and out of memory (empty is "" now).
 - **Small:** the emitter's and parser's `int` capacities double without
   an overflow check (needs ~16 GB first); `shortest_digits`' neighbor
   branch never runs (probably unreachable with a correctly rounding
