@@ -1436,6 +1436,12 @@ static bool work_out_merges(oyl_tree *t) {
     if (!wk.mg) return false;
     if (wk.left > UINT32_MAX / 2) wk.left = UINT32_MAX / 2;
     oyl_nmap_init(&wk.mg->index);
+    /* the pairs exist even if none are kept, so that offsets into them are
+     * never taken from NULL */
+    if (!grow((void **)&wk.mg->pairs, &wk.mg->pairs_cap, 0, 1, sizeof *wk.mg->pairs)) {
+        free_merges(wk.mg);
+        return false;
+    }
     ent e_buf[32];
     oyl_key forms_buf[32];
     wk.c = (collector){ .t = t, .e = e_buf, .e_buf = e_buf, .cap = 32,
