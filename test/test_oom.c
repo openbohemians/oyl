@@ -318,6 +318,45 @@ static outcome trees_long_key(void) {
     return o;
 }
 
+/* go-yaml v2 decides whether a float is one by its range, reading it: a
+ * long one (once copied to the heap to be read) must type alike */
+static char long_float[256];
+
+/* events tagged by the schema */
+static outcome events_long_float(void) {
+    oyl_arena *a = oyl_arena_new(4096);
+    if (!a) return OUT_OF_MEMORY;
+    oyl_parser *p = oyl_parser_new(long_float, strlen(long_float), a);
+    if (!p) { oyl_arena_free(a); return OUT_OF_MEMORY; }
+    oyl_parser_set_schema(p, oyl_schema_goyaml2());
+    const oyl_event *e;
+    oyl_status st;
+    while ((st = oyl_parse_next(p, &e)) == OYL_OK && e->type != OYL_EVT_STREAM_END) put_event(e);
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+    return st == OYL_OK ? DONE : failed(st);
+}
+
+static outcome trees_long_float(void) {
+    oyl_arena *a = oyl_arena_new(4096);
+    if (!a) return OUT_OF_MEMORY;
+    oyl_parser *p = oyl_parser_new(long_float, strlen(long_float), a);
+    if (!p) { oyl_arena_free(a); return OUT_OF_MEMORY; }
+    oyl_parser_set_dialect(p, oyl_dialect_goyaml2());
+    oyl_tree *t = NULL;
+    oyl_status st = oyl_parse_tree(p, &t);
+    if (st == OYL_OK) {
+        uint32_t count;
+        const oyl_node *n = oyl_tree_nodes(t, &count);
+        for (uint32_t i = 0; i < count; i++)
+            if (n[i].kind == OYL_NODE_SCALAR) put_str(oyl_node_tag(t, i));
+    }
+    oyl_tree_free(t);
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+    return st == OYL_OK ? DONE : failed(st);
+}
+
 /* Looking up "1" in m walks the merges: running out of memory on the way
  * must give OYL_NO_NODE, not the int 1 that "1" spells */
 static outcome trees_costly(void) {
@@ -539,6 +578,7 @@ int main(void) {
     make_many();
     make_graph();
     make_costly();
+    snprintf(long_float, sizeof long_float, "a: 1.%070d1\n", 0);
     FILE *f = fopen(file_path, "wb");
     if (f) { fputs(RICH, f); fclose(f); }
     run("events", events_plain);
@@ -555,6 +595,8 @@ int main(void) {
     run("trees, a merge graph", trees_graph);
     run("trees, costly merges", trees_costly);
     run("trees, a long key", trees_long_key);
+    run("events, a long float", events_long_float);
+    run("trees, a long float", trees_long_float);
     run("JSON", json_core);
     run("JSON, many merges", json_many);
     run("JSON, go-yaml v2", json_k8s);

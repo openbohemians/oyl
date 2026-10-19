@@ -536,8 +536,8 @@ static uint32_t merge_items(const oyl_tree *t, uint32_t v, uint32_t *first) {
 }
 
 /* Key k as keys are compared (k a scalar, not an alias). False if its
- * value can't be read for want of memory (a long float's), which mustn't
- * make it another key: its text. */
+ * value can't be read for want of memory, which mustn't make it another
+ * key: its text. */
 static bool key_of(const oyl_tree *t, uint32_t k, oyl_key *key) {
     const oyl_node *n = &t->nodes[k];
     if (!n->props && (n->style != OYL_SCALAR_PLAIN || n->type == 0)) {   /* a string, as most keys are */

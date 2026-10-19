@@ -87,7 +87,11 @@
   `yes`/`no`/`on`/`off`/`y`/`n` booleans, `0777` octal, `0b` binary,
   underscores, timestamps, and an int beyond 64 bits as a float. Checked
   against go-yaml v2 itself on about 1.5 million generated and 55,000
-  real-world scalars, with no difference in tag or value.
+  real-world scalars, with no difference in tag or value. An explicit
+  `!!float` reads its scalar as go-yaml v2 does, as if untagged, taking an
+  int as a float (`!!float 017` is 15, `!!float 0x10` 16), and a sign may
+  follow `0b` (`0b-101` is -5, `OYL_INT_BIN_SIGN`): no difference from
+  go-yaml v2 on 240,084 explicitly tagged scalars either.
 - `OYL_TAG_TIMESTAMP`.
 - **`oyl_parse_json`**: YAML documents as JSON. With the go-yaml v2 schema
   and `OYL_JSON_KUBERNETES`, byte for byte `sigs.k8s.io/yaml`'s
@@ -110,8 +114,13 @@
   was checked on.
 - **`oyl_schema_yaml11()`**, YAML 1.1's types as PyYAML reads them, the
   usual loader on libyaml (base 60, 0-octal, yes/no/on/off booleans but
-  not y/n, timestamps), with new int and float flags for them; on 100
-  tricky scalars, every tag and value is PyYAML's.
+  not y/n, timestamps), with new int and float flags for them. An
+  explicit tag reads its scalar as PyYAML's constructor for the type does,
+  more leniently than resolution: `!!float 1` is 1.0, `!!int 0o17` 15,
+  `!!bool YeS` true, anything tagged `!!null` null. Compared with PyYAML
+  on 463,694 untagged and 160,092 tagged scalars: the same tag and value,
+  but for what PyYAML itself can't read (`0b_`) and base 60 floats of more
+  than 14 parts, whose last bits may differ.
 - **Warnings**, to a callback (`oyl_parser_set_warn`).
 - `oyl_parser_document_dialect`, `oyl_parser_yaml_version`, `OYL_TAG_VALUE`.
 
@@ -179,6 +188,19 @@
   mappings each merging an alias to a sequence of 50,000 aliases to an
   empty mapping took 57 s. The depth limit applies as merges nest. Found
   by the code review.
+- In a locale whose decimal point isn't one byte (glibc's `ps_AF`), a
+  float lost its fraction: `1.5` was 1. A float is now read in the
+  locale's terms whatever its decimal point, from a copy on the stack of
+  at most 800 significant digits (and one standing for the rest), which
+  rounds as the whole literal does: reading a float, however long, needs
+  no memory. One of 64 bytes or more was copied to the heap. JSON's
+  shortest float digits no longer depend on the locale either. Found by
+  the code review.
+- Case-insensitive words in a built schema (`OYL_MATCH_ICASE`) followed
+  the locale's case: under a Turkish locale `Inf` didn't match `inf`. They
+  ignore ASCII's case now, as documented. Found by the code review.
+- A second `%TAG` directive for the same handle in one document is an
+  error, as the spec says; the last one won. Found by the code review.
 - With merges or alias resolution on, the parser's table of anchors
   hashed their names with FNV-1a, whose collisions are cheap to make, so
   65,536 anchors named to collide took 3.2 s instead of 0.02 s. Its

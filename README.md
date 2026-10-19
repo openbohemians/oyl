@@ -408,7 +408,7 @@ the program allows:
    registered for it or else the default if it is of that version; else
    the built-in one: `1.1` with PyYAML's types (`yes` is true, `0777` is
    octal) and merge, so a document PyYAML reads gets the same values
-   (`oyl.h` has the two exceptions), `1.2` by the Core schema
+   (`oyl.h` lists the few exceptions), `1.2` by the Core schema
 3. otherwise the parser's default dialect
 
 The document picks the version, the program the dialect for each: with

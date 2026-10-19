@@ -40,6 +40,13 @@ typedef struct {
     void             *user;
 } oyl_schema_rule;
 
+/* How a schema reads an explicitly tagged scalar */
+typedef enum {
+    OYL_TAGGED_RULES,     /* by the rules bound to the tag (YAML 1.2, built schemas) */
+    OYL_TAGGED_PYYAML,    /* as PyYAML's constructors do (YAML 1.1) */
+    OYL_TAGGED_GOYAML2,   /* as go-yaml v2 does: !!float takes an int */
+} oyl_tagged;
+
 struct oyl_schema {
     const oyl_schema_rule *rules;
     int                    rule_count;
@@ -55,6 +62,9 @@ struct oyl_schema {
      * text. Every rule is tried when cand_at is NULL or cand_at[257] 0. */
     const uint16_t        *cand_at;
     const uint8_t         *cand;
+    /* how an explicit tag reads a scalar: by the rules bound to the tag, or
+     * as a preset's library does (oyl_schema.c) */
+    oyl_tagged             tagged;
 };
 
 /* ── Dialects and warnings ───────────────────────────────── */

@@ -435,6 +435,28 @@ static bool is_text(oyl_value v, const char *t) {
 
 static oyl_str tag_of(const char *t) { return (oyl_str){ t, strlen(t) }; }
 
+/* A float far longer than a stack copy: the first 800 significant digits
+ * and one for the rest round as the whole */
+static void test_long_floats(void) {
+    printf("test_long_floats:\n");
+    static char lit[2048];
+    oyl_value v;
+    /* 2^53 + 1, halfway between two doubles: to even, unless anything follows */
+    snprintf(lit, sizeof lit, "9007199254740993.");
+    ASSERT(value_of(oyl_schema_core(), lit, OYL_SCALAR_PLAIN, (oyl_str){ NULL, 0 }, &v) == OYL_OK &&
+           v.as.f == 9007199254740992.0, "halfway: to even");
+    size_t n = strlen(lit);
+    memset(lit + n, '0', 1000);
+    snprintf(lit + n + 1000, sizeof lit - n - 1000, "1");
+    ASSERT(value_of(oyl_schema_core(), lit, OYL_SCALAR_PLAIN, (oyl_str){ NULL, 0 }, &v) == OYL_OK &&
+           v.as.f == 9007199254740994.0, "a 1 a thousand digits on: up");
+    snprintf(lit, sizeof lit, "0.");
+    memset(lit + 2, '0', 1200);
+    snprintf(lit + 1202, sizeof lit - 1202, "15e1210");
+    ASSERT(value_of(oyl_schema_core(), lit, OYL_SCALAR_PLAIN, (oyl_str){ NULL, 0 }, &v) == OYL_OK &&
+           v.as.f == 15e8, "1,200 leading zeros");
+}
+
 static void test_values_core(void) {
     printf("test_values_core:\n");
     const oyl_schema *s = oyl_schema_core();
@@ -517,6 +539,7 @@ static void test_values_core(void) {
 static void test_values_goyaml2(void) {
     printf("test_values_goyaml2:\n");
     const oyl_schema *s = oyl_schema_goyaml2();
+    oyl_value v;
 
     ASSERT(is_bool(plain_value(s, "yes"), true), "yes");
     ASSERT(is_bool(plain_value(s, "On"), true), "On");
@@ -555,6 +578,29 @@ static void test_values_goyaml2(void) {
     ASSERT(str_eq(resolve_plain(s, "2001-02-29"), OYL_TAG_STR), "not a leap year");
     ASSERT(str_eq(resolve_plain(s, "2001-12-14T21:59:43"), OYL_TAG_STR), "a T needs a zone");
     ASSERT(str_eq(resolve_plain(s, "<<"), OYL_TAG_STR), "<< has no merge tag, as in go-yaml v2");
+
+    /* ParseInt takes a sign after a plain 0b (go-yaml v2's fallback) */
+    ASSERT(is_int(plain_value(s, "0b-101"), -5), "0b-101");
+    ASSERT(is_int(plain_value(s, "0b+1"), 1), "0b+1");
+    ASSERT(is_int(plain_value(s, "0_b-1"), -1), "0_b-1 (underscores gone first)");
+    ASSERT(is_text(plain_value(s, "0B-1"), "0B-1"), "not after 0B");
+    ASSERT(is_text(plain_value(s, "-0b-1"), "-0b-1"), "nor with a sign before");
+    ASSERT(is_text(plain_value(s, "0b-"), "0b-"), "a sign alone");
+    ASSERT(is_text(plain_value(s, "0b+1111111111111111111111111111111111111111111111111111111111111111"),
+                   "0b+1111111111111111111111111111111111111111111111111111111111111111"),
+           "past int64 with a +, which ParseUint refuses");
+    ASSERT(value_of(s, "0b-101", OYL_SCALAR_PLAIN, OYL_TAG_INT, &v) == OYL_OK && is_int(v, -5), "!!int 0b-101");
+
+    /* an explicit !!float reads the text as if untagged, and an int as a float */
+    ASSERT(value_of(s, "017", OYL_SCALAR_PLAIN, OYL_TAG_FLOAT, &v) == OYL_OK && is_float(v, 15.0), "!!float 017 is 15");
+    ASSERT(value_of(s, "0x10", OYL_SCALAR_PLAIN, OYL_TAG_FLOAT, &v) == OYL_OK && is_float(v, 16.0), "!!float 0x10");
+    ASSERT(value_of(s, "-0", OYL_SCALAR_PLAIN, OYL_TAG_FLOAT, &v) == OYL_OK && is_float(v, 0.0) && !signbit(v.as.f),
+           "!!float -0 is the int 0: +0");
+    ASSERT(value_of(s, "1.5e3", OYL_SCALAR_DOUBLE_QUOTED, OYL_TAG_FLOAT, &v) == OYL_OK && is_float(v, 1500.0),
+           "!!float \"1.5e3\"");
+    ASSERT(value_of(s, "18446744073709551615", OYL_SCALAR_PLAIN, OYL_TAG_FLOAT, &v) == OYL_ERR_PARSE,
+           "!!float of a uint64: go-yaml v2 can't decode it");
+    ASSERT(value_of(s, "yes", OYL_SCALAR_PLAIN, OYL_TAG_FLOAT, &v) == OYL_ERR_PARSE, "!!float yes");
 }
 
 static void test_values_yaml11(void) {
@@ -607,7 +653,64 @@ static void test_values_yaml11(void) {
     ASSERT(str_eq(resolve_plain(s, "2001-1-14"), OYL_TAG_STR), "a date alone has two-digit fields");
     ASSERT(str_eq(resolve_plain(s, "<<"), OYL_TAG_MERGE), "<< is !!merge");
     ASSERT(str_eq(resolve_plain(s, "="), OYL_TAG_VALUE), "= is !!value");
-    (void)v;
+    ASSERT(is_text(plain_value(s, "._5"), "._5"), "._5: a digit after a leading dot");
+    ASSERT(is_float(plain_value(s, "1._5"), 1.5), "1._5");
+    char sixty[512];
+    size_t n = (size_t)snprintf(sixty, sizeof sixty, "1");
+    for (int i = 0; i < 70; i++) n += (size_t)snprintf(sixty + n, sizeof sixty - n, ":0");
+    snprintf(sixty + n, sizeof sixty - n, ".5");
+    ASSERT(plain_value(s, sixty).kind == OYL_VALUE_FLOAT, "a base 60 float of 71 parts");
+
+    /* explicitly tagged, as PyYAML's constructors read them */
+    struct { const char *tag, *text; oyl_scalar_style style; int kind; double f; int64_t i; } py[] = {
+        { "float", "1", OYL_SCALAR_PLAIN, OYL_VALUE_FLOAT, 1.0, 0 },
+        { "float", "1e5", OYL_SCALAR_PLAIN, OYL_VALUE_FLOAT, 1e5, 0 },
+        { "float", "-.5", OYL_SCALAR_PLAIN, OYL_VALUE_FLOAT, -0.5, 0 },
+        { "float", "1E_+1", OYL_SCALAR_PLAIN, OYL_VALUE_FLOAT, 10.0, 0 },
+        { "float", " 2 ", OYL_SCALAR_DOUBLE_QUOTED, OYL_VALUE_FLOAT, 2.0, 0 },
+        { "float", "--1", OYL_SCALAR_PLAIN, OYL_VALUE_FLOAT, 1.0, 0 },
+        { "float", "1:30.5", OYL_SCALAR_PLAIN, OYL_VALUE_FLOAT, 90.5, 0 },
+        { "float", "Infinity", OYL_SCALAR_PLAIN, OYL_VALUE_FLOAT, INFINITY, 0 },
+        { "float", "-.INF", OYL_SCALAR_PLAIN, OYL_VALUE_FLOAT, -INFINITY, 0 },
+        { "float", "x", OYL_SCALAR_PLAIN, -1, 0, 0 },
+        { "float", "", OYL_SCALAR_PLAIN, -1, 0, 0 },
+        { "int", "0o17", OYL_SCALAR_PLAIN, OYL_VALUE_INT, 0, 15 },
+        { "int", "017", OYL_SCALAR_PLAIN, OYL_VALUE_INT, 0, 15 },
+        { "int", "0x1f", OYL_SCALAR_PLAIN, OYL_VALUE_INT, 0, 31 },
+        { "int", "0b-1", OYL_SCALAR_PLAIN, OYL_VALUE_INT, 0, -1 },
+        { "int", "-0b-1", OYL_SCALAR_PLAIN, OYL_VALUE_INT, 0, 1 },
+        { "int", "1:-1", OYL_SCALAR_PLAIN, OYL_VALUE_INT, 0, 59 },
+        { "int", " 7 ", OYL_SCALAR_SINGLE_QUOTED, OYL_VALUE_INT, 0, 7 },
+        { "int", "0X1F", OYL_SCALAR_PLAIN, -1, 0, 0 },
+        { "int", "01:30", OYL_SCALAR_PLAIN, -1, 0, 0 },
+        { "int", "-", OYL_SCALAR_PLAIN, -1, 0, 0 },
+        { "bool", "YeS", OYL_SCALAR_PLAIN, OYL_VALUE_BOOL, 0, 1 },
+        { "bool", "oFF", OYL_SCALAR_PLAIN, OYL_VALUE_BOOL, 0, 0 },
+        { "bool", "y", OYL_SCALAR_PLAIN, -1, 0, 0 },
+        { "null", "x", OYL_SCALAR_PLAIN, OYL_VALUE_NULL, 0, 0 },
+        { "timestamp", "2001-1-1", OYL_SCALAR_PLAIN, OYL_VALUE_STR, 0, 0 },
+        { "timestamp", "2001-01-01 01:02:03 +23:59", OYL_SCALAR_PLAIN, OYL_VALUE_STR, 0, 0 },
+        { "timestamp", "2001-13-01", OYL_SCALAR_PLAIN, -1, 0, 0 },
+        { "timestamp", "0000-01-01", OYL_SCALAR_PLAIN, -1, 0, 0 },
+        { "timestamp", "2001-01-01 01:02:03 +24:00", OYL_SCALAR_PLAIN, -1, 0, 0 },
+    };
+    bool ok = true;
+    for (size_t i = 0; i < sizeof py / sizeof *py; i++) {
+        char tag[64];
+        snprintf(tag, sizeof tag, "tag:yaml.org,2002:%s", py[i].tag);
+        oyl_status st = value_of(s, py[i].text, py[i].style, tag_of(tag), &v);
+        bool right = py[i].kind < 0 ? st == OYL_ERR_PARSE
+                   : st == OYL_OK && (int)v.kind == py[i].kind &&
+                     (v.kind == OYL_VALUE_FLOAT ? v.as.f == py[i].f
+                      : v.kind == OYL_VALUE_INT ? v.as.i == py[i].i
+                      : v.kind == OYL_VALUE_BOOL ? v.as.b == (py[i].i != 0) : true);
+        if (!right) printf("  (!!%s %s)\n", py[i].tag, py[i].text);
+        ok = ok && right;
+    }
+    ASSERT(ok, "tagged scalars as PyYAML constructs them");
+    ASSERT(value_of(s, "153722867280912931:3", OYL_SCALAR_PLAIN, OYL_TAG_INT, &v) == OYL_OK &&
+           is_uint(v, 9223372036854775863u), "!!int in base 60, past int64");
+    ASSERT(value_of(s, ".nan", OYL_SCALAR_PLAIN, OYL_TAG_FLOAT, &v) == OYL_OK && isnan(v.as.f), "!!float .nan");
 }
 
 /* !!int redefined: Roman numerals made of I, V and X */
@@ -729,6 +832,7 @@ static void test_values_from_parser(void) {
 /* ── Main ────────────────────────────────────────────────── */
 
 int main(void) {
+    test_long_floats();
     test_failsafe();
     test_json();
     test_core();

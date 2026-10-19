@@ -353,6 +353,8 @@ enum {
     OYL_INT_DIGIT_UNDERSCORE = 1 << 9,  /**< underscores after the first digit or a prefix:
                                              1_000, 0x_1F (YAML 1.1) */
     OYL_INT_BASE60       = 1 << 10, /**< 1:20 is 80, 190:20:30 is 685230 (YAML 1.1) */
+    OYL_INT_BIN_SIGN     = 1 << 11, /**< a sign after a lowercase 0b with none before it:
+                                         0b-101 is -5 (go-yaml v2) */
     /** The Core schema's ints (with a sign also allowed before 0x or 0o) */
     OYL_INT_CORE = OYL_INT_SIGN | OYL_INT_HEX | OYL_INT_OCT | OYL_INT_SIGN_PREFIX,
     /** YAML 1.1's ints (yaml.org/type/int) */
@@ -397,9 +399,10 @@ OYL_API void    oyl_schema_builder_add_type(oyl_schema_builder *b, oyl_str tag,
 /** The value of a scalar event. An untagged scalar (no schema on the
  *  parser) is resolved first; a tagged one is parsed by its tag's rules.
  *  Returns OYL_ERR_PARSE when none of them accepts it, as for
- *  @c !!int "abc", OYL_ERR_MEMORY if a long float can't be copied, and
- *  OYL_ERR_INPUT if @p scalar isn't a scalar event. A tag with no rules
- *  (!!str, !foo) gives the text. */
+ *  @c !!int "abc", and OYL_ERR_INPUT if @p scalar isn't a scalar event. A
+ *  tag with no rules (!!str, !foo) gives the text. YAML 1.1's and go-yaml
+ *  v2's schemas read a tagged scalar as their libraries do (see them).
+ *  Floats are read alike in any locale, and need no memory. */
 OYL_API oyl_status oyl_schema_value(const oyl_schema *schema, const oyl_event *scalar,
                                     oyl_value *out);
 
@@ -412,13 +415,18 @@ OYL_API oyl_status oyl_schema_value_of(const oyl_schema *schema, oyl_str text,
 /** YAML 1.1's types as PyYAML reads them, PyYAML being the usual loader
  *  on libyaml: yes/no/on/off booleans (not y/n, which yaml.org/type also
  *  lists), 0b binary, 0-octal, base 60, underscores, floats with a dot
- *  (.5, but not -.5), timestamps, << as !!merge and = as !!value. */
+ *  (.5, but not -.5), timestamps, << as !!merge and = as !!value. An
+ *  explicit tag reads its scalar as PyYAML's constructor for the type
+ *  does, more leniently than resolution: !!float 1 is 1.0, !!int 0o17 is
+ *  15, !!bool YeS is true, and anything tagged !!null is null. */
 OYL_API const oyl_schema *oyl_schema_yaml11(void);
 
 /** go-yaml v2's types, as Kubernetes reads YAML: yes/no/on/off and y/n
- *  booleans, 0777 octal, 0b binary, underscores in numbers, an int beyond
- *  64 bits as a float, timestamps. Like go-yaml v2 it gives << no merge
- *  tag; merge keys are the parser's option (oyl_parser_set_merge). */
+ *  booleans, 0777 octal, 0b binary (0b-101 too), underscores in numbers,
+ *  an int beyond 64 bits as a float, timestamps. An explicit !!float
+ *  reads its scalar as if untagged and takes an int as a float, as
+ *  go-yaml v2 does (!!float 017 is 15). Like go-yaml v2 it gives << no
+ *  merge tag; merge keys are the parser's option (oyl_parser_set_merge). */
 OYL_API const oyl_schema *oyl_schema_goyaml2(void);
 
 /** The tag YAML gives timestamps. */
@@ -561,9 +569,11 @@ OYL_API void              oyl_dialect_version(const oyl_dialect *d, int *major, 
 /** YAML 1.2: the Core schema, YAML 1.2's syntax, YAML's merge. */
 OYL_API const oyl_dialect *oyl_dialect_yaml12(void);
 /** YAML 1.1 with PyYAML's types (oyl_schema_yaml11) and YAML's merge: a
- *  document PyYAML reads gets the same values. Two exceptions: ints
- *  beyond 64 bits are text, and keys are equal as YAML has them, by tag
- *  and value, where Python's == also makes 1, 1.0 and true one key. The
+ *  document PyYAML reads gets the same values. The exceptions: ints
+ *  beyond 64 bits are text; keys are equal as YAML has them, by tag and
+ *  value, where Python's == also makes 1, 1.0 and true one key, and two
+ *  timestamps of one instant written otherwise one key; and a base 60
+ *  float of more than 14 parts may differ in its last bits. The
  *  syntax is YAML 1.2's,
  *  but a block scalar ending the input gets no final line feed, as in
  *  libyaml. Malformed YAML that libyaml lets through stays an error, such
@@ -783,8 +793,8 @@ OYL_API uint32_t oyl_node_target(const oyl_tree *t, uint32_t i);
  *  value; << merges apply in the order of the document's dialect. A <<
  *  whose value can't be merged (not a mapping, an alias to one, or a
  *  sequence of those, which YAML's merge also takes through an alias) is
- *  an ordinary key. OYL_NO_NODE also if memory runs out: walking merges
- *  too costly to work out, or reading a key's value (a long float's). */
+ *  an ordinary key. OYL_NO_NODE also if memory runs out walking merges
+ *  too costly to work out. */
 OYL_API uint32_t oyl_node_get(const oyl_tree *t, uint32_t map, oyl_str key);
 
 /** As oyl_node_get(), for the key equal to @p key: a scalar of its kind's

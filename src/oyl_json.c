@@ -14,7 +14,6 @@
  */
 
 #include "oyl_internal.h"
-#include <locale.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -169,17 +168,13 @@ static bool contains_itself(const doc *d, uint32_t i) {
 
 /* ── Go's number formatting ──────────────────────────────── */
 
-/* Does d1.d2...dn × 10^e read back as `a` (or as its float32)? */
-static bool reads_back(const char *digits, int n, int e, double a, bool single, char point) {
+/* Does d1.d2...dn × 10^e read back as `a` (or as its float32)? Written
+ * d1d2...dn × 10^(e - n + 1), with no decimal point, which would be the
+ * locale's */
+static bool reads_back(const char *digits, int n, int e, double a, bool single) {
     char s[48];
-    int k = 0;
-    s[k++] = digits[0];
-    if (n > 1) {
-        s[k++] = point;
-        memcpy(s + k, digits + 1, (size_t)n - 1);
-        k += n - 1;
-    }
-    snprintf(s + k, sizeof s - (size_t)k, "e%d", e);
+    memcpy(s, digits, (size_t)n);
+    snprintf(s + n, sizeof s - (size_t)n, "e%d", e - n + 1);
     return single ? strtof(s, NULL) == (float)a : strtod(s, NULL) == a;
 }
 
@@ -210,7 +205,6 @@ static void neighbor(const char *digits, int n, int dir, char *out, int *e) {
  * strconv finds them: the closest of that length. Returns their count;
  * `a` = d1.d2... × 10^*e. Under `single`, for a's float32. */
 static int shortest_digits(double a, bool single, char *digits, int *e) {
-    char point = *localeconv()->decimal_point;
     double x = single ? (double)(float)a : a;
     *e = 0;
     for (int n = 1; n <= 17; n++) {
@@ -223,15 +217,15 @@ static int shortest_digits(double a, bool single, char *digits, int *e) {
         }
         int ex = buf[j] == 'e' ? atoi(buf + j + 1) : 0;
         *e = ex;
-        if (reads_back(digits, n, ex, a, single, point)) return n;
+        if (reads_back(digits, n, ex, a, single)) return n;
         /* the nearest n digits can miss on the narrow side of the interval
          * that reads back (next to a power of two), where a neighbor fits */
         char up[24], down[24];
         int eu = ex, ed = ex;
         neighbor(digits, n, 1, up, &eu);
         neighbor(digits, n, -1, down, &ed);
-        bool u = reads_back(up, n, eu, a, single, point);
-        bool dn = reads_back(down, n, ed, a, single, point);
+        bool u = reads_back(up, n, eu, a, single);
+        bool dn = reads_back(down, n, ed, a, single);
         if (u || dn) {
             bool take_up = u;
             if (u && dn) {   /* both: the closer */

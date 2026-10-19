@@ -277,7 +277,7 @@ oyl_str tag = oyl_schema_resolve(oyl_schema_core(), OYL_STR_LIT("42"),
 | `oyl_schema_failsafe()` | Everything is `!!str` / `!!seq` / `!!map`. |
 | `oyl_schema_json()` | `null`, `true`/`false`, integers, floats. |
 | `oyl_schema_core()` | JSON + `Null`/`NULL`/`~`, `True`/`TRUE`, `0x`/`0o` ints. |
-| `oyl_schema_goyaml2()` | go-yaml v2's types, as Kubernetes reads YAML: `yes`/`no`/`on`/`off`/`y`/`n` booleans, `0777` octal, `0b` binary, underscores in numbers, an int beyond 64 bits as a float, timestamps. |
+| `oyl_schema_goyaml2()` | go-yaml v2's types, as Kubernetes reads YAML: `yes`/`no`/`on`/`off`/`y`/`n` booleans, `0777` octal, `0b` binary (`0b-101` too), underscores in numbers, an int beyond 64 bits as a float, timestamps; an explicit `!!float` takes an int, as in go-yaml v2 (`!!float 017` is 15). |
 
 The JSON preset shares Core's number rules, so it accepts more than YAML
 1.2's JSON schema (`+1`, `01`, `0x1F`, `.inf`), and other plain scalars

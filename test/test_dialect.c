@@ -121,6 +121,17 @@ static void test_version(void) {
     ASSERT(oyl_parser_document_dialect(p) == oyl_dialect_goyaml2(), "the document's dialect");
     oyl_parser_free(p);
     oyl_arena_free(a);
+
+    /* a minor version of any length, up to an int's */
+    a = oyl_arena_new(4096);
+    y = "%YAML 1.1234567\n---\nv: 1\n";
+    p = oyl_parser_new(y, strlen(y), a);
+    has = false;
+    while (oyl_parse_next(p, &e) == OYL_OK && e->type != OYL_EVT_STREAM_END)
+        if (e->type == OYL_EVT_DOC_START) has = oyl_parser_yaml_version(p, &major, &minor);
+    ASSERT(has && major == 1 && minor == 1234567, "%YAML 1.1234567 is 1.1234567");
+    oyl_parser_free(p);
+    oyl_arena_free(a);
 }
 
 /* ── The document picks the version, the program the dialect ── */
@@ -260,6 +271,16 @@ static void test_tag_prefix(void) {
     memset(&w, 0, sizeof w);
     st = scalars("%TAG !! tag:yaml.org,2002:\n---\nv: 1\n", with_acme, false, &w, got, sizeof got);
     ASSERT(st == OYL_OK && w.total == 0, "the standard prefix: no warning");
+
+    /* the spec: one %TAG per handle in a document, even with the same prefix */
+    st = scalars("%TAG !! tag:other.org,2026:\n%TAG !! tag:acme.com,2026:\n---\nv: 1.2.3\n", with_acme, false,
+                 NULL, got, sizeof got);
+    ASSERT(st == OYL_ERR_PARSE, "%TAG !! twice: an error");
+    st = scalars("%TAG !e! tag:e:\n%TAG !e! tag:e:\n---\nv: 1\n", NULL, false, NULL, got, sizeof got);
+    ASSERT(st == OYL_ERR_PARSE, "!e! twice, the same prefix: an error");
+    st = scalars("%TAG !e! tag:e:\n---\nv: 1\n...\n%TAG !e! tag:f:\n---\nw: 2\n", NULL, false, NULL, got,
+                 sizeof got);
+    ASSERT(st == OYL_OK, "once in each of two documents: fine");
 
     /* registration errors */
     oyl_arena *a = oyl_arena_new(4096);
