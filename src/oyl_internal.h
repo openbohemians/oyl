@@ -240,7 +240,16 @@ struct oyl_tree {
     oyl_merge_order    merge;
     bool               implicit_start, implicit_end;   /* no "---", no "..." */
     oyl_dialect        own_dialect;   /* a copy of a dialect the parser owned */
+    struct oyl_merges *merges;      /* the pairs of mappings that merge, worked out
+                                       as the tree is built (oyl_tree.c); NULL: none */
+    bool               merges_costly; /* too costly to work out: lookups walk them */
 };
+
+/* A tree as written, its merges not worked out (oyl_json.c works out its
+ * own) */
+oyl_status oyl_parse_tree_as_written(oyl_parser *p, oyl_tree **tree);
+/* For tests: forget tree t's merges worked out, as if too costly */
+void       oyl_tree_forget_merges(oyl_tree *t);
 
 /* A scalar's or alias's text */
 static inline oyl_str oyl_tree_text(const oyl_tree *t, const oyl_node *n) {

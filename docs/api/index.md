@@ -558,10 +558,16 @@ through an alias; or the mapping itself) is an ordinary key.
 order keys first appear. Collection keys are all kept.
 `OYL_ENTRIES_STRICT` makes a key written twice an error, as YAML has it
 (`OYL_ERR_PARSE`, with `*n` the first key written again): `true` and
-`True` are a repeat, `1` and `"1"` aren't. Lookups visit each mapping
-merged once, however the merges nest (a chain of anchors each merging the
-one before twice has 2^n paths to its start), so one costs at most the
-size of the tree.
+`True` are a repeat, `1` and `"1"` aren't.
+
+The merges are worked out as the tree is built, each mapping's pairs from
+those of the mappings it merges directly, so each mapping merged is worked
+out once however the merges nest (a chain of anchors each merging the one
+before twice has 2^n paths to its start), and reading a mapping costs its
+pairs. The work is bounded as the parser's merges for events are with
+`max_events` off. Past the bound nothing is kept: `oyl_node_entries` gives
+`OYL_ERR_LIMIT` for a mapping that merges, and `oyl_node_get` walks the
+merges, visiting each mapping once, at most the size of the tree.
 
 An alias may refer to a collection that contains it (YAML allows cycles):
 code that expands aliases has to check (`target <= i < target + span`).

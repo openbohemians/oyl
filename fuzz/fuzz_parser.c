@@ -19,8 +19,9 @@
  *    input parses, or on any field of any event, marks included;
  *  - a document's tree, walked in node order, doesn't give the parser's
  *    events (kinds, text, styles, tags, anchors, marks), its structure is
- *    inconsistent, its typed values differ from the schema's, or its
- *    lookups disagree with its mappings' entries.
+ *    inconsistent, its typed values differ from the schema's, its
+ *    lookups disagree with its mappings' entries, or its lookups with the
+ *    merges worked out disagree with those walking them.
  *
  * Build (via `just fuzz`):
  *   clang -fsanitize=fuzzer,address,undefined -g -O1 -Iinclude \
@@ -43,6 +44,10 @@
 #include <string.h>
 
 #define MAX_EVENTS 10000
+
+/* oyl_internal.h: forget a tree's merges worked out, as if too costly, so
+ * lookups walk them */
+void oyl_tree_forget_merges(oyl_tree *t);
 
 /* Append a canonical form of one event (see test_yaml_suite.c). */
 static void canon(const oyl_event *e, char **buf, size_t *len, size_t *cap) {
@@ -280,7 +285,29 @@ static const oyl_event *next_event(oyl_parser *p, oyl_emitter *em, oyl_status *s
 
 /* One tree against the events of its document, read from `pe` and
  * emitted to `ee` */
-static void check_one_tree(oyl_parser *pe, oyl_emitter *ee, oyl_status *est, const oyl_tree *t,
+/* Every key written (the first 256) looked up in the first 64 mappings,
+ * by text and by value */
+static size_t lookup_all(const oyl_tree *t, uint32_t *out) {
+    uint32_t count;
+    const oyl_node *n = oyl_tree_nodes(t, &count);
+    size_t o = 0;
+    int maps = 0;
+    for (uint32_t i = 0; i < count && maps < 64; i++) {
+        if (n[i].kind != OYL_NODE_MAPPING) continue;
+        maps++;
+        int keys = 0;
+        for (uint32_t k = 0; k < count && keys < 256; k++) {
+            if (n[k].kind != OYL_NODE_SCALAR || !(n[k].flags & OYL_NODE_KEY)) continue;
+            keys++;
+            oyl_value v;
+            out[o++] = oyl_node_get(t, i, oyl_node_text(t, k));
+            out[o++] = oyl_node_value(t, k, &v) == OYL_OK ? oyl_node_get_value(t, i, &v) : 0;
+        }
+    }
+    return o;
+}
+
+static void check_one_tree(oyl_parser *pe, oyl_emitter *ee, oyl_status *est, oyl_tree *t,
                            const char *yaml, size_t len, bool lines, oyl_arena *a) {
     uint32_t count;
     const oyl_node *n = oyl_tree_nodes(t, &count);
@@ -351,7 +378,7 @@ static void check_one_tree(oyl_parser *pe, oyl_emitter *ee, oyl_status *est, con
         size_t np;
         oyl_status st = oyl_node_entries(t, i, (i & 1) ? OYL_ENTRIES_STRICT : 0, a, &pairs, &np);
         if (st == OYL_ERR_PARSE && (i & 1)) continue;
-        if (st != OYL_OK) __builtin_trap();   /* merges have no limit: each mapping is visited once */
+        if (st != OYL_OK) __builtin_trap();   /* the merges' bound is far beyond a fuzz input's */
         /* a string key's text finds its value, as does a key's value when
          * its tag is its kind's; any key's text finds one of the entries */
         for (size_t j = 0; j < np && j < 256; j++) {
@@ -374,6 +401,11 @@ static void check_one_tree(oyl_parser *pe, oyl_emitter *ee, oyl_status *est, con
             }
         }
     }
+    /* the keys found with the merges worked out are those found walking them */
+    static uint32_t worked[64 * 256 * 2], walked[64 * 256 * 2];
+    size_t nl = lookup_all(t, worked);
+    oyl_tree_forget_merges(t);
+    if (lookup_all(t, walked) != nl || memcmp(worked, walked, nl * sizeof *worked) != 0) __builtin_trap();
     (void)yaml; (void)len;
 }
 

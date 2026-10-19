@@ -743,7 +743,7 @@ static void test_errors(void) {
     ASSERT(x.st == OYL_ERR_LIMIT && x.t == NULL, "its depth limit");
     unload(&x);
 
-    /* merges nested deep: each mapping is visited once, without recursing */
+    /* merges nested deep: each mapping's worked out once, without recursing */
     size_t cap = 1 << 20, len = 0;
     char *deep = malloc(cap);
     len += (size_t)snprintf(deep + len, cap - len, "m0: &m0 {k: v}\n");
@@ -789,6 +789,123 @@ static void test_errors(void) {
     free(deep);
 }
 
+/* For tests (oyl_internal.h): forget a tree's merges worked out, as if
+ * too costly, so lookups walk them */
+void oyl_tree_forget_merges(oyl_tree *t);
+
+/* Every mapping's entries, all of them */
+static size_t all_entries(const doc *x, oyl_status *st) {
+    oyl_arena *a = oyl_arena_new(1 << 16);
+    size_t total = 0;
+    *st = OYL_OK;
+    for (uint32_t m = 0; m < x->count && *st == OYL_OK; m++) {
+        if (x->n[m].kind != OYL_NODE_MAPPING) continue;
+        const oyl_pair *pairs;
+        size_t n;
+        *st = oyl_node_entries(x->t, m, 0, a, &pairs, &n);
+        total += n;
+    }
+    oyl_arena_free(a);
+    return total;
+}
+
+static doc load_big(const char *yaml, size_t len) {
+    doc x = { .a = oyl_arena_new(4096) };
+    x.p = oyl_parser_new(yaml, len, x.a);
+    oyl_parser_set_max_events(x.p, 0);
+    x.st = oyl_parse_tree(x.p, &x.t);
+    x.n = oyl_tree_nodes(x.t, &x.count);
+    return x;
+}
+
+/* Every key written in the document, looked up by text in every mapping */
+static void lookups(const doc *x, uint32_t *out) {
+    size_t i = 0;
+    for (uint32_t m = 0; m < x->count; m++)
+        if (x->n[m].kind == OYL_NODE_MAPPING)
+            for (uint32_t k = 0; k < x->count; k++)
+                if (x->n[k].kind == OYL_NODE_SCALAR && (x->n[k].flags & OYL_NODE_KEY))
+                    out[i++] = oyl_node_get(x->t, m, oyl_node_text(x->t, k));
+}
+
+static bool lookups_walk_alike(const char *yaml, const oyl_dialect *d) {
+    doc x = load_with(yaml, d);
+    size_t n = (size_t)x.count * x.count;
+    uint32_t *worked = calloc(n, sizeof *worked), *walked = calloc(n, sizeof *walked);
+    lookups(&x, worked);
+    oyl_tree_forget_merges(x.t);
+    lookups(&x, walked);
+    bool alike = memcmp(worked, walked, n * sizeof *worked) == 0;
+    free(worked);
+    free(walked);
+    unload(&x);
+    return alike;
+}
+
+static void test_worked_out(void) {
+    printf("test_worked_out:\n");
+    /* a key overridden, spelled otherwise, is found by its text */
+    const char *spelled = "a: &a {0x1: a, 01: b, k: c}\nb: &b {<<: *a, 1: d}\nc: {<<: *b, k: e}\n";
+    doc x = load(spelled);
+    ASSERT(str_is(text_at(&x, "b.0x1"), "d") && str_is(text_at(&x, "c.0x1"), "d"), "0x1 is the 1 written");
+    ASSERT(str_is(text_at(&x, "c.01"), "d"), "and 01");
+    check_entries(&x, "c", 0, "1=d k=e");
+    unload(&x);
+    ASSERT(lookups_walk_alike(spelled, NULL), "found as the walk finds them");
+
+    /* a key written twice: in the mapping an error, merged none */
+    x = load("a: &a {k: 1, k: 2}\nb: {<<: *a, j: 1, j: 2}\nc: {<<: *a}\nd: {<<: [*a, *a], i: 1}\n");
+    check_entries(&x, "a", OYL_ENTRIES_STRICT, "ERROR 4 at 5");
+    check_entries(&x, "b", OYL_ENTRIES_STRICT, "ERROR 4 at 13");
+    check_entries(&x, "c", OYL_ENTRIES_STRICT, "k=2");
+    check_entries(&x, "d", OYL_ENTRIES_STRICT, "k=2 i=1");
+    unload(&x);
+
+    /* the same pairs, merged through two mappings */
+    x = load("a: &a {k: 1}\nb: &b {<<: *a}\nc: &c {<<: [*b, *a], j: 2}\nd: {<<: [*c, *b], k: 3}\n");
+    check_entries(&x, "b", 0, "k=1");
+    check_entries(&x, "c", 0, "k=1 j=2");
+    check_entries(&x, "d", 0, "k=3 j=2");
+    unload(&x);
+
+    const char *docs[] = { MERGES, MORE_MERGES, KEYS, spelled };
+    for (size_t i = 0; i < sizeof docs / sizeof *docs; i++) {
+        ASSERT(lookups_walk_alike(docs[i], NULL), "lookups worked out and walked agree (YAML's merge)");
+        ASSERT(lookups_walk_alike(docs[i], oyl_dialect_goyaml2()), "lookups agree (go-yaml v2's)");
+    }
+
+    /* each mapping merging the one before twice, 100,000 deep: worked out
+     * once each, every mapping's entries cost theirs */
+    size_t cap = 8 << 20, len = 0;
+    char *big = malloc(cap);
+    len += (size_t)snprintf(big + len, cap - len, "m0: &m0 {k: v}\n");
+    for (int i = 1; i <= 100000; i++)
+        len += (size_t)snprintf(big + len, cap - len, "m%d: &m%d {<<: [*m%d, *m%d]%s}\n", i, i, i - 1,
+                                i - 1, i % 2 ? ", k: w" : "");
+    x = load_big(big, len);
+    oyl_status st;
+    size_t total = all_entries(&x, &st);
+    ASSERT(x.st == OYL_OK && st == OYL_OK && total == 200002, "every mapping's entries");
+    ASSERT(str_is(text_at(&x, "m100000.k"), "w") && str_is(text_at(&x, "m99998.k"), "w"), "a lookup");
+    unload(&x);
+
+    /* merges too costly to work out (each mapping's pairs those before and
+     * one more: 12 million): entries give OYL_ERR_LIMIT for a mapping that
+     * merges, lookups walk the merges */
+    len = 0;
+    len += (size_t)snprintf(big + len, cap - len, "m0: &m0 {k0: v}\n");
+    for (int i = 1; i <= 5000; i++)
+        len += (size_t)snprintf(big + len, cap - len, "m%d: &m%d {<<: *m%d, k%d: v}\n", i, i, i - 1, i);
+    x = load_big(big, len);
+    ASSERT(x.st == OYL_OK, "parses");
+    ASSERT(entries_status(&x, "m5000", 0) == OYL_ERR_LIMIT, "entries of a mapping that merges: too costly");
+    ASSERT(entries_status(&x, "m0", 0) == OYL_OK, "but not of one that doesn't");
+    ASSERT(str_is(text_at(&x, "m5000.k1"), "v") && str_is(text_at(&x, "m5000.nope"), "<none>"),
+           "a lookup walks the merges");
+    unload(&x);
+    free(big);
+}
+
 int main(void) {
     test_structure();
     test_text();
@@ -801,6 +918,7 @@ int main(void) {
     test_documents();
     test_emit();
     test_errors();
+    test_worked_out();
     printf("\n--- Tree tests: %d / %d passed ---\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;
 }

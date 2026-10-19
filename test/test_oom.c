@@ -141,6 +141,28 @@ static void make_many(void) {
     snprintf(many + n, sizeof many - n, "r: [*a0, *a1, *a2]\n");
 }
 
+/* Merges worked out as a tree is built: keys merged spelled otherwise
+ * than the key overriding them, a mapping only merging another's pairs,
+ * the same pairs merged through two mappings, a mapping merged from
+ * inside the one merging it, and more keys than the tables first hold */
+static char graph[16384];
+
+static void make_graph(void) {
+    size_t n = 0;
+    n += (size_t)snprintf(graph + n, sizeof graph - n,
+                          "a: &a {0x1: a, 01: b, k: c, k: d}\n"
+                          "b: &b {<<: *a}\n"
+                          "c: &c {<<: [*b, *a], 1: e, in: &in {<<: *b, j: f}, <<: *in}\n"
+                          "s: &s [*a, *c]\n"
+                          "d: {<<: *s, z: 1}\n"
+                          "w: &w {");
+    for (int i = 0; i < 40; i++) n += (size_t)snprintf(graph + n, sizeof graph - n, "%sw%d: %d", i ? ", " : "", i, i);
+    n += (size_t)snprintf(graph + n, sizeof graph - n, "}\nd0: &d0 {<<: *w, q: 0}\n");
+    for (int i = 1; i <= 20; i++)
+        n += (size_t)snprintf(graph + n, sizeof graph - n, "d%d: &d%d {<<: [*d%d, *d%d, *c], q: %d, 0x%x: x}\n",
+                              i, i, i - 1, i - 1, i, i);
+}
+
 /* ── Scenarios ───────────────────────────────────────────── */
 
 static void put_event(const oyl_event *e) {
@@ -216,6 +238,9 @@ static outcome trees(const char *yaml) {
                 st = oyl_node_entries(t, i, 0, a, &pairs, &np);
                 for (size_t j = 0; st == OYL_OK && j < np; j++)
                     put("(%u:%u)", pairs[j].key, pairs[j].value);
+                for (uint32_t k = 0; st == OYL_OK && k < count; k++)   /* each key by its text */
+                    if (n[k].kind == OYL_NODE_SCALAR && (n[k].flags & OYL_NODE_KEY))
+                        put("[%u]", oyl_node_get(t, i, oyl_node_text(t, k)));
             } else if (n[i].kind == OYL_NODE_SCALAR) {
                 oyl_value v;
                 if (oyl_node_value(t, i, &v) == OYL_OK) put("<%d>", v.kind);
@@ -240,6 +265,7 @@ static outcome trees_rich(void) { return trees(RICH); }
 static outcome trees_stream(void) { return trees(stream); }
 static outcome trees_deep(void) { return trees(deep); }
 static outcome trees_many(void) { return trees(many); }
+static outcome trees_graph(void) { return trees(graph); }
 
 static outcome json(const char *yaml, unsigned flags) {
     oyl_arena *a = oyl_arena_new(4096);
@@ -432,6 +458,7 @@ int main(void) {
     make_stream();
     make_deep();
     make_many();
+    make_graph();
     FILE *f = fopen(file_path, "wb");
     if (f) { fputs(RICH, f); fclose(f); }
     run("events", events_plain);
@@ -445,6 +472,7 @@ int main(void) {
     run("trees, a stream", trees_stream);
     run("trees, deep", trees_deep);
     run("trees, many merges", trees_many);
+    run("trees, a merge graph", trees_graph);
     run("JSON", json_core);
     run("JSON, many merges", json_many);
     run("JSON, go-yaml v2", json_k8s);

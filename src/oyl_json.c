@@ -1019,7 +1019,7 @@ oyl_status oyl_parse_json(oyl_parser *p, const oyl_schema *schema, unsigned flag
         free(d.keys.data);
         return OYL_ERR_MEMORY;
     }
-    oyl_status st = oyl_parse_tree(p, &d.t);
+    oyl_status st = oyl_parse_tree_as_written(p, &d.t);
     if (st == OYL_OK && d.t) {
         uint32_t count;
         d.n = oyl_tree_nodes(d.t, &count);

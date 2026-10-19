@@ -17,9 +17,12 @@
   `OYL_ENTRIES_STRICT` reports a repeat by the same rule, the first in
   the document. `oyl_node_get`
   takes a key's text (the string, else the key so written: `"80"` finds
-  `80`), `oyl_node_get_value` its value. Lookups visit each mapping
-  merged once, however the merges nest, so one costs at most the size of
-  the tree. Every valid YAML Test Suite case's tree replays the parser's
+  `80`), `oyl_node_get_value` its value. The merges are worked out as the
+  tree is built, each mapping merged once however the merges nest, so
+  reading a mapping costs its pairs; past the parser's bound on merges for
+  events, `oyl_node_entries` gives `OYL_ERR_LIMIT` for a mapping that
+  merges and `oyl_node_get` walks the merges, at most the size of the
+  tree. Every valid YAML Test Suite case's tree replays the parser's
   events exactly, and the fuzzer checks the same.
 - `oyl_schema_value_of` gives a scalar's value from its parts (text,
   style, tag), as `oyl_schema_value` does from an event: for bindings,

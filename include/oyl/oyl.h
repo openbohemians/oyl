@@ -663,8 +663,12 @@ OYL_API oyl_status oyl_parse_json(oyl_parser *p, const oyl_schema *schema,
  * arrays whole or read them in place. A finished tree is read-only, and
  * threads may share it. Aliases and << merge keys stay as written:
  * lookups follow aliases and apply merges in the order of the document's
- * dialect, visiting each mapping merged once, however the merges nest, so
- * a lookup costs at most the size of the tree. */
+ * dialect. The merges are worked out as the tree is built, each mapping
+ * merged once however the merges nest, so reading a mapping costs its
+ * pairs. That work is bounded as the parser's merges for events are;
+ * past the bound nothing is kept: oyl_node_entries gives OYL_ERR_LIMIT
+ * for a mapping that merges, and oyl_node_get walks the merges, visiting
+ * each mapping once, at most the size of the tree. */
 
 typedef struct oyl_tree oyl_tree;
 
@@ -724,8 +728,9 @@ typedef struct {
  *  the input, and a schema or dialect given to the parser, must outlive
  *  it, but the parser need not. The parser's settings apply (dialects,
  *  limits, warnings); leave its merge and alias resolution off. Errors
- *  (the parser's, an alias to an unknown anchor, a document over 4 GB) are
- *  reported by oyl_parser_error() and oyl_parser_error_mark(). */
+ *  (the parser's, an alias to an unknown anchor, a document over 4 GB,
+ *  memory running out working out merges) are reported by
+ *  oyl_parser_error() and oyl_parser_error_mark(). */
 OYL_API oyl_status oyl_parse_tree(oyl_parser *p, oyl_tree **tree);
 
 /** Free a tree. */
@@ -778,8 +783,8 @@ OYL_API uint32_t oyl_node_target(const oyl_tree *t, uint32_t i);
  *  value; << merges apply in the order of the document's dialect. A <<
  *  whose value can't be merged (not a mapping, an alias to one, or a
  *  sequence of those, which YAML's merge also takes through an alias) is
- *  an ordinary key. OYL_NO_NODE also if memory runs out on the mappings
- *  merged. */
+ *  an ordinary key. OYL_NO_NODE also if memory runs out walking merges
+ *  too costly to work out. */
 OYL_API uint32_t oyl_node_get(const oyl_tree *t, uint32_t map, oyl_str key);
 
 /** As oyl_node_get(), for the key equal to @p key: a scalar of its kind's
@@ -801,8 +806,9 @@ enum {
  *  values are (YAML 1.2.2 §3.2.1.3), so 1 and "1" are two keys and 0x1
  *  and 1 one; collection keys are all kept. Returns OYL_ERR_PARSE under
  *  OYL_ENTRIES_STRICT for a repeated key, the error YAML makes it, with
- *  @p *n the first key written again; OYL_ERR_MEMORY; OYL_ERR_INPUT if
- *  @p map isn't a mapping. */
+ *  @p *n the first key written again; OYL_ERR_LIMIT if @p map merges and
+ *  the document's merges were too costly to work out; OYL_ERR_MEMORY;
+ *  OYL_ERR_INPUT if @p map isn't a mapping. */
 OYL_API oyl_status oyl_node_entries(const oyl_tree *t, uint32_t map, unsigned flags,
                                     oyl_arena *a, const oyl_pair **pairs, size_t *n);
 

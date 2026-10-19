@@ -490,7 +490,9 @@ pool. So a binding can copy a tree's arrays whole, or read them in place.
 Each plain scalar is typed while the tree is built, by the document's
 dialect. Aliases and `<<` merge keys stay as written: `oyl_node_get`
 follows aliases and applies merges in the dialect's order, and
-`oyl_node_entries` gives a mapping's pairs with merges applied. Keys are
+`oyl_node_entries` gives a mapping's pairs with merges applied. The
+merges are worked out once as the tree is built, so reading a mapping
+costs only its pairs, however the merges nest. Keys are
 equal as YAML compares them, by tag and value: `0x50` and `80` are one
 key, `80` and `"80"` two. `oyl_node_get` takes a key's text (`"80"`
 finds the string, else `80`), `oyl_node_get_value` its value. A finished
