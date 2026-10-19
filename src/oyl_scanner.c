@@ -1641,15 +1641,17 @@ oyl_mark oyl_scanner_error_mark(oyl_scanner *s) {
     return s->error_mark;
 }
 
-/* Copy src's state into dst, a scanner over the same input: a checkpoint
- * the parser can rewind to. dst keeps its own stack buffers, growing them
- * as needed; if one can't grow, dst's state is unchanged and this returns
- * false. */
+/* Set the document's syntax leniencies (OYL_SYNTAX_), and where to warn
+ * when one changes the result */
 void oyl_scanner_set_syntax(oyl_scanner *s, unsigned syntax, oyl_warn_state *w) {
     s->syntax = syntax;
     s->warn = w;
 }
 
+/* Copy src's state into dst, a scanner over the same input: a checkpoint
+ * the parser can rewind to. dst keeps its own stack buffers, growing them
+ * as needed; if one can't grow, dst's state is unchanged and this returns
+ * false. */
 bool oyl_scanner_copy(oyl_scanner *dst, const oyl_scanner *src) {
     if (dst->indents.cap < src->indents.len) {
         ptrdiff_t *d = realloc(dst->indents.data, (size_t)src->indents.cap * sizeof *d);

@@ -110,14 +110,17 @@ test-install: test-install-arch test-install-deb test-install-rpm
 # Fuzz the parser with libFuzzer + ASAN + UBSAN for N seconds (default 60)
 fuzz duration='60':
     #!/usr/bin/env bash
-    # Each crash/oom finding is written to fuzz/crashes/ for inspection;
-    # libFuzzer accumulates an interesting-input corpus under fuzz/corpus/.
-    # Both dirs are gitignored. Replay a finding with: ./build/fuzz_parser path
+    # Each crash/oom/timeout finding is written to fuzz/crashes/ for
+    # inspection; libFuzzer accumulates an interesting-input corpus under
+    # fuzz/corpus/. Both dirs are gitignored. Replay a finding with:
+    # ./build/fuzz_parser path. An input taking over 10 s is a finding: work
+    # that grows too fast on some input (libFuzzer's default allows 20 min).
     set -euo pipefail
     mkdir -p fuzz/corpus fuzz/crashes
     make build/fuzz_parser
     ./build/fuzz_parser \
         -max_total_time={{duration}} \
+        -timeout=10 \
         -artifact_prefix=fuzz/crashes/ \
         fuzz/corpus
 

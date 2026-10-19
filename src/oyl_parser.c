@@ -2400,59 +2400,87 @@ static void ebuf_push(evt_buf *b, oyl_event e) {
     b->data[b->len++] = e;
 }
 
-static void ebuf_push_range(evt_buf *b, const oyl_event *events, int start, int end) {
-    for (int i = start; i < end; i++)
-        ebuf_push(b, events[i]);
-}
-
-/* Key set for tracking seen keys (override semantics), compared as YAML
- * compares keys: by tag and value, in the document's schema */
+/* Key set: the keys a mapping has so far as merges make it, compared as
+ * YAML compares keys (by tag and value, in the document's schema) */
 typedef struct {
-    oyl_key *keys;
-    int      len;
-    int      cap;
+    oyl_key  *keys;
+    int       len, cap;
+    uint32_t *table;   /* each slot: the index + 1 of a key, or 0 */
+    size_t    tcap;    /* a power of two, at least twice len */
 } key_set;
 
 static void kset_init(key_set *ks) {
-    ks->keys = NULL; ks->len = 0; ks->cap = 0;
+    *ks = (key_set){ NULL, 0, 0, NULL, 0 };
 }
 
 static void kset_free(key_set *ks) {
     free(ks->keys);
-    ks->keys = NULL; ks->len = 0; ks->cap = 0;
+    free(ks->table);
+    kset_init(ks);
 }
 
-/* The scalar event `evt` as a key */
-static void event_key(const oyl_parser *p, const oyl_event *evt, oyl_key *k) {
+/* The scalar key event `evt` as a key, in *k: OYL_ERR_MEMORY if its value
+ * can't be read for want of memory (a value its tag rejects is its text) */
+static oyl_status event_key(const oyl_parser *p, const oyl_event *evt, oyl_key *k) {
     const oyl_schema *s = p->res_schema ? p->res_schema : oyl_dialect_schema(p->doc_dialect);
     oyl_str tag = evt->tag.len ? evt->tag : oyl_schema_resolve(s, evt->value, evt->scalar_style);
     oyl_value v;
     oyl_status st = oyl_schema_value_of(s, evt->value, evt->scalar_style, evt->tag, &v);
+    if (st == OYL_ERR_MEMORY) return st;
     oyl_key_make(k, oyl_key_tag(s, tag), evt->value, st, &v);
+    return OYL_OK;
+}
+
+/* Is key in the set? *at: its slot, or the empty one where it would go */
+static bool kset_find(const key_set *ks, const oyl_key *key, size_t *at) {
+    for (size_t i = oyl_key_hash(key) & (ks->tcap - 1);; i = (i + 1) & (ks->tcap - 1)) {
+        uint32_t x = ks->table[i];
+        if (!x || oyl_key_cmp(&ks->keys[x - 1], key) == 0) {
+            *at = i;
+            return x != 0;
+        }
+    }
 }
 
 static bool kset_contains(const key_set *ks, const oyl_key *key) {
-    for (int i = 0; i < ks->len; i++)
-        if (oyl_key_cmp(&ks->keys[i], key) == 0) return true;
-    return false;
+    size_t at;
+    return ks->tcap && kset_find(ks, key, &at);
 }
 
 /* Add a key; false when out of memory */
 static bool kset_add(key_set *ks, const oyl_key *key) {
-    if (kset_contains(ks, key)) return true;
-    if (ks->len >= ks->cap) {
-        int nc = ks->cap ? ks->cap * 2 : 16;
-        oyl_key *nk = realloc(ks->keys, (size_t)nc * sizeof(oyl_key));
-        if (!nk) return false;
-        ks->keys = nk; ks->cap = nc;
+    if ((size_t)ks->len * 2 + 2 > ks->tcap) {
+        size_t nt = ks->tcap ? ks->tcap * 2 : 16;
+        uint32_t *t = calloc(nt, sizeof *t);
+        if (!t) return false;
+        for (int i = 0; i < ks->len; i++) {
+            size_t j = oyl_key_hash(&ks->keys[i]) & (nt - 1);
+            while (t[j]) j = (j + 1) & (nt - 1);
+            t[j] = (uint32_t)i + 1;
+        }
+        free(ks->table);
+        ks->table = t;
+        ks->tcap = nt;
     }
-    ks->keys[ks->len++] = *key;
+    size_t at;
+    if (kset_find(ks, key, &at)) return true;
+    if (ks->len == ks->cap) {
+        if (ks->cap > INT_MAX / 2) return false;
+        int nc = ks->cap ? ks->cap * 2 : 16;
+        oyl_key *nk = realloc(ks->keys, (size_t)nc * sizeof *nk);
+        if (!nk) return false;
+        ks->keys = nk;
+        ks->cap = nc;
+    }
+    ks->keys[ks->len] = *key;
+    ks->table[at] = (uint32_t)++ks->len;
     return true;
 }
 
-/* A merge's error message for running out of memory, told apart from the
- * others by its address: it is OYL_ERR_MEMORY, not a parse error */
+/* A merge's error messages, told apart from parse errors by address */
 static const char merge_oom[] = "out of memory";
+static const char merge_costly[] = "merges too costly to expand";
+static const char merge_deep[] = "nesting depth limit exceeded after alias/merge expansion";
 
 /* Is evt a merge key? << untagged and plain, or tagged !!merge. A schema
  * tags a plain << itself: YAML 1.1's as !!merge, and one without a merge
@@ -2473,16 +2501,47 @@ static bool is_merge_key(const oyl_parser *p, const oyl_event *evt) {
 /* How deep merges may nest (a merge's source with merges of its own) */
 #define MAX_MERGE_DEPTH 256
 
-/* Merging into one mapping: the events, and the keys it has so far */
+/* How deep a document with merges may nest when the depth limit is off:
+ * writing it out recurses */
+#define MAX_MERGED_NESTING 10000
+
+/* Merges, worked out once for each mapping, at its place in the document
+ * (as trees do), and kept. A mapping as merges make it is its own pairs,
+ * then each merge's: a later << first, so that it wins over an earlier
+ * one, as in PyYAML, and a sequence's items in order, so that an earlier
+ * one wins; each key not yet seen. A source comes with its own merges. */
+
+/* One of a merged mapping's pairs: its key and value (events) */
+typedef struct {
+    int  key, value;
+    bool copied;   /* from a merge, not written in the mapping */
+    bool run;      /* starts a run of pairs written together, which is checked
+                      against the keys seen before it, so that a key written
+                      twice in one is copied twice: the last one wins */
+} merged_pair;
+
 typedef struct {
     const oyl_parser   *p;
     const oyl_event    *events;
     int                 evt_len;
     merge_anchor_table *anchors;
-    evt_buf            *out;
-    key_set            *seen;
-    int                 err_key;   /* the << that failed, or -1 */
+    int                *slot;     /* by event: its mapping's entry in maps, or -1 */
+    struct { int off, n; } *maps; /* each mapping's pairs in pairs */
+    int                 nmaps, maps_cap;
+    merged_pair        *pairs;
+    int                 npairs, pairs_cap;
+    long long           budget;   /* the source pairs it may still look at */
+    const char         *err;      /* why it stopped, or NULL */
+    int                 err_at;   /* the event where */
 } merger;
+
+static bool merge_fail(merger *m, const char *err, int at) {
+    if (!m->err) {
+        m->err = err;
+        m->err_at = at;
+    }
+    return false;
+}
 
 /* The items of the << value at events[v], [*first, *end): a sequence's
  * items, also through an alias, as YAML's merge reads it; otherwise the
@@ -2536,93 +2595,189 @@ static int can_merge(const merger *m, int v, int ms, int me, const char **err) {
     return verdict;
 }
 
-/* Is the pair at events[k] a merge of the mapping events[ms, me), rather
- * than one of its pairs? (A merge that fails counts: it is reported.) */
-static bool is_merge(const merger *m, int k, int ms, int me) {
-    const char *err;
-    return is_merge_key(m->p, &m->events[k]) &&
-           can_merge(m, node_end(m->events, m->evt_len, k), ms, me, &err) != 0;
+static bool push_pair(merger *m, merged_pair mp) {
+    if (m->npairs == m->pairs_cap) {
+        if (m->pairs_cap > INT_MAX / 2) return merge_fail(m, merge_oom, mp.key);
+        int nc = m->pairs_cap ? m->pairs_cap * 2 : 64;
+        merged_pair *np = realloc(m->pairs, (size_t)nc * sizeof *np);
+        if (!np) return merge_fail(m, merge_oom, mp.key);
+        m->pairs = np;
+        m->pairs_cap = nc;
+    }
+    m->pairs[m->npairs++] = mp;
+    return true;
 }
 
-static const char *merge_merges(merger *m, int ms, int me, int depth);
-
-/* Merge the mapping events[s, e) into m->out: its pairs, then its own
- * merges, each key not yet seen. Returns an error message, or NULL. */
-static const char *merge_from(merger *m, int s, int e, int depth) {
-    if (depth > MAX_MERGE_DEPTH) {
-        m->err_key = s;
-        return "merges nest too deep";
+/* The key at events[k], in *key: 1 a scalar, 0 not (a collection or an
+ * alias: never seen, always copied), -1 out of memory */
+static int pair_key(merger *m, int k, oyl_key *key) {
+    if (m->events[k].type != OYL_EVT_SCALAR) return 0;
+    if (event_key(m->p, &m->events[k], key) != OYL_OK) {
+        merge_fail(m, merge_oom, k);
+        return -1;
     }
-    /* a key written twice in it is copied twice, as in the mapping
-     * merged into: the last one wins */
-    for (int step = 0; step < 2; step++) {
-        for (int pos = s + 1; pos < e - 1;) {
-            int ke = node_end(m->events, m->evt_len, pos);
-            int ve = node_end(m->events, m->evt_len, ke);
-            if (!is_merge(m, pos, s, e)) {
-                bool scalar_key = ke - pos == 1 && m->events[pos].type == OYL_EVT_SCALAR;
-                oyl_key key;
-                if (scalar_key) event_key(m->p, &m->events[pos], &key);
-                if (step == 1) {
-                    if (scalar_key && !kset_add(m->seen, &key)) {
-                        m->err_key = pos;
-                        return merge_oom;
-                    }
-                } else if (!scalar_key || !kset_contains(m->seen, &key)) {
-                    /* copies carry no anchors (not new definitions) */
-                    for (int j = pos; j < ve && !m->out->oom; j++) {
-                        oyl_event copy = m->events[j];
-                        copy.anchor = OYL_STR_NULL;
-                        ebuf_push(m->out, copy);
-                    }
-                }
-            }
-            pos = ve;
+    return 1;
+}
+
+static bool see_key(merger *m, key_set *seen, int k) {
+    oyl_key key;
+    int r = pair_key(m, k, &key);
+    if (r < 0) return false;
+    return r == 0 || kset_add(seen, &key) || merge_fail(m, merge_oom, k);
+}
+
+/* Copy the pairs of the mapping in maps[src] that bring keys not yet seen:
+ * each run checked against the keys seen before it, then its keys seen */
+static bool merge_source(merger *m, int src, key_set *seen) {
+    int off = m->maps[src].off, n = m->maps[src].n;
+    for (int a = 0; a < n;) {
+        int b = a + 1;
+        while (b < n && !m->pairs[off + b].run) b++;
+        bool started = false;
+        for (int q = a; q < b; q++) {
+            merged_pair mp = m->pairs[off + q];
+            if (--m->budget < 0) return merge_fail(m, merge_costly, mp.key);
+            oyl_key key;
+            int r = pair_key(m, mp.key, &key);
+            if (r < 0) return false;
+            if (r && kset_contains(seen, &key)) continue;
+            mp.copied = true;
+            mp.run = !started;
+            started = true;
+            if (!push_pair(m, mp)) return false;
         }
+        for (int q = a; q < b; q++)
+            if (!see_key(m, seen, m->pairs[off + q].key)) return false;
+        a = b;
     }
-    return merge_merges(m, s, e, depth);
+    return true;
 }
 
-/* Merge the merges of the mapping events[ms, me) into m->out: a later <<
- * first, so that it wins over an earlier one, as in PyYAML, and a
- * sequence's items in order, so that an earlier one wins. Returns an
- * error message, or NULL. */
-static const char *merge_merges(merger *m, int ms, int me, int depth) {
-    int buf[8], *keys = buf, n = 0, cap = 8;
-    const char *err = NULL;
-    for (int pos = ms + 1; pos < me - 1 && !err;) {
-        int ke = node_end(m->events, m->evt_len, pos);
-        int ve = node_end(m->events, m->evt_len, ke);
-        if (is_merge_key(m->p, &m->events[pos])) {
-            int verdict = can_merge(m, ke, ms, me, &err);
-            if (verdict < 0) {
-                m->err_key = pos;
-            } else if (verdict > 0) {
-                if (n == cap) {
-                    int *nk = malloc((size_t)cap * 2 * sizeof *nk);
-                    if (!nk) { err = merge_oom; m->err_key = pos; break; }
-                    memcpy(nk, keys, (size_t)n * sizeof *nk);
-                    if (keys != buf) free(keys);
-                    keys = nk;
-                    cap *= 2;
+/* The mapping at events[ms] as merges make it, worked out once: its entry
+ * in m->maps, or -1 with m->err set */
+static int resolve_mapping(merger *m, int ms, int depth) {
+    if (m->slot[ms] >= 0) return m->slot[ms];
+    /* sources come before the merge that names them, or inside the mapping
+     * (one containing it can't be merged), so this ends */
+    if (depth > MAX_MERGE_DEPTH) {
+        merge_fail(m, "merges nest too deep", ms);
+        return -1;
+    }
+    const oyl_event *ev = m->events;
+    int me = node_end(ev, m->evt_len, ms);
+
+    /* its merges, decided here, and their sources worked out first */
+    int buf[8], *merges = buf, nmerges = 0, cap = 8;
+    bool ok = true;
+    for (int pos = ms + 1; pos < me - 1 && ok;) {
+        int ke = node_end(ev, m->evt_len, pos), ve = node_end(ev, m->evt_len, ke);
+        const char *err = NULL;
+        int verdict = is_merge_key(m->p, &ev[pos]) ? can_merge(m, ke, ms, me, &err) : 0;
+        if (verdict < 0) {
+            ok = merge_fail(m, err, pos);
+        } else if (verdict > 0) {
+            if (nmerges == cap) {
+                int *nm = malloc((size_t)cap * 2 * sizeof *nm);
+                if (!nm) {
+                    ok = merge_fail(m, merge_oom, pos);
+                    break;
                 }
-                keys[n++] = pos;
+                memcpy(nm, merges, (size_t)nmerges * sizeof *nm);
+                if (merges != buf) free(merges);
+                merges = nm;
+                cap *= 2;
+            }
+            merges[nmerges++] = pos;
+            int first, end;
+            merge_items(m, ke, &first, &end);
+            for (int i = first; i < end && ok; i = node_end(ev, m->evt_len, i)) {
+                int s, e;
+                merge_item(m, i, &s, &e);
+                ok = resolve_mapping(m, s, depth + 1) >= 0;
             }
         }
         pos = ve;
     }
-    while (!err && n-- > 0) {
-        int first, end;
-        merge_items(m, node_end(m->events, m->evt_len, keys[n]), &first, &end);
-        for (int i = first; i < end && !err; i = node_end(m->events, m->evt_len, i)) {
-            int s, e;
-            err = merge_item(m, i, &s, &e);
-            if (!err) err = merge_from(m, s, e, depth + 1);
+
+    /* its pairs: its own, then each merge's, each key not yet seen */
+    int off = m->npairs;
+    key_set seen;
+    kset_init(&seen);
+    bool first = true;
+    for (int pos = ms + 1, j = 0; pos < me - 1 && ok;) {
+        int ke = node_end(ev, m->evt_len, pos), ve = node_end(ev, m->evt_len, ke);
+        if (j < nmerges && merges[j] == pos) {
+            j++;
+        } else {
+            ok = push_pair(m, (merged_pair){ pos, ke, false, first }) &&
+                 (nmerges == 0 || see_key(m, &seen, pos));
+            first = false;
         }
-        if (err && m->err_key < 0) m->err_key = keys[n];
+        pos = ve;
     }
-    if (keys != buf) free(keys);
-    return err;
+    for (int j = nmerges; ok && j-- > 0;) {
+        int first_item, end;
+        merge_items(m, node_end(ev, m->evt_len, merges[j]), &first_item, &end);
+        for (int i = first_item; i < end && ok; i = node_end(ev, m->evt_len, i)) {
+            int s, e;
+            merge_item(m, i, &s, &e);
+            ok = merge_source(m, m->slot[s], &seen);
+        }
+    }
+    kset_free(&seen);
+    if (merges != buf) free(merges);
+    if (ok && m->nmaps == m->maps_cap) {
+        int nc = m->maps_cap ? m->maps_cap * 2 : 16;
+        void *nm = m->maps_cap > INT_MAX / 2 ? NULL : realloc(m->maps, (size_t)nc * sizeof *m->maps);
+        if (nm) {
+            m->maps = nm;
+            m->maps_cap = nc;
+        } else {
+            ok = merge_fail(m, merge_oom, ms);
+        }
+    }
+    if (!ok) {
+        m->npairs = off;
+        return -1;
+    }
+    m->maps[m->nmaps].off = off;
+    m->maps[m->nmaps].n = m->npairs - off;
+    m->slot[ms] = m->nmaps;
+    return m->nmaps++;
+}
+
+/* Write the node at events[i] to out with its merges applied, at nesting
+ * `depth`; a copy (from a merge) carries no anchors, which aren't new
+ * definitions */
+static bool write_merged(merger *m, evt_buf *out, int i, bool copy, int depth) {
+    const oyl_event *ev = m->events;
+    oyl_event e = ev[i];
+    if (copy) e.anchor = OYL_STR_NULL;
+    if (e.type == OYL_EVT_MAPPING_START || e.type == OYL_EVT_SEQUENCE_START) {
+        int max = m->p->max_depth > 0 ? m->p->max_depth : MAX_MERGED_NESTING;
+        if (depth >= max) return merge_fail(m, merge_deep, i);
+    }
+    if (e.type == OYL_EVT_MAPPING_START) {
+        int s = resolve_mapping(m, i, 0);
+        if (s < 0) return false;
+        ebuf_push(out, e);
+        for (int q = 0; q < m->maps[s].n && !out->oom; q++) {
+            merged_pair mp = m->pairs[m->maps[s].off + q];
+            if (!write_merged(m, out, mp.key, copy || mp.copied, depth + 1) ||
+                !write_merged(m, out, mp.value, copy || mp.copied, depth + 1))
+                return false;
+        }
+        ebuf_push(out, ev[node_end(ev, m->evt_len, i) - 1]);
+    } else if (e.type == OYL_EVT_SEQUENCE_START) {
+        int end = node_end(ev, m->evt_len, i);
+        ebuf_push(out, e);
+        for (int j = i + 1; j < end - 1 && !out->oom; j = node_end(ev, m->evt_len, j))
+            if (!write_merged(m, out, j, copy, depth + 1)) return false;
+        ebuf_push(out, ev[end - 1]);
+    } else {
+        ebuf_push(out, e);
+    }
+    return !out->oom;
 }
 
 /* Event budget for merge/alias expansion. Expansion can grow the stream
@@ -2642,113 +2797,61 @@ static oyl_status expansion_failed(oyl_parser *p, const evt_buf *b) {
     return OYL_ERR_LIMIT;
 }
 
+/* Apply the document's << merges, in one pass: each mapping's merges are
+ * worked out once, so their cost is bounded (by m.budget) and nothing is
+ * left unmerged however deep they nest */
 static oyl_status resolve_merges(oyl_parser *p) {
-    #define MAX_MERGE_PASSES 32
+    bool any = false;
+    for (int i = 0; i < p->evt_len && !any; i++) any = is_merge_key(p, &p->events[i]);
+    if (!any) return OYL_OK;
+
+    merge_anchor_table anchors;
+    if (!atbl_build(&anchors, p->events, p->evt_len)) return OYL_ERR_MEMORY;
     int limit = expansion_limit(p, p->evt_len);
+    merger m = { .p = p, .events = p->events, .evt_len = p->evt_len, .anchors = &anchors,
+                 .budget = (long long)limit * 4, .err_at = -1 };
+    evt_buf out;
+    ebuf_init(&out, p->evt_len * 2, limit);
+    m.slot = malloc((size_t)p->evt_len * sizeof *m.slot);
+    if (!m.slot) out.oom = true;
+    for (int i = 0; m.slot && i < p->evt_len; i++) m.slot[i] = -1;
 
-    for (int pass = 0; pass < MAX_MERGE_PASSES; pass++) {
-        merge_anchor_table anchors;
-        if (!atbl_build(&anchors, p->events, p->evt_len)) return OYL_ERR_MEMORY;
-
-        evt_buf out;
-        ebuf_init(&out, p->evt_len * 2, limit);
-        bool changed = false;
-
-        int i = 0;
-        while (i < p->evt_len && !out.oom) {
-            if (p->events[i].type != OYL_EVT_MAPPING_START) {
-                ebuf_push(&out, p->events[i]);
-                i++;
-                continue;
-            }
-
-            /* found a mapping — find its end */
-            int map_start = i;
-            int map_end = node_end(p->events, p->evt_len, i);
-
-            key_set seen;
-            kset_init(&seen);
-            merger mg = { p, p->events, p->evt_len, &anchors, &out, &seen, -1 };
-
-            /* does this mapping merge? */
-            bool has_merge = false;
-            for (int pos = map_start + 1; pos < map_end - 1 && !has_merge;) {
-                int ke = node_end(p->events, p->evt_len, pos);
-                has_merge = is_merge(&mg, pos, map_start, map_end);
-                pos = node_end(p->events, p->evt_len, ke);
-            }
-
-            if (!has_merge) {
-                /* no merge keys at this level — just push MAPPING_START
-                 * and let the loop continue to process inner events
-                 * (which may contain nested mappings with merge keys) */
-                ebuf_push(&out, p->events[i]);
-                i++;
-                continue;
-            }
-
-            /* this mapping has merges — rebuild it */
-            changed = true;
-
-            /* its pairs, then its merges, each key not written in it */
-            for (int step = 0; step < 2; step++) {
-                if (step == 1) ebuf_push(&out, p->events[map_start]);
-                for (int pos = map_start + 1; pos < map_end - 1;) {
-                    int ke = node_end(p->events, p->evt_len, pos);
-                    int ve = node_end(p->events, p->evt_len, ke);
-                    if (!is_merge(&mg, pos, map_start, map_end)) {
-                        if (step == 1)
-                            ebuf_push_range(&out, p->events, pos, ve);
-                        else if (ke - pos == 1 && p->events[pos].type == OYL_EVT_SCALAR) {
-                            oyl_key key;
-                            event_key(p, &p->events[pos], &key);
-                            if (!kset_add(&seen, &key)) out.oom = true;
-                        }
-                    }
-                    pos = ve;
-                }
-            }
-            const char *err = merge_merges(&mg, map_start, map_end, 0);
-            if (err) {
-                kset_free(&seen);
-                atbl_free(&anchors);
-                ebuf_free(&out);
-                snprintf(p->error_msg, sizeof(p->error_msg), "%s", err);
-                p->error_mark = p->events[mg.err_key >= 0 ? mg.err_key : map_start].start;
-                return err == merge_oom ? OYL_ERR_MEMORY : OYL_ERR_PARSE;
-            }
-
-            /* emit MAPPING_END */
-            ebuf_push(&out, p->events[map_end - 1]);
-
-            kset_free(&seen);
-            i = map_end;
+    for (int i = 0; i < p->evt_len && !out.oom && !m.err;) {
+        oyl_event_type t = p->events[i].type;
+        if (t == OYL_EVT_MAPPING_START || t == OYL_EVT_SEQUENCE_START) {
+            write_merged(&m, &out, i, false, 0);
+            i = node_end(p->events, p->evt_len, i);
+        } else {
+            ebuf_push(&out, p->events[i]);
+            i++;
         }
-
-        atbl_free(&anchors);
-
-        if (out.oom) {
-            oyl_status st = expansion_failed(p, &out);
-            ebuf_free(&out);
-            return st;
-        }
-
-        if (!changed) {
-            ebuf_free(&out);
-            break;
-        }
-
-        /* replace event array */
-        free(p->events);
-        p->events = out.data;
-        p->evt_len = out.len;
-        p->evt_cap = out.cap;
-        p->evt_cursor = 0;
-        /* don't free out — ownership transferred */
     }
+    free(m.slot);
+    free(m.maps);
+    free(m.pairs);
+    atbl_free(&anchors);
 
+    oyl_status st = OYL_OK;
+    if (m.err == merge_costly || m.err == merge_deep) {
+        hit_limit(p, m.err);
+        st = OYL_ERR_LIMIT;
+    } else if (m.err) {
+        snprintf(p->error_msg, sizeof(p->error_msg), "%s", m.err);
+        p->error_mark = p->events[m.err_at >= 0 ? m.err_at : 0].start;
+        st = m.err == merge_oom ? OYL_ERR_MEMORY : OYL_ERR_PARSE;
+    } else if (out.oom) {
+        st = expansion_failed(p, &out);
+    }
+    if (st != OYL_OK) {
+        ebuf_free(&out);
+        return st;
+    }
+    free(p->events);   /* the merged events replace them */
+    p->events = out.data;
+    p->evt_len = out.len;
+    p->evt_cap = out.cap;
+    p->evt_cursor = 0;
     return OYL_OK;
-    #undef MAX_MERGE_PASSES
 }
 
 /* ── Anchor binding ──────────────────────────────────────── */

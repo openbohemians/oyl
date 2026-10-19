@@ -119,6 +119,35 @@ static inline bool oyl_key_tag_eq(oyl_str a, oyl_str b) {
            (a.len == b.len && (a.len == 0 || memcmp(a.data, b.data, a.len) == 0));
 }
 
+/* A key's hash, the same for keys oyl_key_cmp finds equal */
+static inline uint64_t oyl_key_hash(const oyl_key *k) {
+    uint64_t h = 14695981039346656037u, x = 14695981039346656037u;
+    for (size_t i = 0; i < k->tag.len; i++) h = (h ^ (unsigned char)k->tag.data[i]) * 1099511628211u;
+    const oyl_value *v = &k->value;
+    switch (v->kind) {
+    case OYL_VALUE_NULL:  x = 0; break;
+    case OYL_VALUE_BOOL:  x = v->as.b; break;
+    case OYL_VALUE_INT:   x = (uint64_t)v->as.i; break;
+    case OYL_VALUE_UINT:  x = v->as.u; break;
+    case OYL_VALUE_FLOAT: {
+        double f = v->as.f;
+        if (isnan(f)) {
+            x = 0x7FF8000000000000u;   /* one NaN */
+        } else {
+            if (f == 0) f = 0;           /* -0 is 0 */
+            memcpy(&x, &f, sizeof x);
+        }
+        break;
+    }
+    default:
+        for (size_t i = 0; i < v->as.s.len; i++) x = (x ^ (unsigned char)v->as.s.data[i]) * 1099511628211u;
+        break;
+    }
+    h = (h ^ (uint64_t)v->kind) * 0x9E3779B97F4A7C15u;
+    h = (h ^ x) * 0x9E3779B97F4A7C15u;
+    return h ^ (h >> 31);
+}
+
 /* Order keys, 0 when equal: by tag, then value, NaN equal to NaN */
 static inline int oyl_key_cmp(const oyl_key *a, const oyl_key *b) {
     if (!oyl_key_tag_eq(a->tag, b->tag)) return oyl_bytes_cmp(a->tag, b->tag);

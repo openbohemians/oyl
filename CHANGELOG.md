@@ -151,13 +151,22 @@
   -1 is the top level) and as wide as offsets, so a line can be as long
   as the input. The same instructions run as before. Found by stricter
   compiler warnings.
+- `oyl_parser_set_merge` worked merges out in up to 32 passes, so merges
+  nested deeper were left as ordinary `<<` keys, without an error. Each
+  mapping's merges are now worked out once, at its place in the document
+  (as trees do), in one pass: nothing is left unmerged, a merge inside its
+  own source stays an ordinary key in copies of it too, and the work is
+  bounded, with `OYL_ERR_LIMIT` past it (a chain of anchors each merging
+  the one before twice took time doubling with each one). The depth
+  limit applies as merges nest. Found by the code review.
 - Running out of memory is always `OYL_ERR_MEMORY`, never a quiet
   change: the merge's anchor table and its set of keys already seen
   dropped what they couldn't add (a merge then failed as "undefined
   anchor", a parse error, or kept a key it should have skipped), the
   scanner went on without the indentation it couldn't push, the merge's
   own "out of memory" was a parse error, and `!!binary` in JSON took a
-  failed allocation for invalid base64. `oyl_emitter_output` returns
+  failed allocation for invalid base64 (and a merge's key comparison
+  took one for a key its tag rejects). `oyl_emitter_output` returns
   NULL data only when out of memory (empty output is ""). Found by a
   new test that fails every allocation in turn (Linux: the linker's
   `--wrap`), which also shows, under ASan, that nothing leaks.

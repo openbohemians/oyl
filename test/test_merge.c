@@ -601,6 +601,72 @@ static void test_keys_by_value(void) {
     ASSERT(m > 0 && count_keys(&el, m, "yes") == 1, "yes is a string, in YAML 1.2");
 }
 
+/* ── Test: Merges' cost is bounded ───────────────────────── */
+
+/* Parse with merges on and no event limit: the status, the events, and how
+ * many "<<" scalars are left */
+static oyl_status parse_merged(const char *yaml, int max_depth, int *events, int *left) {
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_parser *p = oyl_parser_new(yaml, strlen(yaml), a);
+    oyl_parser_set_merge(p, true);
+    oyl_parser_set_max_events(p, 0);
+    if (max_depth) oyl_parser_set_max_depth(p, max_depth);
+    const oyl_event *e;
+    oyl_status st;
+    *events = *left = 0;
+    while ((st = oyl_parse_next(p, &e)) == OYL_OK && e->type != OYL_EVT_STREAM_END) {
+        (*events)++;
+        if (e->type == OYL_EVT_SCALAR && e->value.len == 2 && memcmp(e->value.data, "<<", 2) == 0)
+            (*left)++;
+    }
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+    return st;
+}
+
+static void test_merges_bounded(void) {
+    printf("test_merges_bounded:\n");
+    static char y[1 << 20];
+    int events, left;
+    size_t n;
+
+    /* each anchor merging the one before twice: worked out once each, not
+     * 2^n times */
+    n = (size_t)sprintf(y, "a0: &a0 {k: v}\n");
+    for (int i = 1; i <= 60; i++) n += (size_t)sprintf(y + n, "a%d: &a%d {<<: [*a%d, *a%d]}\n", i, i, i - 1, i - 1);
+    ASSERT(parse_merged(y, 0, &events, &left) == OYL_OK && left == 0, "a diamond of 60 merges");
+
+    /* merges nested past what passes would reach */
+    n = (size_t)sprintf(y, "base: &b {k: v}\nroot:\n");
+    for (int i = 0; i < 40; i++) n += (size_t)sprintf(y + n, "%*s<<: *b\n%*sn%d:\n", 2 * (i + 1), "", 2 * (i + 1), "", i);
+    n += (size_t)sprintf(y + n, "%*s<<: *b\n", 82, "");
+    ASSERT(parse_merged(y, 0, &events, &left) == OYL_OK && left == 0, "41 nested merges, none left");
+
+    /* a << inside its own source stays an ordinary key, in the copy too
+     * (as in trees), rather than merging again at each copy */
+    ASSERT(parse_merged("a: &a {x: {<<: *a}}\nb: {<<: *a}\n", 0, &events, &left) == OYL_OK && left == 2 &&
+           events == 21, "a self-merge's copy isn't merged again");
+
+    /* many merges of the same keys: bounded work, an error past it */
+    n = 0;
+    for (int i = 0; i < 20; i++) {
+        n += (size_t)sprintf(y + n, "a%d: &a%d {", i, i);
+        for (int k = 0; k < 200; k++) n += (size_t)sprintf(y + n, "%sk%d: %d", k ? ", " : "", k, k);
+        n += (size_t)sprintf(y + n, "}\n");
+    }
+    for (int j = 0; j < 1000; j++) {
+        n += (size_t)sprintf(y + n, "m%d: {<<: [", j);
+        for (int i = 0; i < 20; i++) n += (size_t)sprintf(y + n, "%s*a%d", i ? ", " : "", i);
+        n += (size_t)sprintf(y + n, "]}\n");
+    }
+    ASSERT(parse_merged(y, 0, &events, &left) == OYL_ERR_LIMIT, "merges too costly are a limit error");
+
+    /* the depth limit holds for what merges nest */
+    ASSERT(parse_merged("a: &a {x: {y: 1}}\nb: {c: 1}\n", 3, &events, &left) == OYL_OK, "within the depth limit");
+    ASSERT(parse_merged("a: &a {x: {y: 1}}\nb: {c: {<<: *a}}\n", 3, &events, &left) == OYL_ERR_LIMIT,
+           "merged past the depth limit");
+}
+
 /* ── Main ────────────────────────────────────────────────── */
 
 int main(void) {
@@ -623,6 +689,7 @@ int main(void) {
     test_merge_tags();
     test_self_merge();
     test_keys_by_value();
+    test_merges_bounded();
 
     printf("\n--- Merge tests: %d / %d passed ---\n", tests_passed, tests_run);
     if (tests_failed > 0) printf("    %d FAILED\n", tests_failed);
