@@ -90,6 +90,25 @@ The parser with merges on wasn't slowed by (2) or (3)'s inputs; its own
 anchor table (32-bit FNV-1a, with merge or resolve on, since v1.0.0) is
 untested. Reproducers in the session scratchpad (`review-trees/`), not kept.
 
+**PR #3 (schemas, dialects, keys) reviewed by a Claude subagent
+2026-10-19, fixed in `73054bb`** (brief `outtake/review-schemas-brief.md`,
+not committed). Core/JSON: 0 differences from the 1.2.2 regexes on 824,921
+scalars; keys and the first-byte index sound. Fixed: go-yaml v2's explicit
+!!float (untagged resolution, int taken as float) and a sign after 0b
+(`OYL_INT_BIN_SIGN`): now 0 differences from go-yaml v2 on 240,084 tagged
++ 843,607 untagged; YAML 1.1 explicit tags as PyYAML's constructors (the
+user chose leniency for 1.1 only, 2026-10-19; 1.2 stays strict), `._5`
+text, base 60 floats past 64 parts; floats in a multi-byte-decimal-point
+locale (ps_AF) and no heap copy at all (800 significant digits + sticky,
+exact vs strtod on 300,000 long literals; short ones copied as written,
+same speed); JSON's shortest digits read back without a decimal point;
+ICASE words in ASCII case (tolower broke Turkish); %YAML minor to INT_MAX;
+a second %TAG for one handle an error. Documented, not emulated (the user
+agreed): YAML 1.1 timestamps of one instant are two keys; base 60 floats
+past 14 parts may differ in the last bits. Left: the reviewer's
+suspicion that localeconv() isn't thread-safe (now called only in a
+locale whose point isn't '.'). Codex on #3 not run yet.
+
 **PR #5 (parser) reviewed 2026-10-19:** 7 findings, all verified. (The
 review's comment couldn't be posted: GitHub said the account "cannot
 comment on this pull request", though the user's account is admin and the
