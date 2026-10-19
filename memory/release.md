@@ -212,7 +212,12 @@ oyl-sys declaration, add `oyl_dialect_version`), and the docs of
 `Node::entries` (and serde's maps) can now fail with `ErrorKind::Limit`
 for a mapping that merges when the document's merges were too costly to
 work out; say so in its docs, and test it (a chain of 5,000 anchors each
-merging the one before and adding a key). **Step 3 done 2026-10-18
+merging the one before and adding a key). **Also since `87db8a8`:** a
+new C source, `src/oyl_hash.c` (the hash tables' secret key): add it to
+oyl-sys's build list (oyl.go: a wrapper `.c` for it; oyl.cr likewise).
+It uses `rand_s` on Windows (`_CRT_RAND_S`), untested: Oyl's CI has no
+Windows, so the oyl.rs CI (if it builds on Windows) is the first check.
+**Step 3 done 2026-10-18
 (`e433cfa`):** the `serde` feature: `from_str`/`from_slice`/`from_reader`
 (YAML 1.2), `from_str_with`/`from_slice_with` (a dialect), `from_node`;
 strict duplicate keys (an error whatever the target type: serde_yaml

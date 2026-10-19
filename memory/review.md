@@ -35,7 +35,28 @@ Brief for trees: `outtake/review-trees-brief.md` (not committed).
 **PR #2 (trees) reviewed by a Claude subagent 2026-10-19 (commit
 `1b7e037`):** merges matched an independent reference on ~156,000
 documents; ASan/UBSan clean. 5 findings, all reproduced by the lead.
-**Open:**
+**All fixed in `87db8a8` (2026-10-19, the user chose SipHash over a
+probe cap):** every table a document fills (anchors, keys, mappings by
+node; parser, trees, JSON) hashes with SipHash-1-3 under a per-parser
+key from getrandom/arc4random_buf/rand_s; merge items count against the
+bound in trees and the parser; lookups in worked-out trees read the
+record; marks step back one kept mark; get_merged reports OOM. Found on
+the way, also fixed there: the parser's merges took 57 s on a sequence
+of 50,000 aliases to an empty mapping merged 50,000 times (items were
+uncharged there too); the node map floods by node placement (0.81 s);
+ent_hash ignored tag text, so keys of one tag length and one value
+always collided; the parser's anchor table (since 1.0.0, merge or
+resolve on) took 3.2 s for 65,536 colliding names. Costs: merge-heavy
+tree builds +11%, their lookups +9%, entries +10%; plain documents
+unchanged; a document with an anchor +50 ns. The parser's merges still
+take 0.58 s to reach the limit on the 700 KB empty-sequence file with
+no event limit (three name lookups per item); fine at the default
+10,000 events. The commit message says each new test fails on the old
+code: not quite; the marks test checks positions only (passes on the old
+code too), and the test_oom "costly merges" scenario fails only with the
+fix undone (the old code never went past the bound on that tree).
+Codex review of `1b7e037` not run yet (the user's call).
+Findings as reported:
 (1) `<<: *s`, s a sequence of S aliases: every mapping writing it walks
 all S items (mergeable, work_out's item loop), uncharged to the bound;
 lookups call mergeable too. 600 KB, S = M = 50,000: tree 10.8 s
