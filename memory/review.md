@@ -26,6 +26,37 @@ docs, "ultrareview"), so every group fits. Free runs: 3 per account, one-time;
 $5-25 in usage credits, by the size of the change (the launch dialog
 shows the estimate).
 
+**Ultrareview dropped for the rest (the user, 2026-10-19):** too dear,
+and the last free run is kept for another project. Instead a Claude
+subagent per group (several passes, each finding reproduced), checked
+again by the lead, and Codex (`codex review`) blind on the same commit.
+Brief for trees: `outtake/review-trees-brief.md` (not committed).
+
+**PR #2 (trees) reviewed by a Claude subagent 2026-10-19 (commit
+`1b7e037`):** merges matched an independent reference on ~156,000
+documents; ASan/UBSan clean. 5 findings, all reproduced by the lead.
+**Open:**
+(1) `<<: *s`, s a sequence of S aliases: every mapping writing it walks
+all S items (mergeable, work_out's item loop), uncharged to the bound;
+lookups call mergeable too. 600 KB, S = M = 50,000: tree 10.8 s
+(control `<<: *a` 0.016 s).
+(2) The builder's anchor table (FNV-1a, linear probing): names chosen to
+collide in the low bits. 3.6 MB, 65,536 anchors: 4.3 s (random names
+0.019 s). Default max_events caps it at about 0.06 s.
+(3) keep()'s key table: int keys chosen to collide (ent_hash inverted via
+the golden-ratio constant). 1.27 MB, 50,000 keys merged: 4.1 s (control
+0.014 s). Quadratic.
+(4) oyl_node_mark: a block mapping whose first key has an anchor starts
+after that key, so the kept mark can be past the node and the code
+rescans from the document start. 1 MB: every mark 1.6 s (control
+0.016 s).
+(5) oyl_node_get past the bound: get_merged's OOM looks like "not
+found", so the lookup goes on by text and gives another key's value
+(string "1" vs int 1), not OYL_NO_NODE as oyl.h promises.
+The parser with merges on wasn't slowed by (2) or (3)'s inputs; its own
+anchor table (32-bit FNV-1a, with merge or resolve on, since v1.0.0) is
+untested. Reproducers in the session scratchpad (`review-trees/`), not kept.
+
 **PR #5 (parser) reviewed 2026-10-19:** 7 findings, all verified. (The
 review's comment couldn't be posted: GitHub said the account "cannot
 comment on this pull request", though the user's account is admin and the
