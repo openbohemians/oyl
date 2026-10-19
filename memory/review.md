@@ -19,13 +19,18 @@ each base is `main` with that group's files as at v1.0.0
 Not for merging: close them and delete the `review/*` branches after.
 **Rebuilt 2026-10-19 on `792d5ae`** (all but #5, already reviewed): same
 two-commit shape (base: `main` + group files at v1.0.0; head: base +
-`main`'s tree). Trees is now 2,453 lines (the merge cache); no size limit
-is documented (9,292 was refused, up to 1,828 accepted): if ultrareview
-refuses #2, split `oyl_tree.c` from `test_tree.c`.
+`main`'s tree). Trees is now 2,453 lines (the merge cache). The documented
+limit is 500 files and 8,000 changed lines by default (code.claude.com
+docs, "ultrareview"), so every group fits. Free runs: 3 per account, one-time;
+#5 used the second, so one is left. After that a review costs about
+$5-25 in usage credits, by the size of the change (the launch dialog
+shows the estimate).
 
 **PR #5 (parser) reviewed 2026-10-19:** 7 findings, all verified. (The
-review's comment couldn't be posted: GitHub refused it for the user's
-account.) Fixed in `f683f74`: (1) exponential nested merges, a regression
+review's comment couldn't be posted: GitHub said the account "cannot
+comment on this pull request", though the user's account is admin and the
+PR's author. So the trouble is the GitHub access Claude posts through,
+not the repo. The findings arrive in the session either way.) Fixed in `f683f74`: (1) exponential nested merges, a regression
 from `5c12136` (a chain each merging the one before twice: 0.28 s at 20,
 days at 40; v1.0.0 fast); (4) event_key taking OOM for "tag rejects";
 (5) a misplaced comment; (6) merge verdicts recomputed; (7, since v1.0.0)
