@@ -423,35 +423,36 @@ static int base64_digit(unsigned char c) {
     return c == '+' ? 62 : c == '/' ? 63 : -1;
 }
 
-/* Go's base64.StdEncoding.DecodeString, which skips \r and \n */
-static bool base64_decode(oyl_str in, buffer *out) {
+/* Go's base64.StdEncoding.DecodeString, which skips \r and \n: 1 decoded,
+ * 0 not base64, -1 out of memory */
+static int base64_decode(oyl_str in, buffer *out) {
     out->len = 0;
     int quad[4], q = 0, pad = 0;
     for (size_t i = 0; i < in.len; i++) {
         unsigned char c = (unsigned char)in.data[i];
         if (c == '\r' || c == '\n') continue;
         if (pad) {   /* only padding may follow padding, and at most two */
-            if (c != '=' || q == 0 || ++pad > 2) return false;
+            if (c != '=' || q == 0 || ++pad > 2) return 0;
             quad[q++] = 0;
         } else if (c == '=') {
-            if (q < 2) return false;
+            if (q < 2) return 0;
             pad = 1;
             quad[q++] = 0;
         } else {
             int v = base64_digit(c);
-            if (v < 0) return false;
+            if (v < 0) return 0;
             quad[q++] = v;
         }
         if (q == 4) {
             unsigned char bytes[3] = { (unsigned char)(quad[0] << 2 | quad[1] >> 4),
                                        (unsigned char)(quad[1] << 4 | quad[2] >> 2),
                                        (unsigned char)(quad[2] << 6 | quad[3]) };
-            if (!buf_put(out, bytes, 3 - (size_t)pad)) return false;
+            if (!buf_put(out, bytes, 3 - (size_t)pad)) return -1;
             q = 0;
             if (pad) pad = 3;   /* the end: nothing may follow */
         }
     }
-    return q == 0;
+    return q == 0;   /* 1 or 0 */
 }
 
 /* A scalar node's value, with a !!binary decoded into d->bin */
@@ -469,7 +470,9 @@ static bool scalar_value(doc *d, uint32_t i, oyl_value *v) {
     }
     oyl_str tag = written_tag(d, i);
     if (same(tag, OYL_TAG_BINARY)) {
-        if (!base64_decode(t, &d->bin))
+        int r = base64_decode(t, &d->bin);
+        if (r < 0) return fail(d, OYL_ERR_MEMORY, node_mark(d, i), "out of memory");
+        if (r == 0)
             return fail(d, OYL_ERR_PARSE, node_mark(d, i), "!!binary value contains invalid base64 data");
         *v = (oyl_value){ .kind = OYL_VALUE_STR, .as = { .s = { d->bin.data, d->bin.len } } };
         return true;

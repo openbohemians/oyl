@@ -2300,14 +2300,15 @@ static void atbl_free(merge_anchor_table *t) {
     atbl_init(t);
 }
 
-static void atbl_add(merge_anchor_table *t, oyl_str name, int start, int end) {
+static bool atbl_add(merge_anchor_table *t, oyl_str name, int start, int end) {
     if (t->len >= t->cap) {
         int nc = t->cap ? t->cap * 2 : 16;
-        merge_anchor *ne = realloc(t->entries, nc * sizeof(merge_anchor));
-        if (!ne) return;
+        merge_anchor *ne = realloc(t->entries, (size_t)nc * sizeof(merge_anchor));
+        if (!ne) return false;
         t->entries = ne; t->cap = nc;
     }
     t->entries[t->len++] = (merge_anchor){name, start, end};
+    return true;
 }
 
 static bool atbl_name_is(const merge_anchor *a, oyl_str name) {
@@ -2329,19 +2330,24 @@ static merge_anchor *atbl_lookup(merge_anchor_table *t, oyl_str name) {
     return NULL;
 }
 
-static void atbl_build(merge_anchor_table *t, const oyl_event *events, int len) {
+/* The anchors of events[0, len); false (the table freed) when out of
+ * memory. Without memory for an index, lookups scan. */
+static bool atbl_build(merge_anchor_table *t, const oyl_event *events, int len) {
     atbl_init(t);
     for (int i = 0; i < len; i++) {
         if (events[i].anchor.data && events[i].anchor.len > 0) {
             int end = node_end(events, len, i);
-            atbl_add(t, events[i].anchor, i, end);
+            if (!atbl_add(t, events[i].anchor, i, end)) {
+                atbl_free(t);
+                return false;
+            }
         }
     }
-    if (t->len == 0) return;
+    if (t->len == 0) return true;
     size_t cap = 16;
     while (cap < (size_t)t->len * 2) cap *= 2;
     t->index = calloc(cap, sizeof *t->index);
-    if (!t->index) return;
+    if (!t->index) return true;
     t->index_cap = cap;
     for (int i = 0; i < t->len; i++) {
         size_t h = name_hash(t->entries[i].name) & (cap - 1);
@@ -2349,6 +2355,7 @@ static void atbl_build(merge_anchor_table *t, const oyl_event *events, int len) 
             h = (h + 1) & (cap - 1);
         t->index[h] = i + 1;   /* a later entry with the same name wins */
     }
+    return true;
 }
 
 /* Dynamic event array for building output */
@@ -2430,16 +2437,22 @@ static bool kset_contains(const key_set *ks, const oyl_key *key) {
     return false;
 }
 
-static void kset_add(key_set *ks, const oyl_key *key) {
-    if (kset_contains(ks, key)) return;
+/* Add a key; false when out of memory */
+static bool kset_add(key_set *ks, const oyl_key *key) {
+    if (kset_contains(ks, key)) return true;
     if (ks->len >= ks->cap) {
         int nc = ks->cap ? ks->cap * 2 : 16;
-        oyl_key *nk = realloc(ks->keys, nc * sizeof(oyl_key));
-        if (!nk) return;
+        oyl_key *nk = realloc(ks->keys, (size_t)nc * sizeof(oyl_key));
+        if (!nk) return false;
         ks->keys = nk; ks->cap = nc;
     }
     ks->keys[ks->len++] = *key;
+    return true;
 }
+
+/* A merge's error message for running out of memory, told apart from the
+ * others by its address: it is OYL_ERR_MEMORY, not a parse error */
+static const char merge_oom[] = "out of memory";
 
 /* Is evt a merge key? << untagged and plain, or tagged !!merge. A schema
  * tags a plain << itself: YAML 1.1's as !!merge, and one without a merge
@@ -2551,7 +2564,10 @@ static const char *merge_from(merger *m, int s, int e, int depth) {
                 oyl_key key;
                 if (scalar_key) event_key(m->p, &m->events[pos], &key);
                 if (step == 1) {
-                    if (scalar_key) kset_add(m->seen, &key);
+                    if (scalar_key && !kset_add(m->seen, &key)) {
+                        m->err_key = pos;
+                        return merge_oom;
+                    }
                 } else if (!scalar_key || !kset_contains(m->seen, &key)) {
                     /* copies carry no anchors (not new definitions) */
                     for (int j = pos; j < ve && !m->out->oom; j++) {
@@ -2584,7 +2600,7 @@ static const char *merge_merges(merger *m, int ms, int me, int depth) {
             } else if (verdict > 0) {
                 if (n == cap) {
                     int *nk = malloc((size_t)cap * 2 * sizeof *nk);
-                    if (!nk) { err = "out of memory"; m->err_key = pos; break; }
+                    if (!nk) { err = merge_oom; m->err_key = pos; break; }
                     memcpy(nk, keys, (size_t)n * sizeof *nk);
                     if (keys != buf) free(keys);
                     keys = nk;
@@ -2632,7 +2648,7 @@ static oyl_status resolve_merges(oyl_parser *p) {
 
     for (int pass = 0; pass < MAX_MERGE_PASSES; pass++) {
         merge_anchor_table anchors;
-        atbl_build(&anchors, p->events, p->evt_len);
+        if (!atbl_build(&anchors, p->events, p->evt_len)) return OYL_ERR_MEMORY;
 
         evt_buf out;
         ebuf_init(&out, p->evt_len * 2, limit);
@@ -2686,7 +2702,7 @@ static oyl_status resolve_merges(oyl_parser *p) {
                         else if (ke - pos == 1 && p->events[pos].type == OYL_EVT_SCALAR) {
                             oyl_key key;
                             event_key(p, &p->events[pos], &key);
-                            kset_add(&seen, &key);
+                            if (!kset_add(&seen, &key)) out.oom = true;
                         }
                     }
                     pos = ve;
@@ -2699,7 +2715,7 @@ static oyl_status resolve_merges(oyl_parser *p) {
                 ebuf_free(&out);
                 snprintf(p->error_msg, sizeof(p->error_msg), "%s", err);
                 p->error_mark = p->events[mg.err_key >= 0 ? mg.err_key : map_start].start;
-                return OYL_ERR_PARSE;
+                return err == merge_oom ? OYL_ERR_MEMORY : OYL_ERR_PARSE;
             }
 
             /* emit MAPPING_END */
@@ -2888,7 +2904,7 @@ static oyl_status check_eager_depth(oyl_parser *p) {
 static oyl_status resolve_aliases(oyl_parser *p) {
     /* build initial anchor table for cycle detection */
     merge_anchor_table anchors;
-    atbl_build(&anchors, p->events, p->evt_len);
+    if (!atbl_build(&anchors, p->events, p->evt_len)) return OYL_ERR_MEMORY;
 
     if (anchors.len == 0) {
         atbl_free(&anchors);
@@ -2917,7 +2933,11 @@ static oyl_status resolve_aliases(oyl_parser *p) {
     /* expand non-cyclic aliases in passes */
     int limit = expansion_limit(p, p->evt_len);
     for (int pass = 0; pass < 32; pass++) {
-        atbl_build(&anchors, p->events, p->evt_len);
+        if (!atbl_build(&anchors, p->events, p->evt_len)) {
+            free(color);
+            free(cyclic);
+            return OYL_ERR_MEMORY;
+        }
 
         evt_buf out;
         ebuf_init(&out, p->evt_len * 2, limit);

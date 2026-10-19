@@ -151,6 +151,16 @@
   -1 is the top level) and as wide as offsets, so a line can be as long
   as the input. The same instructions run as before. Found by stricter
   compiler warnings.
+- Running out of memory is always `OYL_ERR_MEMORY`, never a quiet
+  change: the merge's anchor table and its set of keys already seen
+  dropped what they couldn't add (a merge then failed as "undefined
+  anchor", a parse error, or kept a key it should have skipped), the
+  scanner went on without the indentation it couldn't push, the merge's
+  own "out of memory" was a parse error, and `!!binary` in JSON took a
+  failed allocation for invalid base64. `oyl_emitter_output` returns
+  NULL data only when out of memory (empty output is ""). Found by a
+  new test that fails every allocation in turn (Linux: the linker's
+  `--wrap`), which also shows, under ASan, that nothing leaks.
 - An error is final: every later `oyl_parse_next` returns it again,
   with the same message, as do `oyl_parse_tree` and `oyl_parse_json`,
   whose own errors count too. Calling again after an error went on

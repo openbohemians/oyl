@@ -1042,7 +1042,8 @@ oyl_status oyl_emit_sequence_end(oyl_emitter *e) {
 }
 
 oyl_str oyl_emitter_output(oyl_emitter *e) {
-    if (!e || !e->buf || e->len == 0) return OYL_STR_NULL;
+    if (!e || !e->buf) return OYL_STR_NULL;
+    if (e->len == 0) return (oyl_str){ "", 0 };   /* NULL means out of memory */
     char *copy = oyl_arena_dup(e->arena, e->buf, e->len);
     if (!copy) return OYL_STR_NULL;
     return (oyl_str){copy, e->len};

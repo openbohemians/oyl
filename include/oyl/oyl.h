@@ -854,7 +854,9 @@ OYL_API oyl_status   oyl_emit_sequence_end(oyl_emitter *e);
  *  tag every node, and the tree keeps only the tags written. */
 OYL_API oyl_status   oyl_emit_tree(oyl_emitter *e, const oyl_tree *t);
 
-/** Retrieve the emitter's output buffer. Valid until the arena is freed. */
+/** The emitter's output so far, copied into the emitter's arena and valid
+ *  until that is freed. Its data is NULL only when the copy can't be
+ *  allocated (or for a NULL emitter). */
 OYL_API oyl_str      oyl_emitter_output(oyl_emitter *e);
 
 /** Free the emitter (does not free the arena). */

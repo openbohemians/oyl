@@ -1207,9 +1207,7 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
             if (tab_after_indicator(s, s->pos))
                 SCAN_ERROR(s, "tabs are not allowed before a nested block collection");
             ptrdiff_t col = (ptrdiff_t)s->col - 1;
-            if (col > s->indent) {
-                indent_push(s, col);
-            }
+            if (col > s->indent && !indent_push(s, col)) return OYL_ERR_MEMORY;
             advance(s, 1);
             s->indicator_end = s->pos;
             *tok = tok_simple(OYL_TOK_BLOCK_SEQ_ENTRY, start, mark(s));
@@ -1227,9 +1225,7 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
             if (tab_after_indicator(s, s->pos))
                 SCAN_ERROR(s, "tabs are not allowed before a nested block collection");
             ptrdiff_t qcol = (ptrdiff_t)s->col - 1;
-            if (qcol > s->indent) {
-                indent_push(s, qcol);
-            }
+            if (qcol > s->indent && !indent_push(s, qcol)) return OYL_ERR_MEMORY;
             advance(s, 1);
             s->indicator_end = s->pos;
             s->explicit_key = true;
@@ -1287,9 +1283,7 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
                  * key) sits at its mapping's indentation */
                 map_col = colon_col;
             }
-            if (map_col > s->indent) {
-                indent_push(s, map_col);
-            }
+            if (map_col > s->indent && !indent_push(s, map_col)) return OYL_ERR_MEMORY;
             advance(s, 1);
             s->indicator_end = s->pos;
             *tok = tok_simple(OYL_TOK_BLOCK_MAP_VALUE, start, mark(s));

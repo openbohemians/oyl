@@ -56,7 +56,7 @@ TEST_TREE := $(OBJDIR)/test_tree
 
 .PHONY: all static shared pkgconfig install uninstall dist version \
         clean test test-suite test-schema test-emitter test-merge \
-        test-resolve test-errors test-flow test-json test-dialect test-tree test-all bench bench-parser bench-cmp bench-parser-cmp bench-compare bench-compare-tree bench-compare-emit bench-classify bench-oracle bench-parallel
+        test-resolve test-errors test-flow test-json test-dialect test-tree test-oom test-all bench bench-parser bench-cmp bench-parser-cmp bench-compare bench-compare-tree bench-compare-emit bench-classify bench-oracle bench-parallel
 
 all: $(LIB) $(TEST)
 
@@ -175,6 +175,14 @@ $(TEST_DIALECT): $(TESTDIR)/test_dialect.c $(LIB)
 $(TEST_TREE): $(TESTDIR)/test_tree.c $(LIB)
 	$(CC) $(OYL_CFLAGS) $< $(LIB) -lm -o $@
 
+# Every allocation failing in turn: malloc, calloc and realloc wrapped with
+# the linker's --wrap, which GNU ld (and lld) have, so Linux only
+ifeq ($(shell uname -s),Linux)
+TEST_OOM := $(OBJDIR)/test_oom
+$(TEST_OOM): $(TESTDIR)/test_oom.c $(LIB)
+	$(CC) $(OYL_CFLAGS) $< $(LIB) -lm -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc -o $@
+endif
+
 test: $(TEST)
 	@echo "─── Running scanner tests ───"
 	@./$(TEST)
@@ -219,7 +227,16 @@ test-tree: $(TEST_TREE)
 	@echo "─── Running tree tests ───"
 	@./$(TEST_TREE)
 
-test-all: test test-suite test-schema test-emitter test-merge test-resolve test-errors test-flow test-json test-dialect test-tree
+ifdef TEST_OOM
+test-oom: $(TEST_OOM)
+	@echo "─── Running allocation failure tests ───"
+	@./$(TEST_OOM)
+else
+test-oom:
+	@echo "─── Allocation failure tests: Linux only (the linker's --wrap) ───"
+endif
+
+test-all: test test-suite test-schema test-emitter test-merge test-resolve test-errors test-flow test-json test-dialect test-tree test-oom
 
 bench: $(OBJDIR)/bench_scanner $(OBJDIR)/bench_parser
 	@./$(OBJDIR)/bench_scanner $(SIZE)
