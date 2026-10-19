@@ -284,6 +284,40 @@ static outcome trees_deep(void) { return trees(deep); }
 static outcome trees_many(void) { return trees(many); }
 static outcome trees_graph(void) { return trees(graph); }
 
+/* A key whose value takes memory to read (a float too long for the stack
+ * buffer): failing, a lookup gives OYL_NO_NODE and entries OYL_ERR_MEMORY,
+ * never the key taken for its text (another key than 1.0) */
+static outcome trees_long_key(void) {
+    char yaml[256];
+    snprintf(yaml, sizeof yaml, "1.0: old\n? 1.%064d\n: new\n", 0);
+    oyl_arena *a = oyl_arena_new(4096);
+    if (!a) return OUT_OF_MEMORY;
+    oyl_parser *p = oyl_parser_new(yaml, strlen(yaml), a);
+    if (!p) { oyl_arena_free(a); return OUT_OF_MEMORY; }
+    oyl_tree *t = NULL;
+    oyl_status st = oyl_parse_tree(p, &t);
+    outcome o = DONE;
+    if (st != OYL_OK) {
+        o = failed(st);
+    } else {
+        oyl_value one = { .kind = OYL_VALUE_FLOAT, .as = { .f = 1.0 } };
+        uint32_t v = oyl_node_get_value(t, 0, &one);
+        const oyl_pair *pairs;
+        size_t np;
+        if (v == OYL_NO_NODE) {
+            o = OUT_OF_MEMORY;   /* it's there: only memory can lose it */
+        } else {
+            put_str(oyl_node_text(t, v));
+            if ((st = oyl_node_entries(t, 0, 0, a, &pairs, &np)) != OYL_OK) o = failed(st);
+            else put(" %zu", np);
+        }
+    }
+    oyl_tree_free(t);
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+    return o;
+}
+
 /* Looking up "1" in m walks the merges: running out of memory on the way
  * must give OYL_NO_NODE, not the int 1 that "1" spells */
 static outcome trees_costly(void) {
@@ -520,6 +554,7 @@ int main(void) {
     run("trees, many merges", trees_many);
     run("trees, a merge graph", trees_graph);
     run("trees, costly merges", trees_costly);
+    run("trees, a long key", trees_long_key);
     run("JSON", json_core);
     run("JSON, many merges", json_many);
     run("JSON, go-yaml v2", json_k8s);

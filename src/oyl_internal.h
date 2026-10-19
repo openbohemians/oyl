@@ -129,8 +129,13 @@ static inline void oyl_hash_start(oyl_hasher *h, const oyl_hash_key *key) {
     h->buf = h->len = 0;
 }
 
-/* Blocks are read in the machine's byte order: a hash only has to be the
- * same within one process */
+/* SipHash reads its blocks little-endian, on every machine; compilers make
+ * this one load where the machine is little-endian too */
+static inline uint64_t oyl_load64le(const unsigned char *p) {
+    return (uint64_t)p[0] | (uint64_t)p[1] << 8 | (uint64_t)p[2] << 16 | (uint64_t)p[3] << 24 |
+           (uint64_t)p[4] << 32 | (uint64_t)p[5] << 40 | (uint64_t)p[6] << 48 | (uint64_t)p[7] << 56;
+}
+
 static inline void oyl_hash_bytes(oyl_hasher *h, const void *data, size_t n) {
     const unsigned char *p = data;
     for (; n && (h->len & 7); n--) {
@@ -140,11 +145,7 @@ static inline void oyl_hash_bytes(oyl_hasher *h, const void *data, size_t n) {
             h->buf = 0;
         }
     }
-    for (; n >= 8; n -= 8, p += 8, h->len += 8) {
-        uint64_t m;
-        memcpy(&m, p, 8);
-        oyl_sip_block(h, m);
-    }
+    for (; n >= 8; n -= 8, p += 8, h->len += 8) oyl_sip_block(h, oyl_load64le(p));
     for (; n; n--) h->buf |= (uint64_t)*p++ << (8 * (h->len++ & 7));
 }
 
@@ -165,7 +166,7 @@ static inline uint64_t oyl_hash(const oyl_hash_key *key, const void *data, size_
     return oyl_hash_end(&h);
 }
 
-/* A number's hash, as its 8 bytes' */
+/* A number's hash: its 8 bytes', little-endian */
 static inline uint64_t oyl_hash_u64(const oyl_hash_key *key, uint64_t x) {
     oyl_hasher h;
     oyl_hash_start(&h, key);

@@ -535,18 +535,22 @@ static uint32_t merge_items(const oyl_tree *t, uint32_t v, uint32_t *first) {
     return seq ? t->nodes[v].len : 1;
 }
 
-/* Key k as keys are compared (k a scalar, not an alias) */
-static void key_of(const oyl_tree *t, uint32_t k, oyl_key *key) {
+/* Key k as keys are compared (k a scalar, not an alias). False if its
+ * value can't be read for want of memory (a long float's), which mustn't
+ * make it another key: its text. */
+static bool key_of(const oyl_tree *t, uint32_t k, oyl_key *key) {
     const oyl_node *n = &t->nodes[k];
     if (!n->props && (n->style != OYL_SCALAR_PLAIN || n->type == 0)) {   /* a string, as most keys are */
         *key = (oyl_key){ n->style != OYL_SCALAR_PLAIN ? t->schema->default_quoted_tag
                                                       : t->schema->default_plain_tag,
                           { .kind = OYL_VALUE_STR, .as = { .s = oyl_tree_text(t, n) } } };
-        return;
+        return true;
     }
     oyl_value v;
     oyl_status st = oyl_node_value(t, k, &v);
+    if (st == OYL_ERR_MEMORY) return false;
     oyl_key_make(key, oyl_key_tag(t->schema, oyl_node_tag(t, k)), oyl_node_text(t, k), st, &v);
+    return true;
 }
 
 /* ── Merges ──────────────────────────────────────────────── */
@@ -680,6 +684,7 @@ typedef struct {
     const oyl_tree *t;
     const oyl_key  *key;    /* the key equal to this, or */
     oyl_str         text;   /* any scalar key with this text */
+    bool           *oom;    /* set if memory ran out: the answer can't be trusted */
 } getter;
 
 static bool matches(const getter *g, uint32_t k) {
@@ -691,16 +696,65 @@ static bool matches(const getter *g, uint32_t k) {
         return n->len == g->text.len &&
                (g->text.len == 0 || memcmp(oyl_tree_text(t, n).data, g->text.data, g->text.len) == 0);
     oyl_key key;
-    key_of(t, k, &key);
+    if (!key_of(t, k, &key)) {
+        *g->oom = true;
+        return false;
+    }
     return oyl_key_cmp(&key, g->key) == 0;
 }
 
 /* A mapping in a lookup's walk: its entries list[lo, at) still to look
- * at, from the last, and the items of the merge being looked at */
+ * at, from the last, and the items of the merge being looked at: its own,
+ * or a shared sequence's in its note */
 typedef struct {
     uint32_t map, lo, at;
     uint32_t item, left;
+    uint32_t note;   /* the shared sequence's note, or NONE */
 } visit;
+
+/* A sequence that a walk meets through an alias, which many mappings may
+ * merge: its items are gone through once, however many merge it, and
+ * whether it can merge into a mapping follows from two facts. A mapping
+ * inside the sequence is inside one of its items, so never merges it; for
+ * one outside, only those of its items' mappings that contain the
+ * sequence can contain the mapping, and they nest: the outermost decides. */
+typedef struct {
+    uint32_t outer;        /* the outermost of its items' mappings that contains it, or NONE */
+    uint32_t item, left;   /* its items not yet gone through */
+    bool     maps;         /* its items are all mappings */
+} seq_note;
+
+typedef struct {
+    oyl_node_map index;    /* each sequence's note, by node */
+    seq_note    *note, note_buf[8];
+    uint32_t     n, cap;
+} seq_notes;
+
+/* Can value v of a << in mapping m be merged (as mergeable says)? An alias
+ * to a sequence is looked at once in a walk. *note: the sequence's note,
+ * or NONE; -1 if out of memory. */
+static int walk_mergeable(const oyl_tree *t, seq_notes *sn, uint32_t m, uint32_t v, uint32_t *note) {
+    const oyl_node *n = t->nodes;
+    uint32_t s = merge_value(t, v), i;
+    *note = NONE;
+    if (s == v) return mergeable(t, m, v);
+    if ((i = oyl_nmap_get(&sn->index, s)) == NONE) {
+        if (!room((void **)&sn->note, sn->note_buf, &sn->cap, sn->n, sizeof *sn->note) ||
+            !oyl_nmap_put(&sn->index, s, sn->n))
+            return -1;
+        seq_note q = { NONE, s + 1, n[s].len, true };
+        for (uint32_t c = 0, item = s + 1; c < n[s].len; c++, item += n[item].span) {
+            uint32_t x = oyl_node_target(t, item);
+            if (n[x].kind != OYL_NODE_MAPPING) q.maps = false;
+            else if (x <= s && s < x + n[x].span && x < q.outer) q.outer = x;
+        }
+        sn->note[i = sn->n++] = q;
+    }
+    *note = i;
+    const seq_note *q = &sn->note[i];
+    if (s < m && m < s + n[s].span) return 0;
+    return q->maps && !(q->outer != NONE && q->outer <= m && m < q->outer + n[q->outer].span);
+}
 
 /* The key that counts among a mapping's pairs worked out: the first that
  * matches in the order keys win (a key matches once, text more often) */
@@ -721,12 +775,15 @@ static uint32_t get_worked_out(const getter *g, const merged_pair *p, uint32_t n
  * << first and a sequence's items in order; in go-yaml v2's, its entries
  * from the last, a merge's items in order. NONE also if out of memory,
  * with *oom set. */
-static uint32_t get_merged(const getter *g, uint32_t m, bool *oom) {
+static uint32_t get_merged(const getter *g, uint32_t m) {
     const oyl_tree *t = g->t;
     const oyl_node *n = t->nodes;
     bool ordered = t->merge == OYL_MERGE_ORDERED;
     oyl_node_map seen;
     oyl_nmap_init(&seen, &t->hash_key);
+    seq_notes sn = { .cap = 8 };
+    sn.note = sn.note_buf;
+    oyl_nmap_init(&sn.index, &t->hash_key);
     uint32_t list_buf[64], *list = list_buf, nlist = 0, list_cap = 64;
     visit stack_buf[16], *stack = stack_buf;
     uint32_t nstack = 0, stack_cap = 16;
@@ -736,11 +793,14 @@ static uint32_t get_merged(const getter *g, uint32_t m, bool *oom) {
         if (next != NONE) {
             /* YAML's merge looks at its own keys now and keeps its merges
              * for later; go-yaml v2's order keeps all its entries */
-            uint32_t s = next, lo = nlist, k = s + 1;
+            uint32_t s = next, lo = nlist, k = s + 1, note;
             next = NONE;
             for (uint32_t c = 0; c < n[s].len && ok; c++) {
                 uint32_t v = k + n[k].span;
-                if (!ordered && !(is_merge_key(t, k) && mergeable(t, s, v))) {
+                int merges = !ordered && is_merge_key(t, k) ? walk_mergeable(t, &sn, s, v, &note) : 0;
+                if (merges < 0) {
+                    ok = false;
+                } else if (!ordered && !merges) {
                     if (matches(g, k)) found = k;
                 } else if ((ok = room((void **)&list, list_buf, &list_cap, nlist, sizeof *list))) {
                     list[nlist++] = k;
@@ -749,20 +809,28 @@ static uint32_t get_merged(const getter *g, uint32_t m, bool *oom) {
             }
             if (!ok || found != NONE) break;
             if ((ok = room((void **)&stack, stack_buf, &stack_cap, nstack, sizeof *stack)))
-                stack[nstack++] = (visit){ .map = s, .lo = lo, .at = nlist };
+                stack[nstack++] = (visit){ .map = s, .lo = lo, .at = nlist, .note = NONE };
             continue;
         }
         if (!nstack) break;
         visit *f = &stack[nstack - 1];
-        if (f->left) {   /* the merge's next mapping, unless visited */
-            uint32_t x = oyl_node_target(t, f->item);
-            f->item += n[f->item].span;
-            f->left--;
+        /* a shared sequence's items before its note's are visited, or about
+         * to be by a walk below this one: it goes on where that is */
+        uint32_t *item = f->note != NONE ? &sn.note[f->note].item : &f->item;
+        uint32_t *left = f->note != NONE ? &sn.note[f->note].left : &f->left;
+        if (*left) {   /* the merge's next mapping, unless visited */
+            uint32_t x = oyl_node_target(t, *item);
+            *item += n[*item].span;
+            (*left)--;
             if (oyl_nmap_get(&seen, x) == NONE && (ok = oyl_nmap_put(&seen, x, 0))) next = x;
         } else if (f->at > f->lo) {
-            uint32_t k = list[--f->at], v = k + n[k].span;
-            if (is_merge_key(t, k) && mergeable(t, f->map, v)) {
-                f->left = merge_items(t, v, &f->item);
+            uint32_t k = list[--f->at], v = k + n[k].span, note;
+            int merges = is_merge_key(t, k) ? walk_mergeable(t, &sn, f->map, v, &note) : 0;
+            if (merges < 0) {
+                ok = false;
+            } else if (merges) {
+                f->note = note;
+                if (note == NONE) f->left = merge_items(t, v, &f->item);
             } else if (matches(g, k)) {
                 found = k;
                 break;
@@ -773,22 +841,27 @@ static uint32_t get_merged(const getter *g, uint32_t m, bool *oom) {
         }
     }
     oyl_nmap_free(&seen);
+    oyl_nmap_free(&sn.index);
+    if (sn.note != sn.note_buf) free(sn.note);
     if (list != list_buf) free(list);
     if (stack != stack_buf) free(stack);
-    if (!ok) *oom = true;
+    if (!ok) *g->oom = true;
     return ok ? found : NONE;
 }
 
-/* The key in mapping `map` that counts for `key`, or NONE (with *oom set
- * if memory ran out walking its merges) */
+/* The key in mapping `map` that counts for `key`, or NONE; if memory runs
+ * out, *oom is set and the answer is NONE */
 static uint32_t get_key(const oyl_tree *t, uint32_t map, const oyl_key *key, oyl_str text, bool *oom) {
     const oyl_node *n = t->nodes;
-    getter g = { .t = t, .key = key, .text = text };
+    getter g = { .t = t, .key = key, .text = text, .oom = oom };
     /* with the merges worked out, a mapping that merges has its pairs, and
      * one without them merges nothing: its << keys are ordinary keys */
     if (t->merges) {
         const merged_map *r = merged_of(t, map);
-        if (r) return get_worked_out(&g, &t->merges->pairs[r->first], r->n + (key ? 0 : r->spelled));
+        if (r) {
+            uint32_t found = get_worked_out(&g, &t->merges->pairs[r->first], r->n + (key ? 0 : r->spelled));
+            return *oom ? NONE : found;
+        }
     }
     bool merging = t->merge != OYL_MERGE_NONE && !t->merges;
     uint32_t found = NONE, last_merge = NONE, k = map + 1;
@@ -798,10 +871,12 @@ static uint32_t get_key(const oyl_tree *t, uint32_t map, const oyl_key *key, oyl
         else if (matches(&g, k)) found = k;
         k = v + n[v].span;
     }
+    if (*oom) return NONE;
     /* a key written wins, in go-yaml v2's order over the merges before it */
     if (last_merge == NONE || (found != NONE && (t->merge == OYL_MERGE_YAML || found > last_merge)))
         return found;
-    return get_merged(&g, map, oom);
+    found = get_merged(&g, map);
+    return *oom ? NONE : found;
 }
 
 static uint32_t value_of(const oyl_tree *t, uint32_t k) {
@@ -815,12 +890,12 @@ uint32_t oyl_node_get(const oyl_tree *t, uint32_t map, oyl_str key) {
     oyl_key str = { t->schema->default_quoted_tag, { .kind = OYL_VALUE_STR, .as = { .s = key } } };
     bool oom = false;
     uint32_t k = get_key(t, map, &str, key, &oom);
-    if (k != NONE) return value_of(t, k);
     if (oom) return NONE;   /* not "no string key": by text it could find another */
+    if (k != NONE) return value_of(t, k);
     if ((k = get_key(t, map, NULL, key, &oom)) == NONE) return NONE;
     k = oyl_node_target(t, k);
     oyl_key written;
-    key_of(t, k, &written);
+    if (!key_of(t, k, &written)) return NONE;
     return value_of(t, get_key(t, map, &written, key, &oom));
 }
 
@@ -874,7 +949,10 @@ ALWAYS_INLINE bool push_ent(collector *c, ent e) {
             c->status = OYL_ERR_MEMORY;
             return false;
         }
-        key_of(c->t, k, &c->forms[c->nforms]);
+        if (!key_of(c->t, k, &c->forms[c->nforms])) {
+            c->status = OYL_ERR_MEMORY;
+            return false;
+        }
         e.form = c->nforms++;
     }
     c->e[c->len++] = e;
@@ -1460,7 +1538,9 @@ static bool work_out_merges(oyl_tree *t) {
     worker wk = { .t = t, .mg = calloc(1, sizeof *wk.mg),
                   .left = ((uint64_t)t->len * 16 + 100000) * 4 };   /* as the parser's for events */
     if (!wk.mg) return false;
-    if (wk.left > UINT32_MAX / 2) wk.left = UINT32_MAX / 2;
+    /* under 2^30, so that a mapping's entries (at most this many) fit a
+     * settling table of twice as many slots, a power of two, in 32 bits */
+    if (wk.left >= 1u << 30) wk.left = (1u << 30) - 1;
     oyl_key_hash_tag(&wk.tag_hash, &t->hash_key, wk.tag);
     oyl_nmap_init(&wk.mg->index, &t->hash_key);
     /* the pairs exist even if none are kept, so that offsets into them are

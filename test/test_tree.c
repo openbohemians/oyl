@@ -874,7 +874,24 @@ static void test_worked_out(void) {
     check_entries(&x, "d", 0, "k=3 j=2");
     unload(&x);
 
-    const char *docs[] = { MERGES, MORE_MERGES, KEYS, spelled };
+    /* sequences shared through aliases, which a walk goes through once;
+     * one with an item containing the mapping merging it is an ordinary key */
+    const char *shared = "a: &a {k: 1}\nb: &b {j: 2, <<: *a}\ns: &s [*a, *b]\nc: &c {<<: *s, i: 3}\n"
+                         "d: {<<: [*c, *b], k: 4}\ne: {<<: *s}\n"
+                         "t: &t {s2: &s2 [*t, *a], m: {<<: *s2, q: 5}}\nu: {<<: *s2, s2: 6}\n"
+                         "v: &v [&w {<<: *v, x: 1}, {y: 2}]\nz: {<<: *w}\n";
+    x = load(shared);
+    ASSERT(str_is(text_at(&x, "d.j"), "2") && str_is(text_at(&x, "d.k"), "4") && str_is(text_at(&x, "e.k"), "1"),
+           "a shared sequence merges");
+    ASSERT(str_is(text_at(&x, "t.m.q"), "5") && str_is(text_at(&x, "t.m.k"), "<none>"),
+           "not into a mapping inside one of its items");
+    ASSERT(str_is(text_at(&x, "u.m.q"), "5") && str_is(text_at(&x, "u.k"), "1") && str_is(text_at(&x, "u.s2"), "6"),
+           "but into one outside");
+    ASSERT(str_is(text_at(&x, "z.x"), "1") && str_is(text_at(&x, "z.y"), "<none>"),
+           "nor into one inside it (its << an ordinary key)");
+    unload(&x);
+
+    const char *docs[] = { MERGES, MORE_MERGES, KEYS, spelled, shared };
     for (size_t i = 0; i < sizeof docs / sizeof *docs; i++) {
         ASSERT(lookups_walk_alike(docs[i], NULL), "lookups worked out and walked agree (YAML's merge)");
         ASSERT(lookups_walk_alike(docs[i], oyl_dialect_goyaml2()), "lookups agree (go-yaml v2's)");
@@ -926,6 +943,24 @@ static void test_worked_out(void) {
     ASSERT(oyl_node_entries(x.t, last, 0, a, &pairs, &np) == OYL_ERR_LIMIT, "its entries: too costly");
     uint32_t v = oyl_node_get(x.t, last, (oyl_str){ "k", 1 });
     ASSERT(v != OYL_NO_NODE && str_is(oyl_node_text(x.t, v), "v"), "a lookup walks them");
+    unload(&x);
+
+    /* a sequence of 20,000 items that 5,000 mappings merge, all merged by
+     * one, past the bound: its lookups go through the sequence once, not
+     * once for each mapping (100 million steps, seconds, each) */
+    len = 0;
+    len += (size_t)snprintf(big + len, cap - len, "e: &e {}\ns: &s [");
+    for (int i = 0; i < 20000; i++) len += (size_t)snprintf(big + len, cap - len, i ? ",*e" : "*e");
+    len += (size_t)snprintf(big + len, cap - len, "]\n");
+    for (int j = 0; j < 5000; j++)
+        len += (size_t)snprintf(big + len, cap - len, "m%d: &m%d {<<: *s%s}\n", j, j, j == 4999 ? ", z: last" : "");
+    len += (size_t)snprintf(big + len, cap - len, "out: {<<: [");
+    for (int j = 0; j < 5000; j++) len += (size_t)snprintf(big + len, cap - len, "%s*m%d", j ? ", " : "", j);
+    len += (size_t)snprintf(big + len, cap - len, "]}\n");
+    x = load_big(big, len);
+    ASSERT(x.st == OYL_OK && entries_status(&x, "out", 0) == OYL_ERR_LIMIT, "merged by many, past the bound");
+    ASSERT(str_is(text_at(&x, "out.z"), "last") && str_is(text_at(&x, "out.zz"), "<none>"),
+           "lookups walk the shared sequence once");
     oyl_arena_free(a);
     unload(&x);
     free(big);

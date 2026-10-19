@@ -783,8 +783,8 @@ OYL_API uint32_t oyl_node_target(const oyl_tree *t, uint32_t i);
  *  value; << merges apply in the order of the document's dialect. A <<
  *  whose value can't be merged (not a mapping, an alias to one, or a
  *  sequence of those, which YAML's merge also takes through an alias) is
- *  an ordinary key. OYL_NO_NODE also if memory runs out walking merges
- *  too costly to work out. */
+ *  an ordinary key. OYL_NO_NODE also if memory runs out: walking merges
+ *  too costly to work out, or reading a key's value (a long float's). */
 OYL_API uint32_t oyl_node_get(const oyl_tree *t, uint32_t map, oyl_str key);
 
 /** As oyl_node_get(), for the key equal to @p key: a scalar of its kind's
