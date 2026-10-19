@@ -203,7 +203,12 @@ value, mark, span, raw_nodes; Send + Sync; `Emitter::tree`), `Value`,
 fixed in `8b2a7e2`: a tree's dialect pointed into the parser when only a
 schema was set. **To publish:** after Oyl 1.2.0 is tagged, re-vendor the
 tag (oyl-sys becomes 0.2.0+1.2.0), merge `oyl-1.2` into main, and ask
-the user before `cargo publish --workspace`. **Step 3 done 2026-10-18
+the user before `cargo publish --workspace`. **At the re-vendor, since
+`08d17c4`:** `oyl_dialect_new` takes a version (second argument; fix the
+oyl-sys declaration, add `oyl_dialect_version`), and the docs of
+`Dialect` and `Parser::dialect` (oyl/src/lib.rs, "unless it starts with
+`%YAML 1.1`") must say the new rule: `%YAML 1.1` keeps a default of 1.1
+(go-yaml v2), `%YAML 1.2` a schema set alone. **Step 3 done 2026-10-18
 (`e433cfa`):** the `serde` feature: `from_str`/`from_slice`/`from_reader`
 (YAML 1.2), `from_str_with`/`from_slice_with` (a dialect), `from_node`;
 strict duplicate keys (an error whatever the target type: serde_yaml

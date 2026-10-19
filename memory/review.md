@@ -1,6 +1,6 @@
 # Code review before 1.2.0
 
-*Updated 2026-10-18*
+*Updated 2026-10-19*
 
 The user asked for a thorough independent review of the C code (2026-10-18).
 Plan agreed: three layers. (1) Automated analysis and coverage, done
@@ -32,13 +32,16 @@ hash set for seen keys; the depth limit checked while writing. Same
 values as PyYAML on 12,000 random documents. Still: trees and JSON
 refuse such a diamond with OYL_ERR_LIMIT (bounded, but PyYAML reads it);
 memoizing there too is open.
-**Open, decided by the user 2026-10-19 ("the document wins"), not yet
-built:** (2) a `%YAML` version the default dialect covers keeps it (go-yaml
-v2 is a 1.1 dialect, so `%YAML 1.1` keeps go-yaml v2; a registered 1.1
-dialect, else the built-in, only when the default isn't 1.1); (3)
-`%YAML 1.2` keeps a schema set with oyl_parser_set_schema (the spec leaves
-1.2's schema to the application); only `%YAML 1.1` switches. One rule:
-the document picks the version, the program the dialect for each.
+**(2) and (3) fixed in `08d17c4`** (the user decided 2026-10-19, "the
+document wins"): each dialect is of one YAML version (`oyl_dialect_new`
+takes it; go-yaml v2's is 1.1). `%YAML` gets the dialect registered for
+that version, else the default if of that version, else the built-in:
+`%YAML 1.1` keeps go-yaml v2, `%YAML 1.2` keeps a schema set alone (the
+spec leaves 1.2's schema to the application). A registered version comes
+before the default (my refinement: the registration is the program's
+explicit choice) and lets a go-yaml v2 world take that version. One
+rule: the document picks the version, the program the dialect for each.
+An override to ignore directives only if someone asks.
 
 ## Layer 1, 2026-10-18 (code at `4191b09`)
 
