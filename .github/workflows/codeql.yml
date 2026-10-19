@@ -1,0 +1,32 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 4 * * 1'   # weekly, for new queries
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    name: Analyze (C)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: c-cpp
+          build-mode: manual
+          queries: security-extended
+
+      - name: Build the library
+        run: make build/liboyl.a
+
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:c-cpp
