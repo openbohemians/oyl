@@ -17,6 +17,11 @@ docs (bench scripts left out). Each head is exactly `main` at `f29f219`;
 each base is `main` with that group's files as at v1.0.0
 (`review/<group>-base`). The user runs `/code-review ultra <n>` on each.
 Not for merging: close them and delete the `review/*` branches after.
+**Rebuilt 2026-10-19 on `792d5ae`** (all but #5, already reviewed): same
+two-commit shape (base: `main` + group files at v1.0.0; head: base +
+`main`'s tree). Trees is now 2,453 lines (the merge cache); no size limit
+is documented (9,292 was refused, up to 1,828 accepted): if ultrareview
+refuses #2, split `oyl_tree.c` from `test_tree.c`.
 
 **PR #5 (parser) reviewed 2026-10-19:** 7 findings, all verified. (The
 review's comment couldn't be posted: GitHub refused it for the user's
