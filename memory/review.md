@@ -18,6 +18,28 @@ each base is `main` with that group's files as at v1.0.0
 (`review/<group>-base`). The user runs `/code-review ultra <n>` on each.
 Not for merging: close them and delete the `review/*` branches after.
 
+**PR #5 (parser) reviewed 2026-10-19:** 7 findings, all verified. (The
+review's comment couldn't be posted: GitHub refused it for the user's
+account.) Fixed in `f683f74`: (1) exponential nested merges, a regression
+from `5c12136` (a chain each merging the one before twice: 0.28 s at 20,
+days at 40; v1.0.0 fast); (4) event_key taking OOM for "tag rejects";
+(5) a misplaced comment; (6) merge verdicts recomputed; (7, since v1.0.0)
+32-pass merge limit leaving `<<` unmerged, and a self-merge's copy
+merging again. Rework: each mapping's merged pairs worked out once at its
+place (as trees), copied run by run, one pass writing out; a budget of
+4x the expansion limit (OYL_ERR_LIMIT "merges too costly to expand");
+hash set for seen keys; the depth limit checked while writing. Same
+values as PyYAML on 12,000 random documents. Still: trees and JSON
+refuse such a diamond with OYL_ERR_LIMIT (bounded, but PyYAML reads it);
+memoizing there too is open.
+**Open, decided by the user 2026-10-19 ("the document wins"), not yet
+built:** (2) a `%YAML` version the default dialect covers keeps it (go-yaml
+v2 is a 1.1 dialect, so `%YAML 1.1` keeps go-yaml v2; a registered 1.1
+dialect, else the built-in, only when the default isn't 1.1); (3)
+`%YAML 1.2` keeps a schema set with oyl_parser_set_schema (the spec leaves
+1.2's schema to the application); only `%YAML 1.1` switches. One rule:
+the document picks the version, the program the dialect for each.
+
 ## Layer 1, 2026-10-18 (code at `4191b09`)
 
 - **clang static analyzer** (scan-build, with alpha cstring, pointer
