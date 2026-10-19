@@ -19,6 +19,15 @@
 #include <string.h>
 #include <stdio.h>
 
+/* Code the 2026-10-18 review found unreachable is kept under #if 0, to be
+ * deleted once more fuzzing agrees. Where its guard was, fuzzing builds
+ * trap if it is ever reached. */
+#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
+#define DEAD_CODE_REACHED() __builtin_trap()
+#else
+#define DEAD_CODE_REACHED() ((void)0)
+#endif
+
 /* ── Context types ───────────────────────────────────────── */
 
 typedef enum {
@@ -42,19 +51,21 @@ typedef enum {
     ST_BLOCK_NODE, ST_BLOCK_NODE_SCALAR, ST_BLOCK_NODE_SCALAR_KEY,
     ST_BLOCK_NODE_ALIAS, ST_BLOCK_NODE_ALIAS_KEY,
     ST_BLOCK_NODE_SEQ, ST_BLOCK_NODE_EXPLICIT_KEY, ST_BLOCK_NODE_BARE_VALUE,
-    ST_BLOCK_NODE_EMPTY,
     ST_BLOCK_MAP_LOOP, ST_BLOCK_MAP_EXPLICIT_KEY, ST_BLOCK_MAP_SIMPLE_KEY,
-    ST_BLOCK_MAP_POST_KEY, ST_BLOCK_MAP_VALUE, ST_BLOCK_MAP_VALUE_NODE,
+    ST_BLOCK_MAP_POST_KEY, ST_BLOCK_MAP_VALUE,
     ST_BLOCK_MAP_END,
-    ST_BLOCK_SEQ_LOOP, ST_BLOCK_SEQ_ENTRY, ST_BLOCK_SEQ_ENTRY_NODE,
+    ST_BLOCK_SEQ_LOOP, ST_BLOCK_SEQ_ENTRY,
     ST_BLOCK_SEQ_END,
-    ST_UNROLL,
+#if 0   /* dead, to be deleted: nothing can enter these (see DEAD_CODE_REACHED) */
+    ST_BLOCK_NODE_EMPTY, ST_BLOCK_MAP_VALUE_NODE, ST_BLOCK_SEQ_ENTRY_NODE,
+    ST_UNROLL, ST_FLOW_SEQ_CHECK_COLON,
+#endif
     /* Flow sequence (incremental) */
     ST_FLOW_SEQ_LOOP, ST_FLOW_SEQ_ENTRY, ST_FLOW_SEQ_ENTRY_KEY,
     ST_FLOW_SEQ_IMPLICIT_END,
     ST_FLOW_SEQ_EXPLICIT_KEY, ST_FLOW_SEQ_EXPLICIT_VALUE,
     ST_FLOW_SEQ_EXPLICIT_END,
-    ST_FLOW_SEQ_CHECK_COLON, ST_FLOW_SEQ_SEP, ST_FLOW_SEQ_END,
+    ST_FLOW_SEQ_SEP, ST_FLOW_SEQ_END,
     /* Flow mapping (incremental) */
     ST_FLOW_MAP_LOOP, ST_FLOW_MAP_VALUE, ST_FLOW_MAP_SEP, ST_FLOW_MAP_END,
     /* Flow node dispatch (incremental) */
@@ -165,7 +176,9 @@ struct oyl_parser {
     oyl_event    saved_node;    /* saved scalar/alias for : lookahead */
     ptrdiff_t    saved_node_col;
     bool         have_saved_node;
+#if 0   /* dead, to be deleted: ST_UNROLL's */
     parser_state unroll_return;
+#endif
     parser_state node_return;  /* where to go after a block node completes */
     int          events_delivered; /* events returned to caller (for eager fallback skip) */
     uint64_t     delivered_sig;    /* running signature of their types */
@@ -360,8 +373,13 @@ static inline bool in_flow(oyl_parser *p) {
     return top && (top->type == CTX_FLOW_MAP || top->type == CTX_FLOW_SEQ);
 }
 
-/* Close all block contexts */
+/* Close all block contexts. Dead, to be deleted with its calls: a
+ * document's contexts are closed when it ends, so they are open here only
+ * when parsing went on after an error, which it no longer does. */
 static void unroll_all(oyl_parser *p, oyl_mark mark) {
+    if (p->ctx_len > 0 && !in_flow(p)) DEAD_CODE_REACHED();
+    (void)mark;
+#if 0
     while (p->ctx_len > 0) {
         ctx_entry *top = top_ctx(p);
         if (top->type == CTX_FLOW_MAP || top->type == CTX_FLOW_SEQ) break;
@@ -373,6 +391,7 @@ static void unroll_all(oyl_parser *p, oyl_mark mark) {
         enqueue(p, &evt);
         pop_ctx(p);
     }
+#endif
 }
 
 /* ── Attach pending anchor/tag ───────────────────────────── */
@@ -1642,6 +1661,15 @@ static oyl_status parse_block_node(oyl_parser *p) {
         enqueue(p, &empty_evt);
         return OYL_OK;
     }
+    /* Dead, to be deleted: a '-' on the props' line is an error, and one
+     * on a later line not indented past its block has had its empty
+     * scalar from the check at the top */
+    if ((p->has_anchor || p->has_tag) && tt == OYL_TOK_BLOCK_SEQ_ENTRY) {
+        ctx_entry *ctx = top_ctx(p);
+        if (ctx && (col < ctx->indent || (ctx->type == CTX_BLOCK_SEQ && col == ctx->indent)))
+            DEAD_CODE_REACHED();
+    }
+#if 0
     if ((p->has_anchor || p->has_tag) && tt == OYL_TOK_BLOCK_SEQ_ENTRY) {
         ctx_entry *ctx = top_ctx(p);
         /* If '-' is below (strictly less than) the current context's indent,
@@ -1662,6 +1690,7 @@ static oyl_status parse_block_node(oyl_parser *p) {
             return OYL_OK;
         }
     }
+#endif
 
     /* block sequence */
     if (tt == OYL_TOK_BLOCK_SEQ_ENTRY) {
@@ -3833,6 +3862,7 @@ static oyl_status parser_step_flow(oyl_parser *p) {
         return OYL_OK;
     }
 
+#if 0   /* dead, to be deleted (see the enum): flow_is_block_key decides first */
     case ST_FLOW_SEQ_CHECK_COLON: {
         /* After nested flow collection entry, check for ':' */
         peek_token(p);
@@ -3844,6 +3874,7 @@ static oyl_status parser_step_flow(oyl_parser *p) {
         p->state = ST_FLOW_SEQ_SEP;
         return OYL_OK;
     }
+#endif
 
     case ST_FLOW_SEQ_SEP: {
         peek_token(p);
@@ -3940,14 +3971,21 @@ static oyl_status parser_step(oyl_parser *p) {
             /* doc end without content, emit implicit doc */
             consume_token(p);
             p->state = ST_STREAM_DOC_LOOP;
+#if 0   /* dead, to be deleted: ST_STREAM_DOC_LOOP took STREAM_END */
         } else if (tt == OYL_TOK_STREAM_END) {
             p->state = ST_STREAM_END;
+#endif
         } else {
+            if (tt == OYL_TOK_STREAM_END) DEAD_CODE_REACHED();
             p->state = ST_DOC_START_IMPLICIT;
         }
         return OYL_OK;
 
     case ST_DOC_START_EXPLICIT: {
+        /* dead, to be deleted: the document before is closed (and its
+         * frames popped) before ST_STREAM_DOC_LOOP */
+        if (p->doc_open) DEAD_CODE_REACHED();
+#if 0
         /* close previous doc if open */
         if (p->doc_open) {
             /* unroll any open collections */
@@ -3964,6 +4002,7 @@ static oyl_status parser_step(oyl_parser *p) {
             inc_emit(p, &evt);
             p->doc_open = false;
         }
+#endif
         peek_token(p);
         mark = p->current.start;
         oyl_mark marker_end = p->current.end;            /* the "---" */
@@ -3980,6 +4019,8 @@ static oyl_status parser_step(oyl_parser *p) {
     }
 
     case ST_DOC_START_IMPLICIT: {
+        if (p->doc_open) DEAD_CODE_REACHED();   /* dead, as at ST_DOC_START_EXPLICIT */
+#if 0
         if (p->doc_open) {
             if (p->frame_len > 0) {
                 p->unroll_return = ST_DOC_START_IMPLICIT;
@@ -3994,6 +4035,7 @@ static oyl_status parser_step(oyl_parser *p) {
             inc_emit(p, &evt);
             p->doc_open = false;
         }
+#endif
         peek_token(p);
         p->doc_start_line = 0;
         evt = evt_simple(OYL_EVT_DOC_START);
@@ -4116,8 +4158,16 @@ static oyl_status parser_step(oyl_parser *p) {
         if (tt == OYL_TOK_DIRECTIVE)
             PARSE_ERROR(p, "directive requires a preceding document end marker '...'");
 
+        /* dead, to be deleted: every way into ST_BLOCK_NODE has taken
+         * DOC_START, DOC_END and STREAM_END; should one come, the eager
+         * parser reads it */
+        DEAD_CODE_REACHED();
+#if 0
         /* DOC_START, DOC_END, STREAM_END → empty node */
         p->state = ST_BLOCK_NODE_EMPTY;
+        return OYL_OK;
+#endif
+        p->state = ST_EAGER_DRAIN;
         return OYL_OK;
 
     case ST_BLOCK_NODE_SCALAR: {
@@ -4262,6 +4312,7 @@ static oyl_status parser_step(oyl_parser *p) {
         return OYL_OK;
     }
 
+#if 0   /* dead, to be deleted (see the enum) */
     case ST_BLOCK_NODE_EMPTY: {
         peek_token(p);
         evt = evt_simple(OYL_EVT_SCALAR);
@@ -4273,6 +4324,7 @@ static oyl_status parser_step(oyl_parser *p) {
         p->state = p->node_return;
         return OYL_OK;
     }
+#endif
 
     case ST_BLOCK_MAP_LOOP: {
         peek_token(p);
@@ -4493,10 +4545,12 @@ static oyl_status parser_step(oyl_parser *p) {
         return OYL_OK;
     }
 
+#if 0   /* dead, to be deleted (see the enum) */
     case ST_BLOCK_MAP_VALUE_NODE:
         /* After parsing the value node, continue the map loop */
         p->state = ST_BLOCK_MAP_LOOP;
         return OYL_OK;
+#endif
 
     case ST_BLOCK_MAP_END: {
         state_frame frame = inc_pop_frame(p);
@@ -4568,9 +4622,11 @@ static oyl_status parser_step(oyl_parser *p) {
         return OYL_OK;
     }
 
+#if 0   /* dead, to be deleted (see the enum) */
     case ST_BLOCK_SEQ_ENTRY_NODE:
         p->state = ST_BLOCK_SEQ_LOOP;
         return OYL_OK;
+#endif
 
     case ST_BLOCK_SEQ_END: {
         state_frame frame = inc_pop_frame(p);
@@ -4585,6 +4641,7 @@ static oyl_status parser_step(oyl_parser *p) {
         return OYL_OK;
     }
 
+#if 0   /* dead, to be deleted (see the enum) */
     case ST_UNROLL: {
         /* Pop one frame per step, emit the corresponding end event */
         if (p->frame_len > 0) {
@@ -4604,6 +4661,7 @@ static oyl_status parser_step(oyl_parser *p) {
         p->state = p->unroll_return;
         return OYL_OK;
     }
+#endif
 
     case ST_DOC_END_EXPLICIT:
         return inc_end_document(p);
@@ -4614,7 +4672,7 @@ static oyl_status parser_step(oyl_parser *p) {
     case ST_FLOW_SEQ_LOOP: case ST_FLOW_SEQ_ENTRY: case ST_FLOW_SEQ_ENTRY_KEY:
     case ST_FLOW_SEQ_IMPLICIT_END: case ST_FLOW_SEQ_EXPLICIT_KEY:
     case ST_FLOW_SEQ_EXPLICIT_VALUE: case ST_FLOW_SEQ_EXPLICIT_END:
-    case ST_FLOW_SEQ_CHECK_COLON: case ST_FLOW_SEQ_SEP: case ST_FLOW_SEQ_END:
+    case ST_FLOW_SEQ_SEP: case ST_FLOW_SEQ_END:
         return parser_step_flow(p);
 
     case ST_EAGER_DRAIN:
