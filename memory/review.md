@@ -162,6 +162,56 @@ first fix wrongly merged -0.0 with the int 0, caught by comparing with
 YAMLToJSON (which picks at random between keys that become one string:
 compare per mapping over many runs, 8 runs miss its rarer choice).
 
+**PR #6 (emitter, OOM test, build) reviewed by a Claude subagent
+2026-10-20** (on `36b74b2`; brief `outtake/review-emitter-brief.md`, not
+committed): the byte-for-byte claim of the rewrite held (360,000 random
+outputs, the corpus in 10 configurations, 8,700 chunk boundaries). 9
+findings, all reproduced by the lead; the user approved all fixes and
+answered the one question with "follow the spec" (2026-10-20), so the
+parser now enforces YAML's 1024-character limit on implicit keys
+(`96fd0ac`). Fixed in `1aa0d8e`: consecutive implicit documents ran
+together (two trees `a: 1`, `b: 2` read back as one) and an empty one
+vanished, now `---`; single-quoted with control characters or DEL now
+double-quoted; keys over 1024 characters written `? key` (the key
+written first, then "? " inserted if too long, so the count is exact);
+C1, U+FEFF inside text, U+FFFE/F escaped, and NEL/LS/PS as `\N` `\L`
+`\P` (the spec allows them raw; escaped for YAML 1.1 readers, my call,
+told the user); `?x`/`:x` quoted in flow (libyaml and libfyaml misread);
+event order checked (OYL_ERR_EMIT), bad anchor/alias names refused, the
+first error final; the suite test and the fuzzer now check the emitter's
+status; parser: expand_tag on arena failure gave the raw tag with OYL_OK,
+a failed copy into a fresh checkpoint gave a parse error; `just sanitize`
+lost a failing test's output (set -e); test_oom: temp file via mkstemp,
+zero allocations fail, NUL-safe output, lookups clean only if the failing
+allocation was theirs, 8 new scenarios, and a second build test_oom_each
+(OYL_ARENA_EACH: every arena request its own malloc). Both builds catch
+the two parser bugs with the fixes undone. The fuzzer then found the
+parser accepting an alias name holding U+FEFF, which the emitter now
+refuses: the parser now refuses C1 (but NEL), U+FEFF, U+FFFE, U+FFFF in
+anchor and alias names too (a name can't escape them; in `1aa0d8e`).
+Speed: the escaping first cost 10% on ASCII and 55-65% on UTF-8-dense
+text. Now: errors kept off the success path (emit_fail poisons the state
+so every entry point's order check fails), an exact SSE2 match of the
+escaped sequences (3 loads per 16 bytes, the tail from a padded copy),
+double quotes written optimistically in one pass. Result vs `36b74b2`:
+ASCII inputs within noise (block +2%, JSON -2%, k8s -1 to -4%), UTF-8-dense
+text (CJK punctuation, typographic quotes in every scalar) -21% (double
+quoted) and -24% (plain). A SIMD scalar_classes was tried and dropped: +4%
+on long UTF-8 scalars, -5 to -8% on the short ones that dominate.
+Checks (final code): all tests, ASan/UBSan, the non-SSE2 fallback
+(-U__SSE2__), corpus replay, 406,000 new fuzz runs on the final code;
+old vs new emitter on the corpus (7 configurations, 545,006 outputs):
+23,260 differ: 22,154 style changes the fixes call for and 1,059 escapes
+inside double quotes (same events, by a scanner token comparison), 12
+keys over 1024 characters now explicit, and the 35 outputs of 5 inputs
+the parser now refuses (4 long keys, 1 anchor name); the reviewer's
+repro cases read the same in Oyl, libfyaml and PyYAML but for libyaml
+limits on valid 1.2 (bare document after `...`, empty keys, `k:}`, alias
+names ending in `:`, a literal starting with a tab).
+Not done (told the user): the emitter doesn't check that an alias names an
+anchor already written (todo.md). **Next: Codex on #6** (brief updated
+with the fixes and the known-and-decided list).
+
 **PR #5 (parser) reviewed 2026-10-19:** 7 findings, all verified. (The
 review's comment couldn't be posted: GitHub said the account "cannot
 comment on this pull request", though the user's account is admin and the

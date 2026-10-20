@@ -19,6 +19,18 @@ Larger features go in ideas.md, and the order of work in roadmap.md.
   events come out as `!!map`, `!!str a: !!int 1`, where its tree writes
   `a: 1`. Skipping implicit tags would make the two alike. Ask first:
   it changes what the emitter writes for such events.
+- **Emitter: aliases to anchors not yet written** (**Open**, mine,
+  2026-10-20). Since the #6 review fixes the emitter checks event order
+  and anchor/alias names (OYL_ERR_EMIT), but not that an alias names an
+  anchor already written in the document, which YAML requires. It would
+  need the names kept per document (copied: the caller's strings may not
+  last). Not asked for; offer it.
+- **oyl.rs at 1.2.0: the emitter checks order now** (**Open**, for the
+  re-vendor). Since the #6 fixes, emitter calls out of order are
+  `OYL_ERR_EMIT` and the first error is final; a document started
+  implicit may still get `---`; implicit keys over 1024 characters are a
+  parse error. Check the Rust `Emitter` wrapper and its tests and docs
+  (stream start before documents, errors after a failure).
 - **Emitter: no trailing space after `- `** (**Open**). A block sequence
   inside a block sequence is written `- ` + newline. That's valid YAML,
   but it leaves trailing whitespace. Seen 2026-10-12 while testing
