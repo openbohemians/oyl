@@ -461,9 +461,9 @@ decoding checks it, since go-yaml v2 and PyYAML decode even the value of
 a key set again later: a scalar its tag rejects (`!!int "abc"`), a
 collection as a key, a merge of what isn't a mapping, an unknown anchor.
 What only JSON can't hold (a null or uint64 key, inf or NaN) fails only
-where it would be written. In YAML's merge, each mapping merged is
-worked out once, within the bound the parser puts on merges for events
-with `max_events` off. Leave the parser's own merge and alias resolution
+where it would be written. In YAML's merge, each mapping merged, and
+each sequence of them merged through an alias, is worked out once, within
+the bound the parser puts on merges for events with `max_events` off. Leave the parser's own merge and alias resolution
 off.
 
 | Flag | Effect |
@@ -473,7 +473,8 @@ off.
 | `OYL_JSON_STRICT` | a key set twice in any mapping is an error (`YAMLToJSONStrict`), as are two keys that become one string (`1` and `"1"`, which `YAMLToJSONStrict` keeps one of at random) |
 | `OYL_JSON_KUBERNETES` | `MERGE \| MERGE_ORDER`: with `oyl_schema_goyaml2()`, `sigs.k8s.io/yaml`'s `YAMLToJSON` |
 
-Output: keys sorted by their bytes, the last of a repeated key winning;
+Output: keys sorted by their bytes, the last of a repeated key winning
+(`-0.0` and `0.0` are one key, as in Go, written as the last one is);
 `<`, `>`, `&`, U+2028 and U+2029 escaped, invalid UTF-8 as U+FFFD; floats
 in their shortest form, plain from 1e-6 to 1e21 and e notation outside;
 float keys in go-yaml's 32-bit form (`1e+06`); `!!binary` decoded;

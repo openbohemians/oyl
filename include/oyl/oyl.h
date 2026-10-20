@@ -655,10 +655,12 @@ enum {
  *  the stream, returns OYL_OK with an empty @p json.
  *
  *  Keys are sorted by their bytes, and a key set twice keeps its last
- *  value (an error under OYL_JSON_STRICT); aliases are expanded, within
+ *  value (an error under OYL_JSON_STRICT; -0.0 and 0.0 are one key, as
+ *  in Go, written as the last one is); aliases are expanded, within
  *  go-yaml v2's limit on aliasing, counted as go-yaml v2 counts it (in
- *  YAML's merge, as written); in YAML's merge, each mapping merged
- *  is worked out once, within the parser's bound on merges for events
+ *  YAML's merge, as written); in YAML's merge, each mapping merged, and
+ *  each sequence of them merged through an alias, is worked out once,
+ *  within the parser's bound on merges for events
  *  with max_events off; numbers and strings are written as Go's
  *  encoding/json writes them. With oyl_schema_goyaml2() and
  *  OYL_JSON_KUBERNETES, the output is byte for byte that of

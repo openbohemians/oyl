@@ -60,7 +60,11 @@
   merge's sequence not); in YAML's merge, a value merged through an
   alias counts as aliased. Chained merges count as nesting.
   `OYL_JSON_STRICT` checks every mapping, even one only merged, and fails
-  on two keys that become one string (`1` and `"1"`).
+  on two keys that become one string (`1` and `"1"`). A sequence of
+  mappings merged through an alias is worked out once, like a mapping:
+  30,000 mappings merging one such sequence of 30,000 empty mappings took
+  14 seconds, now 10 ms. The keys -0.0 and 0.0 are one key, as in Go,
+  written as the last one is (`{"0":"b"}` for `{-0.0: a, 0.0: b}`).
 - A `<<` tagged `!` is a merge key in any style, for events, trees and
   JSON, as libyaml reads it (go-yaml v2, PyYAML): `!` leaves it to be
   resolved as if plain.

@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static int tests_run    = 0;
 static int tests_passed = 0;
@@ -57,6 +58,21 @@ static void test_kubernetes(void) {
           "{\"\\u003ctag\\u003e\\u0026\":\"x\",\"B\":2,\"a\":3,\"z\":1}");
     check("s: \"a\\u2028b\\x01\\tc\\b\\f\"\n", "{\"s\":\"a\\u2028b\\u0001\\tc\\b\\f\"}");
     check("s: \"\\L\\P\"\n", "{\"s\":\"\\u2028\\u2029\"}");
+    /* -0.0 and 0.0 are one key to Go, the last one's sign written, where
+     * it sorts (found by review, 2026-10-20) */
+    check("{-0.0: a, 0.0: b}\n", "{\"0\":\"b\"}");
+    check("{0.0: a, .: c, -0.0: b}\n", "{\"-0\":\"b\",\".\":\"c\"}");
+    check("a: &a {-0.0: x}\nc: {0.0: y, <<: *a}\n", "{\"a\":{\"-0\":\"x\"},\"c\":{\"-0\":\"x\"}}");
+    check_with("{-0.0: a, 0.0: b}\n", oyl_schema_core(), OYL_JSON_MERGE, "{\"0\":\"b\"}");
+    check_with("{-0.0: a, 0.0: b}\n", oyl_schema_goyaml2(), OYL_JSON_KUBERNETES | OYL_JSON_STRICT, err_parse);
+    /* the int 0 is another key: written "0" too, it meets a float 0 only
+     * as a string (the later wins), and a float -0 never */
+    check("{0: a, -0.0: b}\n", "{\"-0\":\"b\",\"0\":\"a\"}");
+    check("{-0.0: a, 0: b, 0.0: c, -0.0: d}\n", "{\"-0\":\"d\",\"0\":\"b\"}");
+    check("{0: a, 0.0: b}\n", "{\"0\":\"b\"}");
+    check_with("{0: a, -0.0: b}\n", oyl_schema_goyaml2(), OYL_JSON_KUBERNETES | OYL_JSON_STRICT,
+               "{\"-0\":\"b\",\"0\":\"a\"}");
+    check_with("{0.0: a, \"0\": b}\n", oyl_schema_goyaml2(), OYL_JSON_KUBERNETES | OYL_JSON_STRICT, err_parse);
     check("d: 2001-12-14\nt: 2001-12-14t21:59:43.10-05:00\n",
           "{\"d\":\"2001-12-14\",\"t\":\"2001-12-14t21:59:43.10-05:00\"}");
     check("- 1\n- x\n", "[1,\"x\"]");
@@ -216,6 +232,39 @@ static void test_aliasing(void) {
     check_with(y, oyl_schema_core(), OYL_JSON_MERGE, "{\"k\":{\"x\":0}}");
     free(y);
     free(got);
+}
+
+/* A sequence of mappings many mappings merge through an alias, in YAML's
+ * merge: worked out once, the same as each time (PyYAML's reading), and
+ * in linear time: 30,000 mappings each merging 30,000 empty ones took
+ * seconds (found by review, 2026-10-20) */
+static void test_shared_merges(void) {
+    printf("test_shared_merges:\n");
+    check_with("a: &a {x: 1, y: 1}\nb: &b {x: 2, z: 2}\nl: &l [*a, *b]\nc: {<<: *l}\nd: {<<: *l, x: 9}\n"
+               "e: {<<: {x: 7, w: 7}, <<: *l}\nf: {<<: *l, <<: {x: 7, w: 7}}\n",
+               oyl_schema_core(), OYL_JSON_MERGE,
+               "{\"a\":{\"x\":1,\"y\":1},\"b\":{\"x\":2,\"z\":2},\"c\":{\"x\":1,\"y\":1,\"z\":2},"
+               "\"d\":{\"x\":9,\"y\":1,\"z\":2},\"e\":{\"w\":7,\"x\":1,\"y\":1,\"z\":2},"
+               "\"f\":{\"w\":7,\"x\":7,\"y\":1,\"z\":2},\"l\":[{\"x\":1,\"y\":1},{\"x\":2,\"z\":2}]}");
+    size_t cap = 1 << 20, len, n = 30000;
+    char *y = malloc(cap);
+    len = (size_t)snprintf(y, cap, "e: &e {}\ns: &s [*e");
+    for (size_t i = 1; i < n; i++) len += (size_t)snprintf(y + len, cap - len, ", *e");
+    len += (size_t)snprintf(y + len, cap - len, "]\nl:\n");
+    for (size_t i = 0; i < n; i++) len += (size_t)snprintf(y + len, cap - len, "- {<<: *s}\n");
+    oyl_arena *a = oyl_arena_new(1 << 16);
+    oyl_parser *p = oyl_parser_new(y, len, a);
+    oyl_parser_set_max_events(p, 0);
+    oyl_str json;
+    clock_t t0 = clock();
+    oyl_status st = oyl_parse_json(p, oyl_schema_core(), OYL_JSON_MERGE, &json);
+    double secs = (double)(clock() - t0) / CLOCKS_PER_SEC;
+    tests_run++;
+    if (st == OYL_OK && json.len == 20 + 6 * n && secs < 3) tests_passed++;
+    else printf("  FAIL: a shared sequence merged %zu times: status %d, %zu bytes, %.2f s\n", n, st, json.len, secs);
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+    free(y);
 }
 
 /* A parser with a schema of its own: the tags written are kept, whatever
@@ -392,6 +441,7 @@ int main(void) {
     test_merges();
     test_merges_bounded();
     test_aliasing();
+    test_shared_merges();
     test_parser_schema();
     test_strict();
     test_errors();

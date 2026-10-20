@@ -12,8 +12,9 @@
  * checks it (go-yaml v2 and PyYAML decode even the values of keys set
  * again later), and in go-yaml v2's merge order the document is walked as
  * go-yaml v2 decodes it, to count aliasing as it does. In YAML's merge,
- * each mapping merged is worked out once and its entries kept; go-yaml
- * v2's merge order is followed step by step.
+ * each mapping merged, and each sequence of them merged through an
+ * alias, is worked out once and its entries kept; go-yaml v2's merge
+ * order is followed step by step.
  */
 
 #include "oyl_internal.h"
@@ -88,10 +89,12 @@ typedef struct {
     uint64_t prio;
     uint32_t key_len;
     uint32_t key, value;          /* nodes */
-    uint8_t  in_keys;             /* key_at is an offset: 1 into doc.keys, 2 doc.memo_keys */
-    uint8_t  bad;                 /* a key JSON can't hold, failing if written: 1 null, 2 uint64 */
-    bool     written;             /* in the mapping, not merged into it */
-    bool     aliased;             /* merged through an alias: its value counts as aliased */
+    unsigned in_keys : 2;         /* key_at is an offset: 1 into doc.keys, 2 doc.memo_keys */
+    unsigned bad : 2;             /* a key JSON can't hold, failing if written: 1 null, 2 uint64 */
+    unsigned zero : 1;            /* a float key 0 or -0: one key to Go (==), another than
+                                     the int 0 or the string "0"; written "0" or "-0" */
+    unsigned written : 1;         /* in the mapping, not merged into it */
+    unsigned aliased : 1;         /* merged through an alias: its value counts as aliased */
 } entry;
 
 typedef struct {
@@ -615,6 +618,7 @@ static bool key_string(doc *d, uint32_t k, entry *e) {
         break;
     case OYL_VALUE_FLOAT:
         ok = put_float_key(b, v.as.f);
+        e->zero = v.as.f == 0;
         break;
     default:
         ok = buf_put(b, v.as.s.data, v.as.s.len);
@@ -630,6 +634,12 @@ static bool key_string(doc *d, uint32_t k, entry *e) {
 static inline const char *key_bytes(const doc *d, const entry *e) {
     return e->in_keys == 0 ? e->key_at.ptr
          : e->in_keys == 1 ? d->keys.data + e->key_at.off : d->memo_keys.data + e->key_at.off;
+}
+
+static int bytes_cmp(const char *a, size_t alen, const char *b, size_t blen) {
+    size_t n = alen < blen ? alen : blen;
+    int c = n ? memcmp(a, b, n) : 0;
+    return c ? c : alen < blen ? -1 : alen > blen;
 }
 
 static bool push_entry(doc *d, entry e) {
@@ -774,6 +784,50 @@ static bool merged_entries(doc *d, uint32_t map, size_t *at, size_t *n) {
 
 static bool prepare_merges(doc *d, uint32_t count);
 
+/* Copy d->memo[at, at + count) onto d->entries at priority `prio`, as
+ * merged: within the merge budget */
+static bool push_merged(doc *d, uint32_t from, size_t at, size_t count, uint64_t prio, bool alias) {
+    if (count > d->merge_budget)
+        return fail(d, OYL_ERR_LIMIT, node_mark(d, from), "merges too costly to expand");
+    d->merge_budget -= count;
+    for (size_t j = 0; j < count; j++) {
+        entry e = d->memo[at + j];
+        e.prio = prio;
+        e.written = false;
+        e.aliased = e.aliased || alias;   /* a copy, as an alias's value is */
+        if (!push_entry(d, e)) return false;
+    }
+    return true;
+}
+
+/* Sequence `seq`'s mappings as YAML's merge takes them, earlier ones
+ * winning, settled: d->memo[*at, *at + *n), worked out the first time, so
+ * that a sequence many mappings merge (through aliases) costs no more
+ * than its entries each time */
+static bool merged_items(doc *d, uint32_t seq, size_t *at, size_t *n) {
+    uint32_t s = oyl_nmap_get(&d->memo_at, seq);
+    if (s == UINT32_MAX) {
+        size_t base = d->elen, count;
+        uint64_t prio = (uint64_t)1 << 62;
+        uint32_t item = seq + 1;
+        for (uint32_t c = 0; c < d->n[seq].len; c++, item += d->n[item].span) {
+            uint32_t map;
+            bool alias;
+            size_t mat, mn;
+            if (!merge_item(d, item, &map, &alias) || !merged_entries(d, map, &mat, &mn) ||
+                !push_merged(d, item, mat, mn, --prio, alias))
+                return false;
+        }
+        if (!settle(d, base, &count)) return false;
+        if (!memo_save(d, seq, base, count)) return out_of_memory(d);
+        d->elen = base;
+        s = d->nspans - 1;
+    }
+    *at = d->spans[s].off;
+    *n = d->spans[s].n;
+    return true;
+}
+
 static bool merge_by_yaml(doc *d, uint32_t value, uint64_t *group) {
     if (!d->prepared) {   /* the document's first merge */
         d->prepared = true;
@@ -782,27 +836,15 @@ static bool merge_by_yaml(doc *d, uint32_t value, uint64_t *group) {
     /* an alias to a sequence of mappings merges as the sequence */
     bool seq_alias = d->n[value].kind == OYL_NODE_ALIAS && d->n[d->n[value].props].kind == OYL_NODE_SEQUENCE;
     if (seq_alias) value = d->n[value].props;
-    bool is_seq = d->n[value].kind == OYL_NODE_SEQUENCE;
-    uint32_t items = is_seq ? d->n[value].len : 1, item = is_seq ? value + 1 : value;
-    for (uint32_t c = 0; c < items; c++, item += d->n[item].span) {
-        uint32_t map;
-        bool alias;
-        size_t at, count;
-        if (!merge_item(d, item, &map, &alias) || !merged_entries(d, map, &at, &count)) return false;
-        if (count > d->merge_budget)
-            return fail(d, OYL_ERR_LIMIT, node_mark(d, item), "merges too costly to expand");
-        d->merge_budget -= count;
-        uint64_t prio = (uint64_t)1 << 62;
-        prio = *group < prio ? prio - ++*group : 0;
-        for (size_t j = 0; j < count; j++) {
-            entry e = d->memo[at + j];
-            e.prio = prio;
-            e.written = false;
-            e.aliased = e.aliased || alias || seq_alias;   /* a copy, as an alias's value is */
-            if (!push_entry(d, e)) return false;
-        }
-    }
-    return true;
+    uint32_t map;
+    bool alias = seq_alias;
+    size_t at, count;
+    if (d->n[value].kind == OYL_NODE_SEQUENCE ? !merged_items(d, value, &at, &count)
+        : !merge_item(d, value, &map, &alias) || !merged_entries(d, map, &at, &count))
+        return false;
+    uint64_t prio = (uint64_t)1 << 62;
+    prio = *group < prio ? prio - ++*group : 0;
+    return push_merged(d, value, at, count, prio, alias);
 }
 
 /* Work out each mapping YAML's merge takes, at the document's first
@@ -825,6 +867,11 @@ static bool prepare_merges(doc *d, uint32_t count) {
             if (d->n[value].kind == OYL_NODE_ALIAS && d->n[d->n[value].props].kind == OYL_NODE_SEQUENCE)
                 value = d->n[value].props;
             bool is_seq = d->n[value].kind == OYL_NODE_SEQUENCE;
+            if (is_seq) {   /* a sequence many mappings merge is scanned once */
+                any = true;
+                if (oyl_nmap_get(&merged, value) != UINT32_MAX) continue;
+                ok = oyl_nmap_put(&merged, value, 1);
+            }
             uint32_t items = is_seq ? d->n[value].len : 1, item = is_seq ? value + 1 : value;
             for (uint32_t j = 0; j < items && ok; j++, item += d->n[item].span) {
                 uint32_t s = d->n[item].kind == OYL_NODE_ALIAS ? d->n[item].props : item;
@@ -900,14 +947,13 @@ static bool collect(doc *d, uint32_t map, uint64_t *counter, bool written) {
     return true;
 }
 
-/* Compare entries by key, then priority; bad keys (each kind its own) first */
+/* Compare entries by key as keys are compared, then priority; bad keys
+ * (each kind its own) first */
 static int entry_cmp(const doc *d, const entry *a, const entry *b) {
     if (a->bad != b->bad) return a->bad > b->bad ? -1 : 1;
-    size_t n = a->key_len < b->key_len ? a->key_len : b->key_len;
-    int c = n ? memcmp(key_bytes(d, a), key_bytes(d, b), n) : 0;
-    if (c) return c;
-    if (a->key_len != b->key_len) return a->key_len < b->key_len ? -1 : 1;
-    return a->prio < b->prio ? -1 : a->prio > b->prio;
+    if (a->zero != b->zero) return a->zero ? -1 : 1;
+    int c = a->zero ? 0 : bytes_cmp(key_bytes(d, a), a->key_len, key_bytes(d, b), b->key_len);
+    return c ? c : a->prio < b->prio ? -1 : a->prio > b->prio;
 }
 
 static void sort_entries(const doc *d, entry *e, entry *tmp, size_t n) {
@@ -951,8 +997,8 @@ static bool settle(doc *d, size_t base, size_t *count) {
     size_t out = 0;
     for (size_t i = 0; i < n;) {
         size_t j = i + 1, written = e[i].written;
-        while (j < n && e[j].bad == e[i].bad && e[j].key_len == e[i].key_len &&
-               (e[i].key_len == 0 || memcmp(key_bytes(d, &e[j]), key_bytes(d, &e[i]), e[i].key_len) == 0))
+        while (j < n && e[j].bad == e[i].bad && e[j].zero == e[i].zero &&
+               (e[i].zero || bytes_cmp(key_bytes(d, &e[j]), e[j].key_len, key_bytes(d, &e[i]), e[i].key_len) == 0))
             written += e[j++].written;
         if (strict && (any_counts ? j - i > 1 : written > 1))
             return e[i].bad == 1
@@ -977,6 +1023,30 @@ static bool settle(doc *d, size_t base, size_t *count) {
     return true;
 }
 
+/* The float key 0 or -0, settled apart (it sorts first, after bad keys),
+ * is written as the last one was, sign and all, as Go keeps it; that
+ * string may be another key's ("0", the int 0), where the later one wins
+ * (or OYL_JSON_STRICT fails), as for any two keys that become one string.
+ * It goes where its string sorts. */
+static bool place_zero(doc *d, size_t base, size_t *count) {
+    entry *e = d->entries + base, z = e[0];
+    size_t n = *count, j = 1;
+    while (j < n && bytes_cmp(key_bytes(d, &e[j]), e[j].key_len, key_bytes(d, &z), z.key_len) < 0) j++;
+    if (j < n && bytes_cmp(key_bytes(d, &e[j]), e[j].key_len, key_bytes(d, &z), z.key_len) == 0) {
+        if (d->flags & OYL_JSON_STRICT)
+            return fail(d, OYL_ERR_PARSE, node_mark(d, z.prio > e[j].prio ? z.key : e[j].key),
+                        "key \"%.*s\" already set in map", shown(z.key_len), key_bytes(d, &z));
+        if (z.prio > e[j].prio) e[j] = z;
+        memmove(e, e + 1, (n - 1) * sizeof *e);   /* one of the two goes */
+        *count = n - 1;
+        d->elen--;
+        return true;
+    }
+    memmove(e, e + 1, (j - 1) * sizeof *e);
+    e[j - 1] = z;
+    return true;
+}
+
 static bool write_mapping(doc *d, uint32_t m) {
     if (!enter(d, m)) return false;
     size_t base = d->elen, kbase = d->keys.len;
@@ -991,6 +1061,7 @@ static bool write_mapping(doc *d, uint32_t m) {
     if (bad)
         return fail(d, OYL_ERR_PARSE, node_mark(d, bad->key), bad->bad == 1
                     ? "unsupported map key: null" : "unsupported map key of type: uint64");
+    if (count && d->entries[base].zero && !place_zero(d, base, &count)) return false;
     if (!buf_putc(&d->out, '{')) return out_of_memory(d);
     for (size_t j = 0; j < count; j++) {
         entry e = d->entries[base + j];
@@ -1078,7 +1149,7 @@ static uint32_t unmergeable(const doc *d, uint32_t v) {
  * OYL_JSON_STRICT, a key set twice in one mapping fail wherever they are.
  * What only JSON can't hold (a null key, an infinity) fails if it is
  * written. Sets *aliases if the document has any. */
-static bool check(doc *d, uint32_t count, bool *aliases) {
+static bool check_nodes(doc *d, uint32_t count, bool *aliases, oyl_node_map *seqs) {
     bool merging = (d->flags & OYL_JSON_MERGE) != 0;
     bool strict = (d->flags & OYL_JSON_STRICT) != 0;
     bool refusing = any_refusing_rule(d->schema);
@@ -1111,10 +1182,15 @@ static bool check(doc *d, uint32_t count, bool *aliases) {
                     return fail(d, OYL_ERR_PARSE, node_mark(d, k), "invalid map key: a %s",
                                 d->n[key].kind == OYL_NODE_MAPPING ? "mapping" : "sequence");
                 if (merging && is_merge(d, k)) {
+                    /* a sequence many mappings merge through aliases is checked once */
+                    uint32_t seq = d->n[v].kind == OYL_NODE_ALIAS ? d->n[v].props : v;
+                    bool shared = seq != v && d->n[seq].kind == OYL_NODE_SEQUENCE;
+                    if (shared && oyl_nmap_get(seqs, seq) != UINT32_MAX) continue;
                     uint32_t bad = unmergeable(d, v);
                     if (bad != UINT32_MAX)
                         return fail(d, OYL_ERR_PARSE, node_mark(d, bad),
                                     "map merge requires map or sequence of maps as the value");
+                    if (shared && !oyl_nmap_put(seqs, seq, 1)) return out_of_memory(d);
                     continue;
                 }
                 if (!strict) continue;
@@ -1127,6 +1203,14 @@ static bool check(doc *d, uint32_t count, bool *aliases) {
         }
     }
     return true;
+}
+
+static bool check(doc *d, uint32_t count, bool *aliases) {
+    oyl_node_map seqs;
+    oyl_nmap_init(&seqs, &d->t->hash_key);
+    bool ok = check_nodes(d, count, aliases, &seqs);
+    oyl_nmap_free(&seqs);
+    return ok;
 }
 
 static bool count_node(doc *d, uint32_t i);

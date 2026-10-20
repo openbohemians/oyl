@@ -408,6 +408,10 @@ static const char *JSONABLE =
     "list: [1, 2, {k: v}]\n";
 
 static outcome json_core(void) { return json(JSONABLE, 0); }
+/* a sequence merged through an alias, worked out once (YAML's merge) */
+static outcome json_shared(void) {
+    return json("a: &a {x: 1, -0.0: z}\nb: &b {y: 2, 0.0: w}\nl: &l [*a, *b]\nc: {<<: *l}\nd: {<<: *l, x: 3}\n", 0);
+}
 static outcome json_many(void) { return json(many, 0); }
 /* Each document of a stream, in go-yaml v2's merge order (counted before
  * writing) and with a merge of more than 16 mappings; a call after a
@@ -624,6 +628,7 @@ int main(void) {
     run("JSON, many merges", json_many);
     run("JSON, go-yaml v2", json_k8s);
     run("JSON, a stream", json_stream);
+    run("JSON, a shared merge", json_shared);
     run("emitting", emit_rich);
     run("emitting, deep", emit_deep);
     run("schema and dialect", schema_and_dialect);
