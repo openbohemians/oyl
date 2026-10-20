@@ -48,6 +48,27 @@
   go-yaml v2's merge order (`OYL_JSON_KUBERNETES`) is unchanged, as
   go-yaml v2 refuses such documents too. Of a document's errors, a bad
   merge may now be reported before another.
+- `oyl_parse_json` checks every node as decoding checks it, as go-yaml v2
+  and PyYAML decode even the value of a key set again later: `a: !!int
+  foo` then `a: 1` is an error, as are a collection as a key or a merge of
+  what isn't a mapping anywhere. What only JSON can't hold (a null or
+  uint64 key, inf or NaN) fails only where it would be written, as
+  `sigs.k8s.io/yaml` sees only what is left (before, a null key in a
+  mapping merged anywhere failed in YAML's merge). go-yaml v2's limit on
+  aliasing is counted as go-yaml v2 counts it, before writing (every
+  node decoded, the document node and overridden values included, a
+  merge's sequence not); in YAML's merge, a value merged through an
+  alias counts as aliased. Chained merges count as nesting.
+  `OYL_JSON_STRICT` checks every mapping, even one only merged, and fails
+  on two keys that become one string (`1` and `"1"`).
+- A `<<` tagged `!` is a merge key in any style, for events, trees and
+  JSON, as libyaml reads it (go-yaml v2, PyYAML): `!` leaves it to be
+  resolved as if plain.
+- With a schema on the parser (`oyl_parser_set_schema`), a node's event
+  marks a tag the schema gave `implicit`, so tags written can be told from
+  the schema's. Trees keep exactly the tags written: an explicit `!!int 12`
+  stays (before, a tag the schema would give anyway was dropped), and
+  `oyl_parse_json` with another schema than the parser's reads them.
 
 ### Performance
 
@@ -68,6 +89,13 @@
 - `oyl_parser_new` and `oyl_scanner_new` read NULL input of length 0 as
   empty text; before, the scanner took offsets from the NULL pointer. NULL
   with a length gives NULL.
+- The escapes `\L` and `\P` (U+2028 and U+2029), which YAML 1.2 has, were
+  rejected as invalid.
+- `oyl_parse_json`: a chain of merges in go-yaml v2's order recursed once
+  per link without counting it, so 2,000 links overflowed a 512 KB thread
+  stack; a 28 KB document merging a big mapping 1,200 times wrote 24 MB,
+  where go-yaml v2 refuses it; more than 64 `<<` in one mapping failed
+  (YAML's merge); a failed first allocation wasn't reported or kept.
 
 ## 1.1.0 (unreleased)
 
@@ -119,7 +147,9 @@
   takes the int rule's sign, underscore and range options too). An
   explicit tag reads its scalar as PyYAML's constructor for the type does,
   more leniently than resolution: `!!float 1` is 1.0, `!!int 0o17` 15,
-  `!!bool YeS` true, anything tagged `!!null` null. A timestamp whose date
+  `!!bool YeS` true, anything tagged `!!null` null; the non-specific tag
+  `!` resolves its scalar as if plain, in any style (`! "123"` is 123).
+  A timestamp whose date
   or time doesn't exist (`2001-02-29`) has no value, tagged or not, as
   PyYAML refuses it. Compared with PyYAML on 463,694 untagged and 160,092
   tagged scalars: the same tag and value, but for what PyYAML itself

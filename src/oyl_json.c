@@ -8,9 +8,12 @@
  * document is read into a tree first (oyl_tree.c), so that a mapping's
  * keys can be sorted and its merges and duplicates settled before it is
  * written. The tree typed its scalars while building; with another
- * schema, they're typed here. In YAML's merge, each mapping merged is
- * worked out once and its entries kept; go-yaml v2's merge order is
- * followed step by step, as go-yaml v2 counts its work.
+ * schema, they're typed here. First, every node is checked as decoding
+ * checks it (go-yaml v2 and PyYAML decode even the values of keys set
+ * again later), and in go-yaml v2's merge order the document is walked as
+ * go-yaml v2 decodes it, to count aliasing as it does. In YAML's merge,
+ * each mapping merged is worked out once and its entries kept; go-yaml
+ * v2's merge order is followed step by step.
  */
 
 #include "oyl_internal.h"
@@ -86,7 +89,9 @@ typedef struct {
     uint32_t key_len;
     uint32_t key, value;          /* nodes */
     uint8_t  in_keys;             /* key_at is an offset: 1 into doc.keys, 2 doc.memo_keys */
+    uint8_t  bad;                 /* a key JSON can't hold, failing if written: 1 null, 2 uint64 */
     bool     written;             /* in the mapping, not merged into it */
+    bool     aliased;             /* merged through an alias: its value counts as aliased */
 } entry;
 
 typedef struct {
@@ -103,9 +108,12 @@ typedef struct {
     size_t            elen, ecap;
     entry            *sort_tmp;  /* merge sort's buffer, reused */
     size_t            tmp_cap;
+    uint32_t         *pending;   /* a stack: YAML's merges waiting in each mapping collected */
+    size_t            plen, pcap;
     size_t            decodes, aliased;   /* go-yaml v2's aliasing count */
     int               alias_depth, depth, max_depth;
-    bool              quiet;     /* not counted in it: working out YAML's merge */
+    bool              quiet;     /* not counted in it: checking, working out YAML's
+                                    merge, or writing once counted (count_node) */
     bool              prepared;  /* prepare_merges has run */
     /* YAML's merge: each mapping merged, with its own merges applied and
      * settled, worked out once (merged_entries) */
@@ -138,15 +146,19 @@ static bool out_of_memory(doc *d) {
     return fail(d, OYL_ERR_MEMORY, (oyl_mark){ 0, 0, 0 }, "out of memory");
 }
 
+/* How much of a text a message shows, for "%.*s": an int can't hold every
+ * length, and a message needn't */
+static int shown(size_t len) { return len > 100 ? 100 : (int)len; }
+
 /* A tag as go-yaml writes it in messages: !!int for tag:yaml.org,2002:int */
 static const char *short_tag(oyl_str tag, int *len) {
     static const char prefix[] = "tag:yaml.org,2002:";
     size_t plen = sizeof prefix - 1;
     if (tag.len > plen && memcmp(tag.data, prefix, plen) == 0) {
-        *len = (int)(tag.len - plen);
+        *len = shown(tag.len - plen);
         return tag.data + plen;
     }
-    *len = (int)tag.len;
+    *len = shown(tag.len);
     return tag.data;
 }
 
@@ -492,7 +504,7 @@ static bool scalar_value(doc *d, uint32_t i, oyl_value *v) {
         int tl;
         const char *ts = short_tag(tag, &tl);
         return fail(d, OYL_ERR_PARSE, node_mark(d, i), "cannot decode `%.*s` as !!%.*s",
-                    (int)t.len, t.data, tl, ts);
+                    shown(t.len), t.data, tl, ts);
     }
     if (st != OYL_OK) return fail(d, st, node_mark(d, i), "out of memory");
     return true;
@@ -558,7 +570,9 @@ static bool write_node(doc *d, uint32_t i);
 
 /* A key's JSON string, into entry `e`: go-yaml v2 decodes the key and
  * sigs.k8s.io/yaml makes it a string. Text stays in the document; a number,
- * a boolean or decoded binary is written to d->keys. */
+ * a boolean or decoded binary is written to d->keys. A key no JSON string
+ * stands for is marked bad, and fails only if written (write_mapping), as
+ * sigs.k8s.io/yaml sees only the keys that are left. */
 static bool key_string(doc *d, uint32_t k, entry *e) {
     if (!count_decode(d, k)) return false;
     uint32_t i = k;
@@ -586,9 +600,13 @@ static bool key_string(doc *d, uint32_t k, entry *e) {
     }
     switch (v.kind) {
     case OYL_VALUE_NULL:
-        return fail(d, OYL_ERR_PARSE, node_mark(d, k), "unsupported map key: null");
+        e->bad = 1;
+        ok = true;
+        break;
     case OYL_VALUE_UINT:   /* sigs.k8s.io/yaml takes int, int64, float64, bool and string keys */
-        return fail(d, OYL_ERR_PARSE, node_mark(d, k), "unsupported map key of type: uint64");
+        e->bad = 2;
+        ok = buf_uint(b, v.as.u, false);
+        break;
     case OYL_VALUE_BOOL:
         ok = buf_puts(b, v.as.b ? "true" : "false");
         break;
@@ -627,11 +645,14 @@ static bool push_entry(doc *d, entry e) {
 }
 
 /* Is key node k a merge key? As go-yaml v2 sees it: << untagged and plain,
- * or tagged !!merge. (A tag the parser's schema gave isn't in the tree.) */
-static bool is_merge(doc *d, uint32_t k) {
+ * tagged !!merge, or tagged ! in any style, which leaves it to be resolved
+ * as if plain (libyaml's reading, PyYAML's too). (A tag the parser's
+ * schema gave isn't in the tree.) */
+static bool is_merge(const doc *d, uint32_t k) {
     const oyl_node *n = &d->n[k];
     if (n->kind != OYL_NODE_SCALAR || n->len != 2 || memcmp(text(d, k).data, "<<", 2) != 0) return false;
     oyl_str tag = written_tag(d, k);
+    if (tag.len == 1 && tag.data[0] == '!') return true;
     if (tag.len) return same(tag, OYL_TAG_MERGE);
     return n->style == OYL_SCALAR_PLAIN;
 }
@@ -649,7 +670,8 @@ static bool merge_item(doc *d, uint32_t item, uint32_t *map, bool *alias) {
 }
 
 /* Merge items in go-yaml v2's order, each overriding what came before:
- * a sequence's items from the last, as earlier ones take precedence */
+ * a sequence's items from the last, as earlier ones take precedence. Each
+ * mapping merged is a level of nesting, as merges can chain. */
 static bool merge_ordered(doc *d, uint32_t value, uint64_t *counter) {
     uint32_t items[1] = { value };
     uint32_t *list = items;
@@ -674,7 +696,8 @@ static bool merge_ordered(doc *d, uint32_t value, uint64_t *counter) {
             ok = count_decode(d, list[j]);
             d->alias_depth++;
         }
-        ok = ok && count_decode(d, map) && collect(d, map, counter, false);
+        ok = ok && count_decode(d, map) && enter(d, map) && collect(d, map, counter, false);
+        if (ok) d->depth--;
         if (alias) d->alias_depth--;
     }
     free(seq);
@@ -757,8 +780,8 @@ static bool merge_by_yaml(doc *d, uint32_t value, uint64_t *group) {
         if (!prepare_merges(d, d->t->len)) return false;
     }
     /* an alias to a sequence of mappings merges as the sequence */
-    if (d->n[value].kind == OYL_NODE_ALIAS && d->n[d->n[value].props].kind == OYL_NODE_SEQUENCE)
-        value = d->n[value].props;
+    bool seq_alias = d->n[value].kind == OYL_NODE_ALIAS && d->n[d->n[value].props].kind == OYL_NODE_SEQUENCE;
+    if (seq_alias) value = d->n[value].props;
     bool is_seq = d->n[value].kind == OYL_NODE_SEQUENCE;
     uint32_t items = is_seq ? d->n[value].len : 1, item = is_seq ? value + 1 : value;
     for (uint32_t c = 0; c < items; c++, item += d->n[item].span) {
@@ -775,6 +798,7 @@ static bool merge_by_yaml(doc *d, uint32_t value, uint64_t *group) {
             entry e = d->memo[at + j];
             e.prio = prio;
             e.written = false;
+            e.aliased = e.aliased || alias || seq_alias;   /* a copy, as an alias's value is */
             if (!push_entry(d, e)) return false;
         }
     }
@@ -844,19 +868,23 @@ static bool collect(doc *d, uint32_t map, uint64_t *counter, bool written) {
     bool merging = (d->flags & OYL_JSON_MERGE) != 0;
     bool ordered = (d->flags & OYL_JSON_MERGE_ORDER) != 0;
     uint64_t group = 0;
-    uint32_t pending_merges[64];
-    size_t npending = 0;
+    size_t pbase = d->plen;   /* this mapping's merges wait at d->pending[pbase...] */
     uint32_t k = map + 1, v;
     for (uint32_t c = 0; c < d->n[map].len; c++, k = v + d->n[v].span) {
         v = k + d->n[k].span;
         if (merging && is_merge(d, k)) {
             if (ordered) {
                 if (!merge_ordered(d, v, counter)) return false;
-            } else if (npending < sizeof pending_merges / sizeof pending_merges[0]) {
-                pending_merges[npending++] = v;
-            } else {
-                return fail(d, OYL_ERR_LIMIT, node_mark(d, k), "too many merge keys in one mapping");
+                continue;
             }
+            if (d->plen == d->pcap) {
+                size_t cap = d->pcap ? d->pcap * 2 : 16;
+                uint32_t *ps = cap <= SIZE_MAX / sizeof *ps ? realloc(d->pending, cap * sizeof *ps) : NULL;
+                if (!ps) return out_of_memory(d);
+                d->pending = ps;
+                d->pcap = cap;
+            }
+            d->pending[d->plen++] = v;
             continue;
         }
         entry e = { .key = k, .value = v, .written = written };
@@ -864,13 +892,17 @@ static bool collect(doc *d, uint32_t map, uint64_t *counter, bool written) {
         e.prio = ordered || !merging ? ++*counter : ((uint64_t)1 << 63) + ++*counter;
         if (!push_entry(d, e)) return false;
     }
-    for (size_t j = npending; j-- > 0;)
-        if (!merge_by_yaml(d, pending_merges[j], &group)) return false;
+    /* merge_by_yaml may collect other mappings (the document's first merge
+     * prepares them all), which push and pop above this one's */
+    for (size_t j = d->plen; j-- > pbase;)
+        if (!merge_by_yaml(d, d->pending[j], &group)) return false;
+    d->plen = pbase;
     return true;
 }
 
-/* Compare entries by key, then priority */
+/* Compare entries by key, then priority; bad keys (each kind its own) first */
 static int entry_cmp(const doc *d, const entry *a, const entry *b) {
+    if (a->bad != b->bad) return a->bad > b->bad ? -1 : 1;
     size_t n = a->key_len < b->key_len ? a->key_len : b->key_len;
     int c = n ? memcmp(key_bytes(d, a), key_bytes(d, b), n) : 0;
     if (c) return c;
@@ -919,12 +951,14 @@ static bool settle(doc *d, size_t base, size_t *count) {
     size_t out = 0;
     for (size_t i = 0; i < n;) {
         size_t j = i + 1, written = e[i].written;
-        while (j < n && e[j].key_len == e[i].key_len &&
+        while (j < n && e[j].bad == e[i].bad && e[j].key_len == e[i].key_len &&
                (e[i].key_len == 0 || memcmp(key_bytes(d, &e[j]), key_bytes(d, &e[i]), e[i].key_len) == 0))
             written += e[j++].written;
         if (strict && (any_counts ? j - i > 1 : written > 1))
-            return fail(d, OYL_ERR_PARSE, node_mark(d, e[j - 1].key), "key \"%.*s\" already set in map",
-                        (int)e[i].key_len, key_bytes(d, &e[i]));
+            return e[i].bad == 1
+                 ? fail(d, OYL_ERR_PARSE, node_mark(d, e[j - 1].key), "null key already set in map")
+                 : fail(d, OYL_ERR_PARSE, node_mark(d, e[j - 1].key), "key \"%.*s\" already set in map",
+                        shown(e[i].key_len), key_bytes(d, &e[i]));
         if (any_counts && written && !e[j - 1].written) {
             /* a merge won over a key written in the mapping: go-yaml v2's
              * order, but every other YAML reader keeps the written key */
@@ -950,6 +984,13 @@ static bool write_mapping(doc *d, uint32_t m) {
     size_t count = 0;
     if (!collect(d, m, &counter, true) || !settle(d, base, &count)) return false;
     d->elen = base + count;
+    /* bad keys sort first; the first in the document fails */
+    const entry *bad = NULL;
+    for (size_t j = 0; j < count && d->entries[base + j].bad; j++)
+        if (!bad || d->entries[base + j].key < bad->key) bad = &d->entries[base + j];
+    if (bad)
+        return fail(d, OYL_ERR_PARSE, node_mark(d, bad->key), bad->bad == 1
+                    ? "unsupported map key: null" : "unsupported map key of type: uint64");
     if (!buf_putc(&d->out, '{')) return out_of_memory(d);
     for (size_t j = 0; j < count; j++) {
         entry e = d->entries[base + j];
@@ -957,7 +998,10 @@ static bool write_mapping(doc *d, uint32_t m) {
             !put_json_string(&d->out, key_bytes(d, &e), e.key_len) ||
             !buf_putc(&d->out, ':'))
             return out_of_memory(d);
-        if (!write_node(d, e.value)) return false;
+        if (e.aliased) d->alias_depth++;
+        bool ok = write_node(d, e.value);
+        if (e.aliased) d->alias_depth--;
+        if (!ok) return false;
     }
     if (!buf_putc(&d->out, '}')) return out_of_memory(d);
     d->elen = base;
@@ -996,6 +1040,143 @@ static bool write_node(doc *d, uint32_t i) {
     return false;
 }
 
+/* ── Checking and counting, before writing ───────────────── */
+
+/* Does rule r take some plain scalars without a value? Only YAML 1.1's
+ * timestamp rule does, for dates that don't exist. */
+static bool refusing_rule(const oyl_schema *s, int r) {
+    return r >= 0 && r < s->rule_count && s->rules[r].kind == RULE_TIMESTAMP && s->rules[r].flags;
+}
+
+static bool any_refusing_rule(const oyl_schema *s) {
+    for (int r = 0; r < s->rule_count; r++)
+        if (refusing_rule(s, r)) return true;
+    return false;
+}
+
+/* What a << with value v can't merge, or UINT32_MAX: it takes a mapping,
+ * an alias to one, or a sequence of them, and under YAML's merge an alias
+ * to such a sequence */
+static uint32_t unmergeable(const doc *d, uint32_t v) {
+    uint32_t s = v;
+    if (d->n[v].kind == OYL_NODE_ALIAS) {
+        s = d->n[v].props;
+        if (d->n[s].kind == OYL_NODE_SEQUENCE && (d->flags & OYL_JSON_MERGE_ORDER)) return v;
+    }
+    if (d->n[s].kind == OYL_NODE_MAPPING) return UINT32_MAX;
+    if (d->n[s].kind != OYL_NODE_SEQUENCE) return v;
+    uint32_t c = s + 1;
+    for (uint32_t j = 0; j < d->n[s].len; j++, c += d->n[c].span)
+        if (d->n[d->n[c].kind == OYL_NODE_ALIAS ? d->n[c].props : c].kind != OYL_NODE_MAPPING) return c;
+    return UINT32_MAX;
+}
+
+/* What decoding finds wherever it is: go-yaml v2 and PyYAML decode every
+ * node, even a value whose key is set again later, so an alias inside its
+ * own anchor, a scalar its tag (or YAML 1.1's timestamp rule) rejects, a
+ * collection as a key, a merge of what isn't a mapping and, under
+ * OYL_JSON_STRICT, a key set twice in one mapping fail wherever they are.
+ * What only JSON can't hold (a null key, an infinity) fails if it is
+ * written. Sets *aliases if the document has any. */
+static bool check(doc *d, uint32_t count, bool *aliases) {
+    bool merging = (d->flags & OYL_JSON_MERGE) != 0;
+    bool strict = (d->flags & OYL_JSON_STRICT) != 0;
+    bool refusing = any_refusing_rule(d->schema);
+    *aliases = false;
+    for (uint32_t i = 0; i < count; i++) {
+        const oyl_node *n = &d->n[i];
+        if (n->kind == OYL_NODE_ALIAS) {
+            *aliases = true;
+            if (contains_itself(d, i)) {
+                oyl_str name = text(d, i);
+                return fail(d, OYL_ERR_PARSE, node_mark(d, i), "anchor '%.*s' value contains itself",
+                            shown(name.len), name.data);
+            }
+        } else if (n->kind == OYL_NODE_SCALAR) {
+            oyl_value v;
+            if ((written_tag(d, i).len ||
+                 (refusing && n->style == OYL_SCALAR_PLAIN &&
+                  refusing_rule(d->schema, d->typed && n->type < 255 ? n->type - 1
+                                                    : oyl_schema_rule_of(d->schema, text(d, i))))) &&
+                !scalar_value(d, i, &v))
+                return false;
+        } else if (n->kind == OYL_NODE_MAPPING) {
+            size_t base = d->elen, kbase = d->keys.len, settled;
+            uint64_t counter = 0;
+            uint32_t k = i + 1, v;
+            for (uint32_t c = 0; c < n->len; c++, k = v + d->n[v].span) {
+                v = k + d->n[k].span;
+                uint32_t key = d->n[k].kind == OYL_NODE_ALIAS ? d->n[k].props : k;
+                if (d->n[key].kind != OYL_NODE_SCALAR)
+                    return fail(d, OYL_ERR_PARSE, node_mark(d, k), "invalid map key: a %s",
+                                d->n[key].kind == OYL_NODE_MAPPING ? "mapping" : "sequence");
+                if (merging && is_merge(d, k)) {
+                    uint32_t bad = unmergeable(d, v);
+                    if (bad != UINT32_MAX)
+                        return fail(d, OYL_ERR_PARSE, node_mark(d, bad),
+                                    "map merge requires map or sequence of maps as the value");
+                    continue;
+                }
+                if (!strict) continue;
+                entry e = { .key = k, .value = v, .written = true, .prio = ++counter };
+                if (!key_string(d, k, &e) || !push_entry(d, e)) return false;
+            }
+            if (strict && !settle(d, base, &settled)) return false;
+            d->elen = base;
+            d->keys.len = kbase;
+        }
+    }
+    return true;
+}
+
+static bool count_node(doc *d, uint32_t i);
+
+/* A << value as go-yaml v2's merge decodes it: a sequence's items from the
+ * last, the sequence itself not decoded */
+static bool count_merge(doc *d, uint32_t v) {
+    if (d->n[v].kind != OYL_NODE_SEQUENCE) return count_node(d, v);
+    uint32_t len = d->n[v].len, few[16];
+    uint32_t *items = len <= 16 ? few : malloc(len * sizeof *items);
+    if (!items) return out_of_memory(d);
+    uint32_t c = v + 1;
+    for (uint32_t j = 0; j < len; j++, c += d->n[c].span) items[j] = c;
+    bool ok = true;
+    for (uint32_t j = len; ok && j-- > 0;) ok = count_node(d, items[j]);
+    if (items != few) free(items);
+    return ok;
+}
+
+/* go-yaml v2's aliasing count, in go-yaml v2's merge order, before anything
+ * is written: node i and all that decoding it decodes, as go-yaml v2 does
+ * (decode.go: unmarshal, alias, mapping, merge), every key and value in
+ * document order, those overridden later too */
+static bool count_node(doc *d, uint32_t i) {
+    if (!count_decode(d, i)) return false;
+    const oyl_node *n = &d->n[i];
+    if (n->kind == OYL_NODE_ALIAS) {
+        d->alias_depth++;
+        bool ok = count_node(d, n->props);
+        d->alias_depth--;
+        return ok;
+    }
+    if (n->kind == OYL_NODE_SCALAR) return true;
+    if (!enter(d, i)) return false;
+    bool ok = true;
+    if (n->kind == OYL_NODE_SEQUENCE) {
+        uint32_t c = i + 1;
+        for (uint32_t j = 0; ok && j < n->len; j++, c += d->n[c].span) ok = count_node(d, c);
+    } else {
+        bool merging = (d->flags & OYL_JSON_MERGE) != 0;
+        uint32_t k = i + 1, v;
+        for (uint32_t j = 0; ok && j < n->len; j++, k = v + d->n[v].span) {
+            v = k + d->n[k].span;
+            ok = merging && is_merge(d, k) ? count_merge(d, v) : count_node(d, k) && count_node(d, v);
+        }
+    }
+    d->depth--;
+    return ok;
+}
+
 /* ── The entry point ─────────────────────────────────────── */
 
 oyl_status oyl_parse_json(oyl_parser *p, const oyl_schema *schema, unsigned flags,
@@ -1013,6 +1194,7 @@ oyl_status oyl_parse_json(oyl_parser *p, const oyl_schema *schema, unsigned flag
         free(d.entries);
         free(d.out.data);
         free(d.keys.data);
+        oyl_parser_fail(p, OYL_ERR_MEMORY, (oyl_mark){ 0, 0, 0 }, "out of memory");
         return OYL_ERR_MEMORY;
     }
     oyl_status st = oyl_parse_tree_as_written(p, &d.t);
@@ -1031,15 +1213,19 @@ oyl_status oyl_parse_json(oyl_parser *p, const oyl_schema *schema, unsigned flag
         d.typed = d.schema == typed_by;
         uint64_t budget = ((uint64_t)count * 16 + 100000) * 4;   /* as the parser's for events */
         d.merge_budget = budget > SIZE_MAX ? SIZE_MAX : (size_t)budget;
-        /* go-yaml v2 decodes every node, so an alias inside its own anchor
-         * fails wherever it is */
-        for (uint32_t i = 0; i < count && d.status == OYL_OK; i++)
-            if (d.n[i].kind == OYL_NODE_ALIAS && contains_itself(&d, i)) {
-                oyl_str name = text(&d, i);
-                fail(&d, OYL_ERR_PARSE, node_mark(&d, i), "anchor '%.*s' value contains itself",
-                     (int)name.len, name.data);
-            }
-        if (d.status == OYL_OK && write_node(&d, 0)) {
+        d.decodes = 1;   /* go-yaml v2 counts the document node */
+        bool aliases, ordered = (d.flags & OYL_JSON_MERGE_ORDER) != 0;
+        d.quiet = true;
+        bool ok = check(&d, count, &aliases);
+        /* go-yaml v2's merge order counts as go-yaml v2 decodes, first, and
+         * writing then counts nothing; otherwise writing counts what it
+         * writes. Without aliases, nothing counts against the limit. */
+        if (ok && ordered && aliases) {
+            d.quiet = false;
+            ok = count_node(&d, 0);
+        }
+        d.quiet = ordered;
+        if (ok && write_node(&d, 0)) {
             char *s = oyl_arena_dup(oyl_parser_arena(p), d.out.data ? d.out.data : "", d.out.len);
             if (s) *json = (oyl_str){ s, d.out.len };
             else out_of_memory(&d);
@@ -1052,6 +1238,7 @@ oyl_status oyl_parse_json(oyl_parser *p, const oyl_schema *schema, unsigned flag
     free(d.bin.data);
     free(d.entries);
     free(d.sort_tmp);
+    free(d.pending);
     free(d.memo);
     free(d.spans);
     free(d.memo_keys.data);

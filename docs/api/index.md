@@ -71,7 +71,7 @@ typedef struct {
     oyl_str          anchor;       // &anchor if present
     oyl_str          tag;          // !tag if present
     oyl_scalar_style scalar_style;
-    bool             implicit;     // implicit doc start/end
+    bool             implicit;     // implicit doc start/end; a node's tag the schema gave
     bool             flow;         // true for {} / []
     oyl_mark         start;
     oyl_mark         end;
@@ -84,8 +84,9 @@ include their quotes. A collection start spans the token that opens it:
 entry; a block mapping opened by an ordinary key is zero width at that
 key. `}` and `]` span the bracket; a block collection ends zero width
 where the next token starts. A `---` or `...` spans the marker; an
-implicit document start or end is zero width. `implicit` is meaningful
-only for document events.
+implicit document start or end is zero width. On a node, `implicit` marks
+a tag the parser's schema gave (`oyl_parser_set_schema`), as opposed to
+one written.
 
 Event types arrive in a well-formed stream:
 
@@ -452,20 +453,24 @@ oyl_status st = oyl_parse_json(parser, oyl_schema_goyaml2(), OYL_JSON_KUBERNETES
 and writes it as JSON in the parser's arena, scalars typed by `schema`. At
 the end of the stream it returns `OYL_OK` with an empty `json`. Errors are
 reported like parse errors (`oyl_parser_error`, `oyl_parser_error_mark`):
-`OYL_ERR_PARSE` for what JSON can't hold or the schema rejects (a null,
-collection or uint64 key; inf or NaN; an unknown anchor; `!!int "abc"`),
-`OYL_ERR_LIMIT` for too much aliasing (go-yaml v2's ratio), merging or
-nesting (the parser's depth limit, counted through aliases). In YAML's
-merge, each mapping merged is worked out once, within the bound the
-parser puts on merges for events with `max_events` off; go-yaml v2's
-merge order counts its work as go-yaml v2 does. Leave the parser's own
-merge and alias resolution off.
+`OYL_ERR_PARSE` for what the schema rejects or JSON can't hold,
+`OYL_ERR_LIMIT` for too much aliasing (go-yaml v2's ratio, counted as
+go-yaml v2 counts it), merging or nesting (the parser's depth limit,
+counted through aliases and chained merges). Every node is checked as
+decoding checks it, since go-yaml v2 and PyYAML decode even the value of
+a key set again later: a scalar its tag rejects (`!!int "abc"`), a
+collection as a key, a merge of what isn't a mapping, an unknown anchor.
+What only JSON can't hold (a null or uint64 key, inf or NaN) fails only
+where it would be written. In YAML's merge, each mapping merged is
+worked out once, within the bound the parser puts on merges for events
+with `max_events` off. Leave the parser's own merge and alias resolution
+off.
 
 | Flag | Effect |
 |------|--------|
 | `OYL_JSON_MERGE` | expand `<<` merge keys; keys written in the mapping win (YAML's merge) |
 | `OYL_JSON_MERGE_ORDER` | with `MERGE`, go-yaml v2's order: a merge overrides the keys before it |
-| `OYL_JSON_STRICT` | a key set twice is an error (`YAMLToJSONStrict`) |
+| `OYL_JSON_STRICT` | a key set twice in any mapping is an error (`YAMLToJSONStrict`), as are two keys that become one string (`1` and `"1"`, which `YAMLToJSONStrict` keeps one of at random) |
 | `OYL_JSON_KUBERNETES` | `MERGE \| MERGE_ORDER`: with `oyl_schema_goyaml2()`, `sigs.k8s.io/yaml`'s `YAMLToJSON` |
 
 Output: keys sorted by their bytes, the last of a repeated key winning;
@@ -590,8 +595,9 @@ oyl_emit_stream_end(e);
 It writes what emitting the document's events writes: the same styles,
 anchors, aliases and `<<` keys, and `---` and `...` where the document
 had them. The one difference is a parser with a schema
-(`oyl_parser_set_schema`): its events tag every node, and the tree keeps
-only the tags written, so `a: !!int 1` comes out as `a: 1`.
+(`oyl_parser_set_schema`): its events tag every node, marking the tags
+the schema gave `implicit`, and the tree keeps only the tags written, so
+`a: 1` comes out as `a: 1`, not `a: !!int 1`.
 
 ---
 

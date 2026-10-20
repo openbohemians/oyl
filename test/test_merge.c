@@ -268,6 +268,47 @@ static void test_quoted_not_merge(void) {
     ASSERT(found_alias, "alias preserved for quoted <<");
 }
 
+/* Is there an alias left in key's mapping value (its merge not applied)? */
+static bool alias_left(const event_list *el, const char *key) {
+    int at = find_key_value(el, 0, key), depth = 0;
+    for (int i = at; at > 0 && i < el->len; i++) {
+        if (el->events[i].type == OYL_EVT_MAPPING_START) depth++;
+        if (el->events[i].type == OYL_EVT_MAPPING_END && --depth == 0) break;
+        if (el->events[i].type == OYL_EVT_ALIAS) return true;
+    }
+    return false;
+}
+
+/* << tagged ! is resolved as if plain, a merge key quoted or not (libyaml's
+ * reading, go-yaml v2's and PyYAML's); tagged !!str it isn't, with or
+ * without a schema on the parser (found by review, 2026-10-20) */
+static void test_bang_merge_key(void) {
+    printf("test_bang_merge_key:\n");
+    const char *yaml = "base: &base {x: 1}\n"
+                       "r1: {! <<: *base}\n"
+                       "r2: {! \"<<\": *base}\n"
+                       "r3: {!!str <<: *base}\n"
+                       "r4: {<<: *base}\n";
+    for (int with_schema = 0; with_schema < 2; with_schema++) {
+        event_list el = { .len = 0 };
+        oyl_arena *a = oyl_arena_new(4096);
+        oyl_parser *p = oyl_parser_new(yaml, strlen(yaml), a);
+        oyl_parser_set_merge(p, true);
+        if (with_schema) oyl_parser_set_schema(p, oyl_schema_core());
+        const oyl_event *evt;
+        while (el.len < 512 && oyl_parse_next(p, &evt) == OYL_OK) {
+            el.events[el.len++] = *evt;
+            if (evt->type == OYL_EVT_STREAM_END) break;
+        }
+        ASSERT(!oyl_parser_error(p), "parses");
+        ASSERT(!alias_left(&el, "r1") && !alias_left(&el, "r2"), "! << merges, quoted or not");
+        ASSERT(alias_left(&el, "r3"), "!!str << is a key");
+        ASSERT(!alias_left(&el, "r4"), "<< merges");
+        oyl_parser_free(p);
+        oyl_arena_free(a);
+    }
+}
+
 /* ── Test: Nested merge ──────────────────────────────────── */
 
 static void test_nested_merge(void) {
@@ -684,6 +725,7 @@ int main(void) {
     test_sequence_merge();
     test_multiple_merge_keys();
     test_quoted_not_merge();
+    test_bang_merge_key();
     test_nested_merge();
     test_merge_non_mapping();
     test_merge_inline();

@@ -760,9 +760,12 @@ static oyl_status scan_double_quoted(oyl_scanner *s, oyl_token *tok) {
         scan += n;
         max_len += n;
         if (scan >= s->len || s->buf[scan] == '"') break;
-        /* a backslash and the escaped byte: one output byte (two for \N, \_) */
+        /* a backslash and the escaped byte: one output byte (two for \N, \_,
+         * three for \L, \P) */
         if (scan + 1 < s->len && (s->buf[scan+1] == 'N' || s->buf[scan+1] == '_'))
             max_len++; /* 2-byte UTF-8 output */
+        else if (scan + 1 < s->len && (s->buf[scan+1] == 'L' || s->buf[scan+1] == 'P'))
+            max_len += 2; /* 3-byte UTF-8 output */
         scan += 2;
         max_len++;
     }
@@ -812,6 +815,12 @@ static oyl_status scan_double_quoted(oyl_scanner *s, oyl_token *tok) {
                 case '_':  /* NBSP U+00A0 */
                     buf[out++] = (char)0xC2;
                     buf[out++] = (char)0xA0;
+                    break;
+                case 'L':  /* line separator U+2028 */
+                case 'P':  /* paragraph separator U+2029 */
+                    buf[out++] = (char)0xE2;
+                    buf[out++] = (char)0x80;
+                    buf[out++] = (char)(esc == 'L' ? 0xA8 : 0xA9);
                     break;
                 case 'x': { /* \xNN */
                     if (REMAINING(s) < 2) SCAN_ERROR(s, "incomplete \\x escape sequence");

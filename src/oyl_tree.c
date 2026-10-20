@@ -59,7 +59,6 @@ typedef struct {
     anchor           *anchors;      /* open addressing; name.data NULL is empty */
     size_t            acap, alen;
     const oyl_hash_key *key;        /* the parser's, once there are anchors */
-    const oyl_schema *parser_schema;   /* a parser resolving tags: its tags aren't kept */
     uintptr_t         lo, hi;       /* the document's text: from its start to the input's end */
     size_t            base;
     bool              small;        /* under 4 GB from the document's start: no offset overflows */
@@ -196,14 +195,8 @@ static bool add_props(builder *b, oyl_str tag, oyl_str anchor_name, oyl_node *n)
 }
 
 /* The tag a node keeps: the one written. A parser with a schema tags
- * every node; a tag it would resolve anyway isn't kept. */
-static oyl_str written_tag(builder *b, const oyl_event *e) {
-    const oyl_schema *s = b->parser_schema;
-    if (!s || !e->tag.len) return e->tag;
-    oyl_str resolved = e->type == OYL_EVT_SCALAR ? oyl_schema_resolve(s, e->value, e->scalar_style)
-                     : e->type == OYL_EVT_MAPPING_START ? s->default_map_tag : s->default_seq_tag;
-    return same(e->tag, resolved) ? OYL_STR_NULL : e->tag;
-}
+ * every node, and marks the tags it gave implicit. */
+static oyl_str written_tag(const oyl_event *e) { return e->implicit ? OYL_STR_NULL : e->tag; }
 
 static bool close_collection(builder *b, const oyl_event *e) {
     oyl_tree *t = b->t;
@@ -246,9 +239,9 @@ ALWAYS_INLINE bool add_event(builder *b, const oyl_event *e) {
         n.props = anchor_get(b, e->value);
         if (n.props == NONE)
             return fail(b, OYL_ERR_PARSE, e->start, "unknown anchor '%.*s' referenced",
-                        (int)e->value.len, e->value.data);
+                        (int)(e->value.len > 100 ? 100 : e->value.len), e->value.data);
     } else {
-        tag = written_tag(b, e);
+        tag = written_tag(e);
     }
     if (n.kind == OYL_NODE_SCALAR || n.kind == OYL_NODE_ALIAS) {
         n.span = 1;
@@ -316,7 +309,7 @@ static oyl_status parse_tree(oyl_parser *p, oyl_tree **tree, bool merges) {
     t->merge = oyl_dialect_merge(t->dialect);
     t->implicit_start = e->implicit;
     t->plen = 1;
-    builder b = { .p = p, .t = t, .parser_schema = oyl_parser_schema(p), .base = t->base,
+    builder b = { .p = p, .t = t, .base = t->base,
                   .lo = (uintptr_t)t->input + t->base, .hi = (uintptr_t)t->input + t->input_len,
                   .small = t->input_len - t->base <= UINT32_MAX };
     if (!grow((void **)&t->props, &t->pcap, 0, 1, sizeof *t->props)) {
@@ -492,12 +485,15 @@ uint32_t oyl_node_at(const oyl_tree *t, uint32_t seq, uint32_t k) {
     return c;
 }
 
-/* Is key node k a merge key? << untagged and plain, or tagged !!merge */
+/* Is key node k a merge key? << untagged and plain, tagged !!merge, or
+ * tagged ! in any style, which leaves it to be resolved as if plain
+ * (libyaml's reading, which PyYAML and go-yaml v2 share) */
 static bool is_merge_key(const oyl_tree *t, uint32_t k) {
     const oyl_node *n = &t->nodes[k];
     if (n->kind != OYL_NODE_SCALAR || n->len != 2 || memcmp(oyl_tree_text(t, n).data, "<<", 2) != 0)
         return false;
     oyl_str tag = written(t, n);
+    if (tag.len == 1 && tag.data[0] == '!') return true;
     return tag.len ? same(tag, OYL_TAG_MERGE) : n->style == OYL_SCALAR_PLAIN;
 }
 
@@ -550,7 +546,8 @@ static bool key_of(const oyl_tree *t, uint32_t k, oyl_key *key) {
     oyl_value v;
     oyl_status st = oyl_node_value(t, k, &v);
     if (st == OYL_ERR_MEMORY) return false;
-    oyl_key_make(key, oyl_key_tag(t->schema, oyl_node_tag(t, k)), oyl_node_text(t, k), st, &v);
+    oyl_str text = oyl_node_text(t, k);
+    oyl_key_make(key, oyl_key_tag(t->schema, oyl_node_tag(t, k), text), text, st, &v);
     return true;
 }
 

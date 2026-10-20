@@ -212,6 +212,29 @@ static void test_control_char_anchor(void) {
     oyl_arena_free(a);
 }
 
+/* \L and \P, YAML 1.2's escapes for U+2028 and U+2029 (found by review, 2026-10-20) */
+static void test_line_separator_escapes(void) {
+    printf("test_line_separator_escapes:\n");
+    const char *yaml = "a: \"x\\Ly\\Pz\"\nb: \"\\L\\P\\L\\P\\L\\P\\L\\P\\L\\P\"\n";
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_parser *p = oyl_parser_new(yaml, strlen(yaml), a);
+    const oyl_event *e;
+    const char *want[] = { "x\xE2\x80\xA8y\xE2\x80\xA9z",
+                           "\xE2\x80\xA8\xE2\x80\xA9\xE2\x80\xA8\xE2\x80\xA9\xE2\x80\xA8\xE2\x80\xA9"
+                           "\xE2\x80\xA8\xE2\x80\xA9\xE2\x80\xA8\xE2\x80\xA9" };
+    int scalars = 0, right = 0;
+    while (oyl_parse_next(p, &e) == OYL_OK && e->type != OYL_EVT_STREAM_END) {
+        if (e->type != OYL_EVT_SCALAR) continue;
+        if (scalars % 2 && e->value.len == strlen(want[scalars / 2]) &&
+            memcmp(e->value.data, want[scalars / 2], e->value.len) == 0)
+            right++;
+        scalars++;
+    }
+    ASSERT(!oyl_parser_error(p) && scalars == 4 && right == 2, "\\L and \\P are U+2028 and U+2029");
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+}
+
 /* A chain of anchors, each aliasing the previous one inside a sequence,
  * is shallow as written but nests one level per link when expanded. The
  * depth limit must hold for the expanded stream (found by fuzzing). */
@@ -698,6 +721,7 @@ int main(void) {
     test_invalid_escape();
     test_empty_anchor();
     test_control_char_anchor();
+    test_line_separator_escapes();
     test_depth_limit_after_expansion();
     test_depth_limit_every_path();
 

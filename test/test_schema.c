@@ -385,6 +385,30 @@ static void test_explicit_tag(void) {
 
     oyl_parser_free(p);
     oyl_arena_free(a);
+
+    /* the tags the schema gives are implicit, the ones written aren't, and
+     * an implicit document start stays implicit (found by review, 2026-10-20) */
+    yaml = "a: !!int 1\nb: 2\nc: !!seq [x]\nd: [y]\n";
+    a = oyl_arena_new(4096);
+    p = oyl_parser_new(yaml, strlen(yaml), a);
+    oyl_parser_set_schema(p, core);
+    int implicit = 0, written = 0, wrong = 0;
+    while (oyl_parse_next(p, &evt) == OYL_OK && evt->type != OYL_EVT_STREAM_END) {
+        if (evt->type == OYL_EVT_DOC_START) wrong += !evt->implicit;
+        if (evt->type != OYL_EVT_SCALAR && evt->type != OYL_EVT_SEQUENCE_START &&
+            evt->type != OYL_EVT_MAPPING_START)
+            continue;
+        if (!evt->tag.len) wrong++;
+        bool was_written = evt->value.len == 1 && evt->value.data[0] == '1';
+        if (evt->type == OYL_EVT_SEQUENCE_START)
+            was_written = evt->start.offset == strlen("a: !!int 1\nb: 2\nc: ");
+        if (evt->implicit == was_written) wrong++;
+        implicit += evt->implicit;
+        written += !evt->implicit;
+    }
+    ASSERT(!wrong && implicit == 9 && written == 2, "a tag the schema gave is implicit, one written isn't");
+    oyl_parser_free(p);
+    oyl_arena_free(a);
 }
 
 /* ── Test: icase match ───────────────────────────────────── */
@@ -614,6 +638,16 @@ static void test_values_yaml11(void) {
     ASSERT(is_bool(plain_value(s, "NO"), false), "NO");
     ASSERT(is_bool(plain_value(s, "on"), true), "on");
     ASSERT(plain_value(s, "~").kind == OYL_VALUE_NULL, "~");
+    /* the non-specific tag !: PyYAML resolves the scalar as if plain, in
+     * any style; YAML 1.2 makes it a string */
+    ASSERT(value_of(s, "yes", OYL_SCALAR_DOUBLE_QUOTED, (oyl_str){ "!", 1 }, &v) == OYL_OK &&
+           is_bool(v, true), "! \"yes\" is true to PyYAML");
+    ASSERT(value_of(s, "0777", OYL_SCALAR_PLAIN, (oyl_str){ "!", 1 }, &v) == OYL_OK &&
+           is_int(v, 511), "! 0777 is 511");
+    ASSERT(value_of(s, "2001-02-29", OYL_SCALAR_PLAIN, (oyl_str){ "!", 1 }, &v) == OYL_ERR_PARSE,
+           "! 2001-02-29 is no date");
+    ASSERT(value_of(oyl_schema_core(), "123", OYL_SCALAR_PLAIN, (oyl_str){ "!", 1 }, &v) == OYL_OK &&
+           v.kind == OYL_VALUE_STR, "! 123 is a string in YAML 1.2");
 
     ASSERT(is_int(plain_value(s, "0b1010_0111"), 0xA7), "0b1010_0111");
     ASSERT(is_int(plain_value(s, "02472256"), 685230), "02472256 (octal)");

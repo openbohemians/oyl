@@ -194,10 +194,14 @@ typedef struct {
     oyl_value value;
 } oyl_key;
 
-/* A key's tag from the scalar's (written, else resolved): ! makes it a
- * string */
-static inline oyl_str oyl_key_tag(const oyl_schema *schema, oyl_str tag) {
-    return tag.len == 1 && tag.data[0] == '!' ? schema->default_quoted_tag : tag;
+/* The tag of a scalar tagged !, the non-specific tag: a string, as YAML
+ * 1.2 has it, or with PyYAML's schema the tag `text` resolves to as if
+ * plain (oyl_schema.c) */
+oyl_str oyl_schema_nonspecific(const oyl_schema *schema, oyl_str text);
+
+/* A key's tag from the scalar's (written, else resolved), and its text */
+static inline oyl_str oyl_key_tag(const oyl_schema *schema, oyl_str tag, oyl_str text) {
+    return tag.len == 1 && tag.data[0] == '!' ? oyl_schema_nonspecific(schema, text) : tag;
 }
 
 /* The key for a scalar with tag `tag` (from oyl_key_tag) and `text`, given

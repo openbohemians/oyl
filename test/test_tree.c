@@ -183,14 +183,15 @@ static void test_types(void) {
     ASSERT(oyl_tree_dialect(x.t) == oyl_dialect_yaml11(), "the document's dialect");
     unload(&x);
 
-    /* a parser that resolves tags itself: the tags it gives aren't kept */
+    /* a parser that resolves tags itself: the tags it gives (implicit)
+     * aren't kept, the ones written are */
     x.a = oyl_arena_new(4096);
     const char *y = "i: 12\ns: !!str 12\nk: !!int 12\nm: {a: b}\n";
     x.p = oyl_parser_new(y, strlen(y), x.a);
     oyl_parser_set_schema(x.p, oyl_schema_core());
     x.st = oyl_parse_tree(x.p, &x.t);
     oyl_tree_props(x.t, &props);
-    ASSERT(x.st == OYL_OK && props == 2, "only !!str 12 keeps its tag");
+    ASSERT(x.st == OYL_OK && props == 3, "!!str 12 and !!int 12 keep their tags");
     ASSERT(value_is_int(&x, "i", 12) && value_is_int(&x, "k", 12) && kind_at(&x, "s") == OYL_VALUE_STR,
            "the same values");
     unload(&x);
@@ -281,6 +282,10 @@ static void test_merges(void) {
     ASSERT(str_is(text_at(&x, "b.i"), "<none>") && str_is(text_at(&x, "b.<<"), "i") == false,
            "but quoted is an ordinary key");
     ASSERT(oyl_node_get(x.t, oyl_node_get(x.t, 0, S("b")), S("<<")) != OYL_NO_NODE, "found as one");
+    unload(&x);
+    x = load("a: &a {k: 1}\nb: {! <<: *a}\nc: {! '<<': *a}\n");
+    ASSERT(str_is(text_at(&x, "b.k"), "1") && str_is(text_at(&x, "c.k"), "1"),
+           "<< tagged ! is resolved as if plain: it merges, quoted or not");
     unload(&x);
 
     x = load(MORE_MERGES);
@@ -430,7 +435,8 @@ static const char *KEYS =
 static const char *KEYS_YAML11 =
     "b:\n  yes: a\n  on: b\n  true: c\n  y: d\n"
     "o:\n  0777: a\n  511: b\n"
-    "s:\n  1:00: a\n  60: b\n";
+    "s:\n  1:00: a\n  60: b\n"
+    "t:\n  ! 1: a\n  1: b\n  ! \"2\": c\n  \"2\": d\n";
 
 static oyl_status entries_status(const doc *x, const char *key, unsigned flags) {
     oyl_arena *a = oyl_arena_new(1024);
@@ -532,6 +538,7 @@ static void test_keys(void) {
     check_entries(&x, "b", 0, "true=c y=d");
     check_entries(&x, "o", 0, "511=b");
     check_entries(&x, "s", 0, "60=b");
+    check_entries(&x, "t", 0, "1=b 2=c 2=d");   /* ! resolves as if plain: 1, 2 and "2", as PyYAML has it */
     ASSERT(str_is(text_at(&x, "b.on"), "c"), "on is true in YAML 1.1");
     ASSERT(str_is(text_by_value(&x, "b", BOOL(true)), "c"), "true in YAML 1.1");
     ASSERT(entries_agree(&x), "entries and lookups agree on YAML 1.1's keys");
@@ -708,7 +715,7 @@ static void test_emit(void) {
     check_emit("", OYL_EMIT_BLOCK, NULL, "", "no documents");
     /* a parser with a schema tags every node; a tree keeps the tags written */
     check_emit("a: 1\nb: !!str 2\nc: !!int 3\n", OYL_EMIT_BLOCK, oyl_schema_core(),
-               "a: 1\nb: !!str \"2\"\nc: 3\n", "only the tags that change a type");
+               "a: 1\nb: !!str \"2\"\nc: !!int 3\n", "the tags written, not the schema's");
 
     /* what a tree writes reads back as the same tree */
     char once[512], twice[512];

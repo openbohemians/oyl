@@ -272,14 +272,14 @@ static inline bool enqueue(oyl_parser *p, const oyl_event *evt) {
     }
     oyl_event *dst = &p->events[p->evt_len++];
     *dst = *evt;
-    /* resolve tag via schema if set and no explicit tag */
-    if (p->res_schema && dst->tag.data == NULL) {
-        if (dst->type == OYL_EVT_SCALAR)
-            dst->tag = oyl_schema_resolve(p->res_schema, dst->value, dst->scalar_style);
-        else if (dst->type == OYL_EVT_MAPPING_START)
-            dst->tag = p->res_schema->default_map_tag;
-        else if (dst->type == OYL_EVT_SEQUENCE_START)
-            dst->tag = p->res_schema->default_seq_tag;
+    /* resolve tag via schema if set and no explicit tag, marked implicit */
+    if (p->res_schema && dst->tag.data == NULL &&
+        (dst->type == OYL_EVT_SCALAR || dst->type == OYL_EVT_MAPPING_START ||
+         dst->type == OYL_EVT_SEQUENCE_START)) {
+        dst->tag = dst->type == OYL_EVT_SCALAR ? oyl_schema_resolve(p->res_schema, dst->value, dst->scalar_style)
+                 : dst->type == OYL_EVT_MAPPING_START ? p->res_schema->default_map_tag
+                 : p->res_schema->default_seq_tag;
+        dst->implicit = true;
     }
     return true;
 }
@@ -430,6 +430,7 @@ static void move_props_to_key_map(oyl_parser *p, int at, oyl_event *map_evt,
     map_evt->tag = tag;         /* insert_event applies the schema default */
     coll->anchor = OYL_STR_NULL;
     coll->tag = OYL_STR_NULL;
+    coll->implicit = p->res_schema != NULL;
     if (p->res_schema)
         coll->tag = coll->type == OYL_EVT_MAPPING_START ? p->res_schema->default_map_tag
                                                         : p->res_schema->default_seq_tag;
@@ -2443,7 +2444,7 @@ static oyl_status event_key(const oyl_parser *p, const oyl_event *evt, oyl_key *
     oyl_value v;
     oyl_status st = oyl_schema_value_of(s, evt->value, evt->scalar_style, evt->tag, &v);
     if (st == OYL_ERR_MEMORY) return st;
-    oyl_key_make(k, oyl_key_tag(s, tag), evt->value, st, &v);
+    oyl_key_make(k, oyl_key_tag(s, tag, evt->value), evt->value, st, &v);
     return OYL_OK;
 }
 
@@ -2498,20 +2499,17 @@ static const char merge_oom[] = "out of memory";
 static const char merge_costly[] = "merges too costly to expand";
 static const char merge_deep[] = "nesting depth limit exceeded after alias/merge expansion";
 
-/* Is evt a merge key? << untagged and plain, or tagged !!merge. A schema
- * tags a plain << itself: YAML 1.1's as !!merge, and one without a merge
- * type (YAML 1.2's) as a string, which can't be told from a !!str written
- * on it, so that << is a merge key too. */
-static bool is_merge_key(const oyl_parser *p, const oyl_event *evt) {
+/* Is evt a merge key? << untagged and plain (a tag the parser's schema
+ * gave, implicit, counts as none: YAML 1.1's !!merge, YAML 1.2's string),
+ * tagged !!merge, or tagged ! in any style, which leaves it to be resolved
+ * as if plain (libyaml's reading, which PyYAML and go-yaml v2 share). */
+static bool is_merge_key(const oyl_event *evt) {
     if (evt->type != OYL_EVT_SCALAR || evt->value.len != 2 || memcmp(evt->value.data, "<<", 2) != 0)
         return false;
     if (evt->tag.len == OYL_TAG_MERGE.len && memcmp(evt->tag.data, OYL_TAG_MERGE.data, evt->tag.len) == 0)
         return true;
-    if (evt->scalar_style != OYL_SCALAR_PLAIN) return false;
-    if (!evt->tag.len) return true;
-    if (!p->res_schema) return false;
-    oyl_str r = oyl_schema_resolve(p->res_schema, evt->value, evt->scalar_style);
-    return r.len == evt->tag.len && memcmp(r.data, evt->tag.data, r.len) == 0;
+    if (evt->tag.len == 1 && evt->tag.data[0] == '!') return true;
+    return evt->scalar_style == OYL_SCALAR_PLAIN && (!evt->tag.len || evt->implicit);
 }
 
 /* How deep merges may nest (a merge's source with merges of its own) */
@@ -2694,7 +2692,7 @@ static int resolve_mapping(merger *m, int ms, int depth) {
     for (int pos = ms + 1; pos < me - 1 && ok;) {
         int ke = node_end(ev, m->evt_len, pos), ve = node_end(ev, m->evt_len, ke);
         const char *err = NULL;
-        int verdict = is_merge_key(m->p, &ev[pos]) ? can_merge(m, ke, ms, me, &err) : 0;
+        int verdict = is_merge_key(&ev[pos]) ? can_merge(m, ke, ms, me, &err) : 0;
         if (verdict < 0) {
             ok = merge_fail(m, err, pos);
         } else if (verdict > 0) {
@@ -2824,7 +2822,7 @@ static oyl_status expansion_failed(oyl_parser *p, const evt_buf *b) {
  * left unmerged however deep they nest */
 static oyl_status resolve_merges(oyl_parser *p) {
     bool any = false;
-    for (int i = 0; i < p->evt_len && !any; i++) any = is_merge_key(p, &p->events[i]);
+    for (int i = 0; i < p->evt_len && !any; i++) any = is_merge_key(&p->events[i]);
     if (!any) return OYL_OK;
 
     merge_anchor_table anchors;

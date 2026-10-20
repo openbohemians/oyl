@@ -409,6 +409,29 @@ static const char *JSONABLE =
 
 static outcome json_core(void) { return json(JSONABLE, 0); }
 static outcome json_many(void) { return json(many, 0); }
+/* Each document of a stream, in go-yaml v2's merge order (counted before
+ * writing) and with a merge of more than 16 mappings; a call after a
+ * failure fails alike, as an error is final */
+static outcome json_stream(void) {
+    static const char *y =
+        "a: &a {x: 1}\nb: {<<: *a, y: [*a, *a]}\n"
+        "---\n- &s [1, 2]\n- *s\n- &m {z: 1}\n- {<<: [*m, *m, *m, *m, *m, *m, *m, *m, *m, *m, *m, *m, *m, *m, *m, *m, *m]}\n"
+        "---\nc: {<<: [{p: 1}, {q: 2}], r: 3}\n";
+    oyl_arena *a = oyl_arena_new(4096);
+    if (!a) return OUT_OF_MEMORY;
+    oyl_parser *p = oyl_parser_new(y, strlen(y), a);
+    if (!p) { oyl_arena_free(a); return OUT_OF_MEMORY; }
+    oyl_status st;
+    oyl_str j;
+    while ((st = oyl_parse_json(p, oyl_schema_goyaml2(), OYL_JSON_KUBERNETES, &j)) == OYL_OK && j.data)
+        put_str(j);
+    oyl_status again = st == OYL_OK ? OYL_OK : oyl_parse_json(p, oyl_schema_goyaml2(), OYL_JSON_KUBERNETES, &j);
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+    if (again != st) return WRONG_STATUS;
+    return st == OYL_OK ? DONE : failed(st);
+}
+
 static outcome json_k8s(void) {
     oyl_arena *a = oyl_arena_new(4096);
     if (!a) return OUT_OF_MEMORY;
@@ -600,6 +623,7 @@ int main(void) {
     run("JSON", json_core);
     run("JSON, many merges", json_many);
     run("JSON, go-yaml v2", json_k8s);
+    run("JSON, a stream", json_stream);
     run("emitting", emit_rich);
     run("emitting, deep", emit_deep);
     run("schema and dialect", schema_and_dialect);

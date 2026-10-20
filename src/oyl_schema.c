@@ -976,6 +976,11 @@ int oyl_schema_rule_of(const oyl_schema *schema, oyl_str text) {
     return match(schema, text, NULL);
 }
 
+oyl_str oyl_schema_nonspecific(const oyl_schema *schema, oyl_str text) {
+    return schema->tagged == OYL_TAGGED_PYYAML ? oyl_schema_resolve(schema, text, OYL_SCALAR_PLAIN)
+                                               : schema->default_quoted_tag;
+}
+
 int oyl_schema_rule_value(const oyl_schema *schema, int rule, oyl_str text, oyl_value *out) {
     return rule_parse(&schema->rules[rule], text, out);
 }
@@ -989,6 +994,11 @@ oyl_status oyl_schema_value(const oyl_schema *schema, const oyl_event *scalar,
 oyl_status oyl_schema_value_of(const oyl_schema *schema, oyl_str text, oyl_scalar_style style,
                                oyl_str tag, oyl_value *out) {
     if (!schema || !out || (!text.data && text.len) || (!tag.data && tag.len)) return OYL_ERR_INPUT;
+    if (tag.len == 1 && tag.data[0] == '!' && schema->tagged == OYL_TAGGED_PYYAML) {
+        /* PyYAML resolves a scalar tagged ! as if it were plain */
+        tag = OYL_STR_NULL;
+        style = OYL_SCALAR_PLAIN;
+    }
     if (tag.len == 0) {
         if (style == OYL_SCALAR_PLAIN) {
             int i = match(schema, text, out);

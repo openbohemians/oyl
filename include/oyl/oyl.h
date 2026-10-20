@@ -164,7 +164,9 @@ typedef struct {
     oyl_str          anchor;      /**< Anchor name (@c &name) if present. */
     oyl_str          tag;         /**< Tag (@c !tag) if present. */
     oyl_scalar_style scalar_style;
-    bool             implicit;    /**< True for implicit doc start/end. */
+    bool             implicit;    /**< True for an implicit doc start/end, and for a
+                                       node whose tag the parser's schema gave
+                                       (oyl_parser_set_schema), not one written. */
     bool             flow;        /**< True for flow collections ({} / []). */
     oyl_mark         start;
     oyl_mark         end;
@@ -473,7 +475,8 @@ OYL_API oyl_status  oyl_parse_next(oyl_parser *p, const oyl_event **evt);
 
 /** Set a tag schema for automatic tag resolution on scalars. The schema
  *  must outlive the parser. Without a default dialect, it types documents
- *  with no %YAML or with %YAML 1.2 (see Dialects). */
+ *  with no %YAML or with %YAML 1.2 (see Dialects). Every node's event then
+ *  has a tag; one the schema gave is marked implicit. */
 OYL_API void        oyl_parser_set_schema(oyl_parser *p, const oyl_schema *schema);
 
 /** Enable/disable merge key (@c <<) expansion. Disabled by default.
@@ -589,7 +592,10 @@ OYL_API const oyl_dialect *oyl_dialect_yaml12(void);
 OYL_API const oyl_dialect *oyl_dialect_yaml11(void);
 /** go-yaml v2, as Kubernetes reads YAML: its types, its syntax
  *  leniencies (OYL_SYNTAX_GOYAML2), and its merge order. A dialect of
- *  YAML 1.1, as go-yaml v2 reads it. */
+ *  YAML 1.1, as go-yaml v2 reads it. Its other libyaml quirks aren't
+ *  copied; as YAML 1.2 has it, NEL, U+2028 and U+2029 aren't line breaks,
+ *  the escape \/ and a raw DEL may be quoted, an anchor may hold a colon
+ *  (&a:b), and a zero-indented top-level block scalar keeps its text. */
 OYL_API const oyl_dialect *oyl_dialect_goyaml2(void);
 
 /** The default dialect, for documents whose directives choose none, and
@@ -635,7 +641,8 @@ enum {
     OYL_JSON_MERGE       = 1 << 0,  /**< expand << merge keys; keys written in the mapping win */
     OYL_JSON_MERGE_ORDER = 1 << 1,  /**< with MERGE, as go-yaml v2: a merge overrides the
                                          keys before it, and keys after it override it */
-    OYL_JSON_STRICT      = 1 << 2,  /**< a key set twice is an error */
+    OYL_JSON_STRICT      = 1 << 2,  /**< a key set twice in any mapping is an error, as
+                                         are two keys that become one string (1, "1") */
     /** As Kubernetes reads YAML (sigs.k8s.io/yaml's YAMLToJSON), with
      *  oyl_schema_goyaml2() */
     OYL_JSON_KUBERNETES  = OYL_JSON_MERGE | OYL_JSON_MERGE_ORDER,
@@ -649,20 +656,24 @@ enum {
  *
  *  Keys are sorted by their bytes, and a key set twice keeps its last
  *  value (an error under OYL_JSON_STRICT); aliases are expanded, within
- *  go-yaml v2's limit on aliasing; in YAML's merge, each mapping merged
+ *  go-yaml v2's limit on aliasing, counted as go-yaml v2 counts it (in
+ *  YAML's merge, as written); in YAML's merge, each mapping merged
  *  is worked out once, within the parser's bound on merges for events
- *  with max_events off (go-yaml v2's merge order counts as go-yaml v2
- *  does); numbers and strings are written as Go's
+ *  with max_events off; numbers and strings are written as Go's
  *  encoding/json writes them. With oyl_schema_goyaml2() and
  *  OYL_JSON_KUBERNETES, the output is byte for byte that of
  *  sigs.k8s.io/yaml's YAMLToJSON for the first document.
  *
  *  Leave the parser's own merge and alias resolution off: this function
- *  does both. Errors it finds (a null or collection key, inf or NaN, an
- *  unknown anchor, a scalar its explicit tag rejects) are reported like
- *  parse errors, with oyl_parser_error() and oyl_parser_error_mark(): as
- *  OYL_ERR_PARSE, or OYL_ERR_LIMIT for too much aliasing, merging or
- *  nesting. */
+ *  does both. Errors are reported like parse errors, with
+ *  oyl_parser_error() and oyl_parser_error_mark(): as OYL_ERR_PARSE, or
+ *  OYL_ERR_LIMIT for too much aliasing, merging or nesting (merges
+ *  chained count as nesting). Every node is checked as decoding it
+ *  checks it, as go-yaml v2 and PyYAML decode even the value of a key set
+ *  again later: a scalar its tag rejects, a collection as a key, a merge
+ *  of what isn't a mapping, an unknown anchor or one inside its own
+ *  value. What only JSON can't hold (a null or uint64 key, inf or NaN)
+ *  fails only where it would be written. */
 OYL_API oyl_status oyl_parse_json(oyl_parser *p, const oyl_schema *schema,
                                   unsigned flags, oyl_str *json);
 
