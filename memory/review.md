@@ -149,8 +149,18 @@ quotes rejected by libyaml. The fuzz replay caught my own slip before
 commit (bad keys sorted last, a null key beside others written as "").
 **Open:** C1 characters (U+0080 to U+009F but NEL) outside quotes, which
 YAML 1.2 and libyaml forbid, aren't checked: that needs UTF-8 decoding,
-which Oyl doesn't do (no invalid-UTF-8 check either). Codex next, with
-the same brief.
+which Oyl doesn't do (no invalid-UTF-8 check either).
+**Codex reviewed #4 2026-10-20** (on `1a8cce6`): 2 findings, both
+reproduced, fixed in `36b74b2` (the user approved both): in YAML's
+merge, a sequence of mappings merged through an alias was worked out
+(and checked, and prepared) again for every mapping merging it, outside
+the budget when its mappings were empty (30,000 x 30,000 took 14 s); now
+once, like a merged mapping, 10 ms, output unchanged (= old code and
+PyYAML on 20,000 documents). Float keys -0.0 and 0.0 are one Go key (the
+last one's sign written), apart from the int 0 and the string "0"; my
+first fix wrongly merged -0.0 with the int 0, caught by comparing with
+YAMLToJSON (which picks at random between keys that become one string:
+compare per mapping over many runs, 8 runs miss its rarer choice).
 
 **PR #5 (parser) reviewed 2026-10-19:** 7 findings, all verified. (The
 review's comment couldn't be posted: GitHub said the account "cannot
