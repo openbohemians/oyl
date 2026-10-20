@@ -314,6 +314,49 @@ static void test_line_separator_escapes(void) {
     oyl_arena_free(a);
 }
 
+/* An implicit key is at most 1024 characters, props and the blanks before
+ * its ':' included; explicit keys and a flow mapping's keys may be longer
+ * (found by review, 2026-10-20) */
+static void test_long_implicit_keys(void) {
+    printf("test_long_implicit_keys:\n");
+    static const struct { const char *before, *unit; int n; const char *after; bool ok; } cases[] = {
+        { "", "k", 1024, ": v\n", true },
+        { "", "k", 1025, ": v\n", false },
+        { "&a ", "k", 1021, ": v\n", true },
+        { "&a ", "k", 1022, ": v\n", false },
+        { "!!str ", "k", 1019, ": v\n", false },
+        { "", "k", 1022, "  : v\n", true },
+        { "", "k", 1023, "  : v\n", false },
+        { "\"", "k", 1022, "\": v\n", true },
+        { "'", "k", 1023, "': v\n", false },
+        { "- ", "k", 1025, ": v\n", false },
+        { "[", "k", 1022, "]: v\n", true },
+        { "[", "k", 1023, "]: v\n", false },
+        { "", "\xC3\xA9", 1024, ": v\n", true },    /* é: characters, not bytes */
+        { "", "\xC3\xA9", 1025, ": v\n", false },
+        { "[", "k", 1025, ": v]\n", false },         /* a pair in a flow sequence */
+        { "[a, ", "k", 1024, ": v]\n", true },
+        { "{", "k", 5000, ": v}\n", true },          /* a flow mapping's key */
+        { "[{", "k", 5000, ": v}]\n", true },
+        { "? ", "k", 5000, "\n: v\n", true },        /* explicit keys */
+        { "[? ", "k", 5000, " : v]\n", true },
+    };
+    char *yaml = malloc(16384), buf[256];
+    if (!yaml) return;
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        size_t len = 0, ulen = strlen(cases[i].unit);
+        len += (size_t)sprintf(yaml + len, "%s", cases[i].before);
+        for (int j = 0; j < cases[i].n; j++, len += ulen) memcpy(yaml + len, cases[i].unit, ulen);
+        len += (size_t)sprintf(yaml + len, "%s", cases[i].after);
+        oyl_mark at;
+        const char *msg = parse_error(yaml, len, &at, buf, sizeof buf);
+        bool right = cases[i].ok ? !msg : msg && strstr(msg, "at most 1024 characters");
+        if (!right) printf("    case %zu: %s\n", i, msg ? msg : "no error");
+        ASSERT(right, cases[i].ok ? "a key within the limit" : "a key past the limit");
+    }
+    free(yaml);
+}
+
 /* A chain of anchors, each aliasing the previous one inside a sequence,
  * is shallow as written but nests one level per link when expanded. The
  * depth limit must hold for the expanded stream (found by fuzzing). */
@@ -802,6 +845,7 @@ int main(void) {
     test_control_char_anchor();
     test_control_chars();
     test_line_separator_escapes();
+    test_long_implicit_keys();
     test_depth_limit_after_expansion();
     test_depth_limit_every_path();
 

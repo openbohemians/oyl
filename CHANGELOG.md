@@ -127,6 +127,11 @@
   empty alias) were written as broken YAML; they are `OYL_ERR_EMIT`. The
   first error is final, as the parser's are (before, a call after a
   failed one could succeed and write on from a broken state).
+- An implicit key longer than 1024 characters is an error, as YAML
+  requires (block mapping keys and pairs in flow sequences; a flow
+  mapping's keys and explicit `?` keys are unlimited). It counts
+  characters, the key's anchor and tag and the blanks before its `:`
+  included.
 - The parser running out of memory while expanding a tag gave the tag as
   written (`!!str`) and succeeded; it gives `OYL_ERR_MEMORY`. Out of memory
   saving its first restart point (for a flow collection as a key, `[a]:

@@ -67,9 +67,10 @@ struct oyl_scanner {
     oyl_arena   *arena;
 
     /* implicit-key check (see check_implicit_key) */
-    struct { oyl_mark open; bool is_map; ptrdiff_t props_col; } *flows;
+    struct { oyl_mark open; bool is_map; ptrdiff_t props_col; size_t props_start; } *flows;
                                    /* open flow brackets, with the column of
-                                    * props right before them (or -1) */
+                                    * props right before them (or -1) and
+                                    * their offset */
     int          flows_len, flows_cap;
     size_t       node_line;        /* start line of the last node that */
     size_t       node_end;         /* could be a key, and its end offset */
@@ -80,6 +81,7 @@ struct oyl_scanner {
     ptrdiff_t    node_col;         /* its 0-based start column */
     size_t       props_end;        /* end offset of the last anchor/tag run */
     ptrdiff_t    props_col;        /* 0-based column where that run starts */
+    size_t       props_start;      /* and its offset */
     size_t       indicator_end;    /* offset just past the last block - ? : */
 
     /* the document's syntax leniencies (OYL_SYNTAX_), and where to warn
@@ -234,6 +236,7 @@ static bool flow_push(oyl_scanner *s, bool is_map) {
     s->flows[s->flows_len].is_map = is_map;
     s->flows[s->flows_len].props_col =
         only_blanks_between(s, s->props_end, s->pos) ? s->props_col : -1;
+    s->flows[s->flows_len].props_start = s->props_start;
     s->flows_len++;
     return true;
 }
@@ -249,6 +252,7 @@ static oyl_mark flow_pop(oyl_scanner *s) {
     oyl_mark open = s->flows[s->flows_len].open;
     if (s->flows[s->flows_len].props_col >= 0) {
         s->props_col = s->flows[s->flows_len].props_col;
+        s->props_start = s->flows[s->flows_len].props_start;
         s->props_end = open.offset;
     }
     return open;
@@ -274,8 +278,10 @@ static bool only_blanks_between(const oyl_scanner *s, size_t from, size_t to) {
 /* Record an anchor or tag token spanning [start, end): consecutive props
  * on a line form one run, which starts at the first of them. */
 static void note_props(oyl_scanner *s, oyl_mark start, size_t end) {
-    if (!only_blanks_between(s, s->props_end, start.offset))
+    if (!only_blanks_between(s, s->props_end, start.offset)) {
         s->props_col = (ptrdiff_t)start.col - 1;
+        s->props_start = start.offset;
+    }
     s->props_end = end;
 }
 
@@ -328,6 +334,27 @@ static int classify_colon(oyl_scanner *s) {
         else break;
     }
     return j == s->node_end ? COLON_BAD_KEY : COLON_IMPLICIT;
+}
+
+/* Where the key of a ':' at the current position starts: at the node
+ * right before it, or at props right before that node (or before the ':'
+ * itself, for an empty node). SIZE_MAX when there's no such key. */
+static size_t key_start(const oyl_scanner *s) {
+    if (only_blanks_between(s, s->node_end, s->pos))
+        return only_blanks_between(s, s->props_end, s->node_start) ? s->props_start
+                                                                   : s->node_start;
+    if (only_blanks_between(s, s->props_end, s->pos)) return s->props_start;
+    return SIZE_MAX;
+}
+
+/* An implicit key is at most 1024 characters, its props and the blanks
+ * before its ':' included. Characters, not bytes: UTF-8 continuation
+ * bytes don't count. */
+static bool key_too_long(const oyl_scanner *s, size_t start) {
+    if (start == SIZE_MAX || s->pos - start <= 1024) return false;
+    size_t chars = 0;
+    for (size_t i = start; i < s->pos; i++) chars += ((uint8_t)s->buf[i] & 0xC0) != 0x80;
+    return chars > 1024;
 }
 
 /* ── Indent management ───────────────────────────────────── */
@@ -1298,6 +1325,8 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
             if (kind == COLON_BAD_KEY)
                 SCAN_ERROR(s, "implicit key must be on a single line");
             if (kind == COLON_IMPLICIT) {
+                if (key_too_long(s, key_start(s)))
+                    SCAN_ERROR(s, "an implicit key is at most 1024 characters");
                 /* "a: b: c" — a block mapping can't start on the line of
                  * another implicit key */
                 if (s->key_colon_line == s->line)
@@ -1322,8 +1351,14 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
              /* `:` after a JSON-like key (quoted scalar) */
              s->last_was_quoted)) {
             s->last_was_quoted = false; /* consumed */
-            if (classify_colon(s) == COLON_BAD_KEY)
+            int kind = classify_colon(s);
+            if (kind == COLON_BAD_KEY)
                 SCAN_ERROR(s, "implicit key must be on a single line");
+            /* a flow mapping's keys may be longer; a pair's in a flow
+             * sequence ("[key: value]") may not */
+            if (kind == COLON_IMPLICIT && s->flows_len > 0 && !s->flows[s->flows_len - 1].is_map &&
+                key_too_long(s, key_start(s)))
+                SCAN_ERROR(s, "an implicit key is at most 1024 characters");
             advance(s, 1);
             *tok = tok_simple(OYL_TOK_BLOCK_MAP_VALUE, start, mark(s));
             return OYL_OK;
