@@ -20,13 +20,14 @@ sanitize:
     # integration. Cleans first because make doesn't track CFLAGS changes.
     set -euo pipefail
     make clean >/dev/null
-    # the allocation failure test needs the linker's --wrap: Linux only
-    oom=""; [ "$(uname -s)" = Linux ] && oom=test_oom
+    # the allocation failure tests need the linker's --wrap: Linux only
+    oom=""; [ "$(uname -s)" = Linux ] && oom="test_oom test_oom_each"
+    oom_targets=""; for t in $oom; do oom_targets="$oom_targets build/$t"; done
     make CC=clang \
       CFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g -O1" \
       build/test_scanner build/test_schema build/test_emitter build/test_merge \
       build/test_resolve build/test_errors build/test_flow build/test_json build/test_dialect build/test_tree build/test_hash build/test_yaml_suite \
-      ${oom:+build/$oom} >/dev/null
+      $oom_targets >/dev/null
     # allocator_may_return_null: the arena tests request absurd sizes on purpose
     # and expect malloc to fail with NULL, as it does outside ASAN.
     export ASAN_OPTIONS='symbolize=1:halt_on_error=0:detect_leaks=1:strict_string_checks=1:allocator_may_return_null=1'
@@ -34,7 +35,10 @@ sanitize:
     fail=0
     for t in test_scanner test_schema test_emitter test_merge test_resolve test_errors test_flow test_json test_dialect test_tree test_hash test_yaml_suite $oom; do
         printf "── %s ──\n" "$t"
-        out=$(./build/$t 2>&1)
+        # a test that fails (or that a sanitizer stops) still has its
+        # output shown and counted
+        rc=0
+        out=$(./build/$t 2>&1) || rc=$?
         hits=$(printf '%s' "$out" | grep -v 'AddressSanitizer failed to allocate' | grep -cE 'AddressSanitizer|UndefinedBehaviorSanitizer|LeakSanitizer|runtime error' || true)
         printf '%s\n' "$out" | tail -2
         if [ "$hits" -gt 0 ]; then
@@ -43,8 +47,12 @@ sanitize:
                 grep -E -A3 'AddressSanitizer|UndefinedBehaviorSanitizer|LeakSanitizer|runtime error' | head -40
             fail=1
         fi
+        if [ "$rc" -ne 0 ]; then
+            printf '  ✗ exit status %d\n' "$rc"
+            fail=1
+        fi
     done
-    [ "$fail" -eq 0 ] && echo "all clean: 0 sanitizer hits" || { echo "sanitizer found issues"; exit 1; }
+    [ "$fail" -eq 0 ] && echo "all clean: 0 sanitizer hits" || { echo "sanitizer hits or failing tests"; exit 1; }
 
 # Install the built Arch package in a clean archlinux container and smoke-test it
 test-install-arch:

@@ -183,9 +183,18 @@ $(TEST_HASH): $(TESTDIR)/test_hash.c $(LIB) $(SRCDIR)/oyl_internal.h
 # Every allocation failing in turn: malloc, calloc and realloc wrapped with
 # the linker's --wrap, which GNU ld (and lld) have, so Linux only
 ifeq ($(shell uname -s),Linux)
+OOM_WRAP := -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc
 TEST_OOM := $(OBJDIR)/test_oom
 $(TEST_OOM): $(TESTDIR)/test_oom.c $(LIB)
-	$(CC) $(OYL_CFLAGS) $< $(LIB) -lm -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc -o $@
+	$(CC) $(OYL_CFLAGS) $< $(LIB) -lm $(OOM_WRAP) -o $@
+
+# and again with every arena request a malloc of its own (most memory
+# comes from the arena, which otherwise mallocs only a block at a time)
+TEST_OOM_EACH := $(OBJDIR)/test_oom_each
+$(OBJDIR)/oyl_arena_each.o: $(SRCDIR)/oyl_arena.c | $(OBJDIR)
+	$(CC) $(OYL_CFLAGS) -DOYL_ARENA_EACH -c $< -o $@
+$(TEST_OOM_EACH): $(TESTDIR)/test_oom.c $(filter-out $(OBJDIR)/oyl_arena.o,$(OBJS)) $(OBJDIR)/oyl_arena_each.o
+	$(CC) $(OYL_CFLAGS) $^ -lm $(OOM_WRAP) -o $@
 endif
 
 test: $(TEST)
@@ -237,9 +246,11 @@ test-hash: $(TEST_HASH)
 	@./$(TEST_HASH)
 
 ifdef TEST_OOM
-test-oom: $(TEST_OOM)
+test-oom: $(TEST_OOM) $(TEST_OOM_EACH)
 	@echo "─── Running allocation failure tests ───"
 	@./$(TEST_OOM)
+	@echo "─── And with every arena request a malloc of its own ───"
+	@./$(TEST_OOM_EACH)
 else
 test-oom:
 	@echo "─── Allocation failure tests: Linux only (the linker's --wrap) ───"

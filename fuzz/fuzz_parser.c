@@ -146,7 +146,7 @@ static bool parse_canon(const char *yaml, size_t len, uint8_t flags, oyl_emitter
     while ((st = oyl_parse_next(p, &evt)) == OYL_OK) {
         if (evt->type == OYL_EVT_NONE) __builtin_trap(); /* no STREAM_END */
         if (++events > MAX_EVENTS) __builtin_trap(); /* limit bypassed */
-        if (em) oyl_emit(em, evt);
+        if (em && oyl_emit(em, evt) != OYL_OK) __builtin_trap(); /* the parser's events didn't emit */
         if (evt->type == OYL_EVT_SCALAR) check_values(evt);
         canon(evt, out, out_len, &cap);
         if (evt->type == OYL_EVT_STREAM_END) break;
@@ -459,7 +459,8 @@ static void check_tree(const char *yaml, size_t len, bool dialect, oyl_emit_styl
             oyl_tree_free(t);
         }
         if (tst == OYL_OK) tst = oyl_emit_stream_end(et);
-        if (done && est == OYL_OK) {
+        if (est != OYL_OK) __builtin_trap();   /* the parser's events didn't emit */
+        if (done) {
             if (tst != OYL_OK && tst != OYL_ERR_MEMORY) __builtin_trap();   /* the tree didn't emit */
             oyl_str x = oyl_emitter_output(ee), y = oyl_emitter_output(et);
             if (tst == OYL_OK && !same_str(x, y)) __builtin_trap();   /* it wrote something else */

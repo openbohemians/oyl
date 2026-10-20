@@ -488,6 +488,8 @@ static size_t pct_decode(char *dst, const char *src, size_t len) {
     return di;
 }
 
+/* The full tag for a tag as written. Out of memory, it sets p->oom and
+ * returns OYL_STR_NULL. */
 static oyl_str expand_tag(oyl_parser *p, oyl_str raw) {
     if (raw.len < 1 || raw.data[0] != '!') return raw;
 
@@ -495,7 +497,7 @@ static oyl_str expand_tag(oyl_parser *p, oyl_str raw) {
     if (raw.len >= 3 && raw.data[1] == '<' && raw.data[raw.len - 1] == '>') {
         size_t inner_len = raw.len - 3; /* strip !< and > */
         char *buf = oyl_arena_alloc(p->arena, inner_len + 1, 1);
-        if (!buf) return raw;
+        if (!buf) { p->oom = true; return OYL_STR_NULL; }
         size_t dlen = pct_decode(buf, raw.data + 2, inner_len);
         buf[dlen] = '\0';
         return (oyl_str){buf, dlen};
@@ -525,7 +527,7 @@ static oyl_str expand_tag(oyl_parser *p, oyl_str raw) {
             size_t suffix_len = raw.len - handle_len;
             size_t total = plen + suffix_len; /* max size before decoding */
             char *buf = oyl_arena_alloc(p->arena, total + 1, 1);
-            if (!buf) return raw;
+            if (!buf) { p->oom = true; return OYL_STR_NULL; }
             memcpy(buf, prefix, plen);
             size_t dlen = pct_decode(buf + plen, raw.data + handle_len, suffix_len);
             buf[plen + dlen] = '\0';
@@ -540,7 +542,7 @@ static oyl_str expand_tag(oyl_parser *p, oyl_str raw) {
         size_t suffix_len = raw.len - 2;
         size_t total = plen + suffix_len;
         char *buf = oyl_arena_alloc(p->arena, total + 1, 1);
-        if (!buf) return raw;
+        if (!buf) { p->oom = true; return OYL_STR_NULL; }
         memcpy(buf, prefix, plen);
         size_t dlen = pct_decode(buf + plen, raw.data + 2, suffix_len);
         buf[plen + dlen] = '\0';
@@ -626,6 +628,7 @@ static oyl_status consume_props(oyl_parser *p) {
             if (!tag_handle_declared(p, p->current.value))
                 PARSE_ERROR(p, "undefined tag handle");
             p->pending_tag = expand_tag(p, p->current.value);
+            if (p->oom) return OOM_STATUS(p);
             p->has_tag = true;
             consume_token(p);
         } else {
@@ -3538,11 +3541,20 @@ static void inc_checkpoint(oyl_parser *p) {
      * document at a time. */
     if (p->ckpt && p->current.start.offset - p->ckpt_tok.start.offset < OYL_CKPT_SPACING)
         return;
-    if (!p->ckpt) {
+    bool fresh = !p->ckpt;
+    if (fresh) {
         p->ckpt = oyl_scanner_new(p->input, p->input_len, p->arena);
         if (!p->ckpt) return;
     }
-    if (!oyl_scanner_copy(p->ckpt, p->scanner)) return;
+    /* a failed copy leaves an earlier checkpoint as it was, but a new one
+     * holds nothing to go back to */
+    if (!oyl_scanner_copy(p->ckpt, p->scanner)) {
+        if (fresh) {
+            oyl_scanner_free(p->ckpt);
+            p->ckpt = NULL;
+        }
+        return;
+    }
     p->ckpt_tok = p->current;
     p->ckpt_have_tok = p->have_token;
     p->ckpt_delivered = p->events_delivered;

@@ -225,9 +225,32 @@ printf("%.*s", (int)output.len, output.data);
 oyl_emitter_free(e);
 ```
 
-Events must arrive in the order the parser produces them. Anchor and tag
+Events must arrive in the order the parser produces them:
+`STREAM_START (DOC_START node DOC_END)* STREAM_END`. Anchor and tag
 arguments may be `OYL_STR_NULL`; tags are full tags (`tag:yaml.org,2002:str`,
 written as `!!str`) or local tags (`!foo`).
+
+Events in another order (two roots, a mapping ended after a key, an end
+that doesn't match its start), and anchor or alias names YAML can't hold
+(empty, or with blanks, flow indicators or control characters), are
+`OYL_ERR_EMIT`. An error is final: every later call returns it, and the
+output so far may be incomplete.
+
+What the emitter writes reads back as the events it was given:
+
+- A document written without `---` (`implicit`) gets one all the same
+  where YAML needs it: after a document that ended without `...`, and
+  for an empty document.
+- Characters YAML doesn't allow unescaped (control characters but tab and
+  line feed, DEL, the C1 controls, U+FEFF, U+FFFE, U+FFFF), and NEL,
+  U+2028 and U+2029, which YAML 1.1 readers take as line breaks, are
+  written escaped in double quotes, whatever style was asked for. The
+  emitter doesn't decode UTF-8: invalid UTF-8 is written as it is.
+- A mapping key longer than YAML allows an implicit key (1024
+  characters, its anchor and tag included) is written explicit:
+  `? key`, its value on the next line.
+- In flow collections, plain text starting with `?` or `:` is quoted, as
+  libyaml and libfyaml would read `[:x]` as a mapping.
 
 ### Styles
 
@@ -246,7 +269,7 @@ written as `!!str`) or local tags (`!foo`).
 | `void oyl_emitter_set_indent(e, n)` | Set spaces per indent level (1-10). |
 | `oyl_status oyl_emit(e, evt)` | Re-emit an event from `oyl_parse_next`. |
 | `oyl_emit_stream_start(e)` / `oyl_emit_stream_end(e)` | Stream boundaries. |
-| `oyl_emit_document_start(e, implicit)` / `oyl_emit_document_end(e, implicit)` | Document boundaries; `implicit` omits `---` / `...`. |
+| `oyl_emit_document_start(e, implicit)` / `oyl_emit_document_end(e, implicit)` | Document boundaries; `implicit` omits `---` / `...` (`---` where YAML allows). |
 | `oyl_emit_scalar(e, value, style, anchor, tag)` | Scalar. Plain values are quoted only when needed to read back the same. |
 | `oyl_emit_alias(e, name)` | Alias (`*name`). |
 | `oyl_emit_mapping_start(e, anchor, tag, flow)` / `oyl_emit_mapping_end(e)` | Mapping; `flow` forces `{...}`. |

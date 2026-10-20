@@ -534,6 +534,410 @@ static void test_deep_block(void) {
     oyl_arena_free(a);
 }
 
+/* ── Review fixes (2026-10-20) ───────────────────────────── */
+
+/* Read `out` back as a line of events: D and d for a document's start and
+ * end, { } [ ] for collections, =text for scalars, *name for aliases, with
+ * &name before anchored nodes. False if it doesn't parse. */
+static bool read_back(oyl_str out, char *buf, size_t cap) {
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_parser *p = oyl_parser_new(out.data ? out.data : "", out.len, a);
+    const oyl_event *e;
+    oyl_status st;
+    size_t n = 0;
+    buf[0] = '\0';
+    while ((st = oyl_parse_next(p, &e)) == OYL_OK && e->type != OYL_EVT_STREAM_END) {
+        const char *k = e->type == OYL_EVT_DOC_START ? "D" : e->type == OYL_EVT_DOC_END ? "d"
+                      : e->type == OYL_EVT_MAPPING_START ? "{" : e->type == OYL_EVT_MAPPING_END ? "}"
+                      : e->type == OYL_EVT_SEQUENCE_START ? "[" : e->type == OYL_EVT_SEQUENCE_END ? "]"
+                      : e->type == OYL_EVT_SCALAR ? "=" : e->type == OYL_EVT_ALIAS ? "*" : NULL;
+        if (!k) continue;
+        if (e->anchor.len && n < cap)
+            n += (size_t)snprintf(buf + n, cap - n, "&%.*s ", (int)e->anchor.len, e->anchor.data);
+        if (n < cap) n += (size_t)snprintf(buf + n, cap - n, "%s", k);
+        if ((e->type == OYL_EVT_SCALAR || e->type == OYL_EVT_ALIAS) && n < cap)
+            n += (size_t)snprintf(buf + n, cap - n, "%.*s", (int)e->value.len, e->value.data);
+        if (n < cap) n += (size_t)snprintf(buf + n, cap - n, " ");
+    }
+    if (n && n <= cap) buf[n - 1] = '\0';
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+    return st == OYL_OK && n < cap;
+}
+
+#define S(lit) OYL_STR_LIT(lit)
+#define N OYL_STR_NULL
+
+static void scalar(oyl_emitter *e, oyl_str v) {
+    oyl_emit_scalar(e, v, OYL_SCALAR_PLAIN, N, N);
+}
+
+/* A document that starts without "---" must start the stream or follow
+ * "...": otherwise "---" is written all the same. An empty document is
+ * written as "---". */
+static void test_document_starts(void) {
+    printf("test_document_starts:\n");
+    oyl_arena *a = oyl_arena_new(4096);
+    char got[256];
+
+    oyl_emitter *e = oyl_emitter_new(a);
+    oyl_emit_stream_start(e);
+    oyl_emit_document_start(e, true);
+    oyl_emit_mapping_start(e, N, N, false);
+    scalar(e, S("a")); scalar(e, S("1"));
+    oyl_emit_mapping_end(e);
+    oyl_emit_document_end(e, true);
+    oyl_emit_document_start(e, true);
+    oyl_emit_mapping_start(e, N, N, false);
+    scalar(e, S("b")); scalar(e, S("2"));
+    oyl_emit_mapping_end(e);
+    oyl_emit_document_end(e, true);
+    ASSERT(oyl_emit_stream_end(e) == OYL_OK, "two bare documents");
+    ASSERT(str_eq(oyl_emitter_output(e), "a: 1\n---\nb: 2\n"), "the second gets ---");
+    ASSERT(read_back(oyl_emitter_output(e), got, sizeof got) &&
+           strcmp(got, "D { =a =1 } d D { =b =2 } d") == 0, "and reads back as two");
+    oyl_emitter_free(e);
+
+    /* empty documents, and one after "..." */
+    e = oyl_emitter_new(a);
+    oyl_emit_stream_start(e);
+    oyl_emit_document_start(e, true);
+    scalar(e, S(""));
+    oyl_emit_document_end(e, true);
+    oyl_emit_document_start(e, true);
+    scalar(e, S(""));
+    oyl_emit_document_end(e, false);
+    oyl_emit_document_start(e, true);
+    oyl_emit_sequence_start(e, N, N, false);
+    scalar(e, S("x"));
+    oyl_emit_sequence_end(e);
+    oyl_emit_document_end(e, true);
+    oyl_emit_document_start(e, true);
+    oyl_emit_mapping_start(e, N, N, false);
+    scalar(e, S("k")); scalar(e, S("v"));
+    oyl_emit_mapping_end(e);
+    oyl_emit_document_end(e, true);
+    ASSERT(oyl_emit_stream_end(e) == OYL_OK, "empty documents");
+    ASSERT(str_eq(oyl_emitter_output(e), "---\n---\n...\n- x\n---\nk: v\n"), "empty documents get ---");
+    ASSERT(read_back(oyl_emitter_output(e), got, sizeof got) &&
+           strcmp(got, "D = d D = d D [ =x ] d D { =k =v } d") == 0, "four documents read back");
+    oyl_emitter_free(e);
+
+    /* trees, one after another */
+    const char *docs[] = { "a: 1\n", "- x\n", "" };
+    e = oyl_emitter_new(a);
+    oyl_emit_stream_start(e);
+    for (int i = 0; i < 3; i++) {
+        oyl_parser *p = oyl_parser_new(docs[i], strlen(docs[i]), a);
+        oyl_tree *t = NULL;
+        if (i < 2 && oyl_parse_tree(p, &t) == OYL_OK && t) {
+            oyl_emit_tree(e, t);
+            oyl_tree_free(t);
+        }
+        oyl_parser_free(p);
+    }
+    ASSERT(oyl_emit_stream_end(e) == OYL_OK, "trees");
+    ASSERT(read_back(oyl_emitter_output(e), got, sizeof got) &&
+           strcmp(got, "D { =a =1 } d D [ =x ] d") == 0, "two trees read back as two documents");
+    oyl_emitter_free(e);
+    oyl_arena_free(a);
+}
+
+/* Characters YAML doesn't allow unescaped, and those YAML 1.1 reads as
+ * line breaks, are written escaped in double quotes, whatever the style
+ * asked for */
+static void test_escaped_characters(void) {
+    printf("test_escaped_characters:\n");
+    static const struct { const char *text; oyl_scalar_style style; const char *want; } cases[] = {
+        { "a\x01" "b", OYL_SCALAR_SINGLE_QUOTED, "\"a\\x01b\"\n" },
+        { "a\x7F" "b", OYL_SCALAR_SINGLE_QUOTED, "\"a\\x7Fb\"\n" },
+        { "a\rb", OYL_SCALAR_SINGLE_QUOTED, "\"a\\rb\"\n" },
+        { "x\xC2\x9By", OYL_SCALAR_PLAIN, "\"x\\x9By\"\n" },
+        { "x\xC2\x80y", OYL_SCALAR_SINGLE_QUOTED, "\"x\\x80y\"\n" },
+        { "x\xC2\x85y", OYL_SCALAR_PLAIN, "\"x\\Ny\"\n" },
+        { "x\xE2\x80\xA8y", OYL_SCALAR_PLAIN, "\"x\\Ly\"\n" },
+        { "x\xE2\x80\xA9y", OYL_SCALAR_LITERAL, "\"x\\Py\"\n" },
+        { "x\xEF\xBB\xBFy", OYL_SCALAR_PLAIN, "\"x\\uFEFFy\"\n" },
+        { "x\xEF\xBF\xBEy", OYL_SCALAR_PLAIN, "\"x\\uFFFEy\"\n" },
+        { "x\xEF\xBF\xBF", OYL_SCALAR_DOUBLE_QUOTED, "\"x\\uFFFF\"\n" },
+        { "a\xC2\x9F\nb\n", OYL_SCALAR_LITERAL, "\"a\\x9F\\nb\\n\"\n" },
+        /* other characters stay as they are */
+        { "\xC3\xA9t\xC3\xA9 \xE2\x82\xAC \xEF\xBF\xBD \xC2\xA0", OYL_SCALAR_PLAIN,
+          "\xC3\xA9t\xC3\xA9 \xE2\x82\xAC \xEF\xBF\xBD \xC2\xA0\n" },
+        { "a\xE2\x80\xA7" "b", OYL_SCALAR_SINGLE_QUOTED, "'a\xE2\x80\xA7" "b'\n" },
+    };
+    oyl_arena *a = oyl_arena_new(4096);
+    char got[256], want[256];
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        oyl_emitter *e = oyl_emitter_new(a);
+        oyl_emit_stream_start(e);
+        oyl_emit_document_start(e, true);
+        oyl_emit_scalar(e, (oyl_str){ cases[i].text, strlen(cases[i].text) }, cases[i].style, N, N);
+        oyl_emit_document_end(e, true);
+        oyl_emit_stream_end(e);
+        oyl_str out = oyl_emitter_output(e);
+        if (!str_eq(out, cases[i].want)) printf("    case %zu: %.*s", i, (int)out.len, out.data);
+        ASSERT(str_eq(out, cases[i].want), "escaped where needed");
+        snprintf(want, sizeof want, "D =%s d", cases[i].text);
+        ASSERT(read_back(out, got, sizeof got) && strcmp(got, want) == 0, "reads back as written");
+        oyl_emitter_free(e);
+    }
+
+    /* escapes that end past a chunk of 4096 bytes */
+    static const char *chars[] = { "\xEF\xBB\xBF", "\xC2\x9B", "\xE2\x80\xA8", "\x01" };
+    char *text = malloc(8200), *back = malloc(8300);
+    bool all = text && back;
+    for (size_t c = 0; all && c < 4; c++) {
+        for (size_t at = 4088; at <= 4100; at++) {
+            size_t cl = strlen(chars[c]);
+            memset(text, 'a', at);
+            memcpy(text + at, chars[c], cl);
+            memset(text + at + cl, 'b', 8);
+            oyl_str v = { text, at + cl + 8 };
+            oyl_emitter *e = oyl_emitter_new(a);
+            oyl_emit_stream_start(e);
+            oyl_emit_document_start(e, true);
+            oyl_emit_scalar(e, v, OYL_SCALAR_DOUBLE_QUOTED, N, N);
+            oyl_emit_document_end(e, true);
+            oyl_emit_stream_end(e);
+            oyl_str out = oyl_emitter_output(e);
+            oyl_parser *p = oyl_parser_new(out.data, out.len, a);
+            const oyl_event *ev;
+            bool same = false;
+            while (oyl_parse_next(p, &ev) == OYL_OK && ev->type != OYL_EVT_STREAM_END)
+                if (ev->type == OYL_EVT_SCALAR)
+                    same = ev->value.len == v.len && memcmp(ev->value.data, v.data, v.len) == 0;
+            all = all && same;
+            oyl_parser_free(p);
+            oyl_emitter_free(e);
+        }
+    }
+    ASSERT(all, "escapes across chunk boundaries read back");
+    free(text);
+    free(back);
+    oyl_arena_free(a);
+}
+
+/* An implicit key is at most 1024 characters, props and the space before
+ * ':' included: a longer one is written explicit */
+static void test_long_keys(void) {
+    printf("test_long_keys:\n");
+    oyl_arena *a = oyl_arena_new(4096);
+    char *k = malloc(1100), *got = malloc(4096), *want = malloc(4096);
+    if (!k || !got || !want) return;
+    memset(k, 'k', 1100);
+
+    for (int len = 1023; len <= 1025; len++) {
+        oyl_emitter *e = oyl_emitter_new(a);
+        oyl_emit_stream_start(e);
+        oyl_emit_document_start(e, true);
+        oyl_emit_sequence_start(e, N, N, false);
+        oyl_emit_mapping_start(e, N, N, false);            /* compact, after "- " */
+        oyl_emit_scalar(e, (oyl_str){ k, (size_t)len }, OYL_SCALAR_PLAIN, N, N);
+        scalar(e, S("v"));
+        oyl_emit_scalar(e, (oyl_str){ k, (size_t)len - 3 }, OYL_SCALAR_PLAIN, S("a"), N);
+        oyl_emit_sequence_start(e, N, N, false);
+        scalar(e, S("x"));
+        oyl_emit_sequence_end(e);
+        oyl_emit_alias(e, (oyl_str){ k, (size_t)len - 2 });  /* "*kkk :" */
+        scalar(e, S("w"));
+        oyl_emit_sequence_start(e, N, N, true);            /* "[kkk]" */
+        oyl_emit_scalar(e, (oyl_str){ k, (size_t)len - 2 }, OYL_SCALAR_PLAIN, N, N);
+        oyl_emit_sequence_end(e);
+        scalar(e, S("z"));
+        oyl_emit_mapping_end(e);
+        oyl_emit_sequence_end(e);
+        oyl_emit_document_end(e, true);
+        ASSERT(oyl_emit_stream_end(e) == OYL_OK, "long keys emitted");
+        oyl_str out = oyl_emitter_output(e);
+        size_t q = 0;
+        for (size_t i = 0; i + 1 < out.len; i++) q += out.data[i] == '?' && out.data[i + 1] == ' ';
+        ASSERT(q == (len > 1024 ? 4 : 0), len > 1024 ? "past 1024 characters, explicit keys"
+                                                     : "up to 1024, implicit keys");
+        /* the alias names no anchor, so the events are compared by hand */
+        oyl_arena *ra = oyl_arena_new(4096);
+        oyl_parser *p = oyl_parser_new(out.data, out.len, ra);
+        const oyl_event *ev;
+        oyl_status st;
+        int n = 0;
+        while ((st = oyl_parse_next(p, &ev)) == OYL_OK && ev->type != OYL_EVT_STREAM_END) {
+            if (ev->type == OYL_EVT_SCALAR || ev->type == OYL_EVT_ALIAS) {
+                size_t want_len[] = { (size_t)len, 1, (size_t)len - 3, 1, (size_t)len - 2, 1,
+                                      (size_t)len - 2, 1 };
+                if (n < 8 && ev->value.len != want_len[n]) st = OYL_ERR_PARSE;
+                n++;
+            }
+            if (st != OYL_OK) break;
+        }
+        ASSERT(st == OYL_ERR_PARSE ? false : n == 8, "and read back");
+        oyl_parser_free(p);
+        oyl_arena_free(ra);
+        oyl_emitter_free(e);
+    }
+
+    /* characters, not bytes: 600 é is 1200 bytes, and a key */
+    oyl_emitter *e = oyl_emitter_new(a);
+    char *wide = malloc(1200);
+    for (int i = 0; wide && i < 600; i++) memcpy(wide + 2 * i, "\xC3\xA9", 2);
+    oyl_emit_stream_start(e);
+    oyl_emit_document_start(e, true);
+    oyl_emit_mapping_start(e, N, N, false);
+    oyl_emit_scalar(e, (oyl_str){ wide, wide ? 1200 : 0 }, OYL_SCALAR_PLAIN, N, N);
+    scalar(e, S("v"));
+    oyl_emit_mapping_end(e);
+    oyl_emit_document_end(e, true);
+    oyl_emit_stream_end(e);
+    oyl_str out = oyl_emitter_output(e);
+    ASSERT(out.len == 1204 && out.data[0] != '?', "600 characters in 1200 bytes stay implicit");
+    free(wide);
+    oyl_emitter_free(e);
+
+    /* a flow mapping's keys aren't limited */
+    e = oyl_emitter_new(a);
+    oyl_emitter_set_style(e, OYL_EMIT_FLOW);
+    oyl_emit_stream_start(e);
+    oyl_emit_document_start(e, true);
+    oyl_emit_mapping_start(e, N, N, false);
+    oyl_emit_scalar(e, (oyl_str){ k, 1100 }, OYL_SCALAR_PLAIN, N, N);
+    scalar(e, S("v"));
+    oyl_emit_mapping_end(e);
+    oyl_emit_document_end(e, true);
+    oyl_emit_stream_end(e);
+    out = oyl_emitter_output(e);
+    ASSERT(out.len == 1106 && out.data[0] == '{' && out.data[1] == 'k', "flow mapping keys stay as they are");
+    snprintf(want, 4096, "D { =%.*s =v } d", 1100, k);
+    ASSERT(read_back(out, got, 4096) && strcmp(got, want) == 0, "and read back");
+    oyl_emitter_free(e);
+    free(k);
+    free(got);
+    free(want);
+    oyl_arena_free(a);
+}
+
+/* libyaml and libfyaml read "[:x]" and "[?x]" as mappings: such plain
+ * scalars are quoted in flow context */
+static void test_flow_indicator_starts(void) {
+    printf("test_flow_indicator_starts:\n");
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_emitter *e = oyl_emitter_new(a);
+    oyl_emit_stream_start(e);
+    oyl_emit_document_start(e, true);
+    oyl_emit_mapping_start(e, N, N, false);
+    scalar(e, S(":x"));
+    oyl_emit_sequence_start(e, N, N, true);
+    scalar(e, S(":x")); scalar(e, S("?y")); scalar(e, S("-z")); scalar(e, S("a:b"));
+    oyl_emit_sequence_end(e);
+    oyl_emit_mapping_end(e);
+    oyl_emit_document_end(e, true);
+    oyl_emit_stream_end(e);
+    oyl_str out = oyl_emitter_output(e);
+    ASSERT(str_eq(out, ":x: [\":x\", \"?y\", -z, a:b]\n"), "quoted in flow, plain in block");
+    char got[128];
+    ASSERT(read_back(out, got, sizeof got) && strcmp(got, "D { =:x [ =:x =?y =-z =a:b ] } d") == 0,
+           "and read back");
+    oyl_emitter_free(e);
+    oyl_arena_free(a);
+}
+
+/* Events out of order, and names that can't be anchors, are OYL_ERR_EMIT;
+ * the first error stays */
+static void test_invalid_events(void) {
+    printf("test_invalid_events:\n");
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_emitter *e;
+#define FRESH(doc) do { e = oyl_emitter_new(a); oyl_emit_stream_start(e); \
+                        if (doc) oyl_emit_document_start(e, true); } while (0)
+
+    e = oyl_emitter_new(a);
+    ASSERT(oyl_emit_document_start(e, true) == OYL_ERR_EMIT, "a document before the stream");
+    oyl_emitter_free(e);
+    e = oyl_emitter_new(a);
+    ASSERT(oyl_emit_stream_end(e) == OYL_ERR_EMIT, "the stream's end before its start");
+    oyl_emitter_free(e);
+    FRESH(false);
+    ASSERT(oyl_emit_stream_start(e) == OYL_ERR_EMIT, "a second stream start");
+    oyl_emitter_free(e);
+    FRESH(false);
+    ASSERT(oyl_emit_scalar(e, S("a"), OYL_SCALAR_PLAIN, N, N) == OYL_ERR_EMIT, "a node outside a document");
+    oyl_emitter_free(e);
+    FRESH(true);
+    scalar(e, S("a"));
+    ASSERT(oyl_emit_scalar(e, S("b"), OYL_SCALAR_PLAIN, N, N) == OYL_ERR_EMIT, "two roots");
+    ASSERT(oyl_emit_document_end(e, true) == OYL_ERR_EMIT, "the first error stays");
+    ASSERT(oyl_emit_stream_end(e) == OYL_ERR_EMIT, "every later call returns it");
+    oyl_emitter_free(e);
+    FRESH(true);
+    ASSERT(oyl_emit_document_end(e, true) == OYL_ERR_EMIT, "a document without a root");
+    oyl_emitter_free(e);
+    FRESH(true);
+    ASSERT(oyl_emit_document_start(e, true) == OYL_ERR_EMIT, "a document in a document");
+    oyl_emitter_free(e);
+    FRESH(true);
+    oyl_emit_mapping_start(e, N, N, false);
+    scalar(e, S("k"));
+    ASSERT(oyl_emit_mapping_end(e) == OYL_ERR_EMIT, "a mapping that ends after a key");
+    oyl_emitter_free(e);
+    FRESH(true);
+    oyl_emit_mapping_start(e, N, N, true);
+    ASSERT(oyl_emit_sequence_end(e) == OYL_ERR_EMIT, "a mapping ended as a sequence");
+    oyl_emitter_free(e);
+    FRESH(true);
+    oyl_emit_sequence_start(e, N, N, false);
+    ASSERT(oyl_emit_mapping_end(e) == OYL_ERR_EMIT, "a sequence ended as a mapping");
+    oyl_emitter_free(e);
+    FRESH(true);
+    oyl_emit_sequence_start(e, N, N, false);
+    ASSERT(oyl_emit_document_end(e, true) == OYL_ERR_EMIT, "a document ended in a collection");
+    oyl_emitter_free(e);
+    FRESH(true);
+    ASSERT(oyl_emit_stream_end(e) == OYL_ERR_EMIT, "the stream ended in a document");
+    oyl_emitter_free(e);
+    FRESH(true);
+    ASSERT(oyl_emit_sequence_end(e) == OYL_ERR_EMIT, "an end with nothing open");
+    oyl_emitter_free(e);
+
+    static const char *bad[] = { "a b", "c,d", "[x", "x}", "t\tab", "c\x01", "d\x7F", "c\xC2\x9B",
+                                 "\357\273\277bom" };
+    for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        oyl_str name = { bad[i], strlen(bad[i]) };
+        FRESH(true);
+        ASSERT(oyl_emit_scalar(e, S("v"), OYL_SCALAR_PLAIN, name, N) == OYL_ERR_EMIT, "a bad anchor");
+        oyl_emitter_free(e);
+        FRESH(true);
+        ASSERT(oyl_emit_sequence_start(e, name, N, false) == OYL_ERR_EMIT, "on a collection");
+        oyl_emitter_free(e);
+        FRESH(true);
+        ASSERT(oyl_emit_alias(e, name) == OYL_ERR_EMIT, "a bad alias");
+        oyl_emitter_free(e);
+    }
+    FRESH(true);
+    ASSERT(oyl_emit_alias(e, S("")) == OYL_ERR_EMIT, "an empty alias");
+    oyl_emitter_free(e);
+    FRESH(true);
+    ASSERT(oyl_emit_alias(e, N) == OYL_ERR_EMIT, "an alias without a name");
+    oyl_emitter_free(e);
+
+    /* names YAML 1.2 allows */
+    FRESH(true);
+    oyl_emit_sequence_start(e, S("s:"), N, false);
+    oyl_emit_scalar(e, S("v"), OYL_SCALAR_PLAIN, S("\xC3\xA9t\xC3\xA9"), N);
+    oyl_emit_alias(e, S("\xC3\xA9t\xC3\xA9"));
+    oyl_emit_scalar(e, S("w"), OYL_SCALAR_PLAIN, S("a*b&c!d"), N);
+    oyl_emit_sequence_end(e);
+    oyl_emit_document_end(e, true);
+    ASSERT(oyl_emit_stream_end(e) == OYL_OK, "good anchors");
+    char got[128];
+    ASSERT(read_back(oyl_emitter_output(e), got, sizeof got) &&
+           strcmp(got, "D &s: [ &\xC3\xA9t\xC3\xA9 =v *\xC3\xA9t\xC3\xA9 &a*b&c!d =w ] d") == 0,
+           "read back");
+    oyl_emitter_free(e);
+#undef FRESH
+    oyl_arena_free(a);
+}
+
+#undef S
+#undef N
+
 /* ── Main ────────────────────────────────────────────────── */
 
 /* Found by the overnight fuzz run: a leading U+FEFF would be read back as
@@ -583,6 +987,11 @@ int main(void) {
     test_tag_forms();
     test_empty_block_collections();
     test_roundtrip();
+    test_document_starts();
+    test_escaped_characters();
+    test_long_keys();
+    test_flow_indicator_starts();
+    test_invalid_events();
 
     printf("\n--- Emitter tests: %d / %d passed ---\n", tests_passed, tests_run);
     if (tests_failed > 0) printf("    %d FAILED\n", tests_failed);

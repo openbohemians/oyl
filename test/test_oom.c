@@ -8,13 +8,19 @@
  * never change a result quietly.
  *
  * Linux only: malloc, calloc and realloc are wrapped with GNU ld's --wrap.
+ * Built a second time with every arena request a malloc of its own
+ * (OYL_ARENA_EACH), as test_oom_each.
  */
+
+#define _POSIX_C_SOURCE 200809L   /* mkstemp */
 
 #include "oyl/oyl.h"
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /* ── Failing allocations ─────────────────────────────────── */
 
@@ -51,7 +57,16 @@ static void put(const char *fmt, ...) {
     else outlen += (size_t)n;
 }
 
-static void put_str(oyl_str s) { put("%zu:%.*s", s.len, (int)s.len, s.data ? s.data : ""); }
+/* the bytes of `s` as they are, NULs included */
+static void put_str(oyl_str s) {
+    put("%zu:", s.len);
+    if (!s.len || !s.data) return;
+    if (s.len > sizeof out - outlen) overflow = true;
+    else {
+        memcpy(out + outlen, s.data, s.len);
+        outlen += s.len;
+    }
+}
 
 /* A scenario's outcome: it succeeded, failed cleanly, or failed with the
  * wrong status for running out of memory */
@@ -180,6 +195,28 @@ static void make_costly(void) {
     for (int i = 0; i < 400; i++) n += (size_t)snprintf(costly + n, sizeof costly - n, "- {<<: *s}\n");
 }
 
+/* More merge keys in one mapping than its first table holds (8) */
+static char merge_keys[2048];
+
+static void make_merge_keys(void) {
+    size_t n = 0;
+    for (int i = 0; i < 12; i++) n += (size_t)snprintf(merge_keys + n, sizeof merge_keys - n, "a%d: &a%d {k%d: %d, k: %d}\n", i, i, i, i, i);
+    n += (size_t)snprintf(merge_keys + n, sizeof merge_keys - n, "m: {");
+    for (int i = 0; i < 12; i++) n += (size_t)snprintf(merge_keys + n, sizeof merge_keys - n, "<<: *a%d, ", i);
+    snprintf(merge_keys + n, sizeof merge_keys - n, "z: 1}\n");
+}
+
+/* Verbatim tags, a %TAG handle and percent-encoded suffixes */
+static const char *TAGGED =
+    "%TAG !e! tag:example.com,2026:\n"
+    "---\n"
+    "- !<tag:example.com,2026:x> a\n"
+    "- !<!local%21> b\n"
+    "- !e!%41b c\n"
+    "- !!str d\n"
+    "- !local e\n"
+    "- !<tag:yaml.org,2002:int> 1\n";
+
 /* ── Scenarios ───────────────────────────────────────────── */
 
 static void put_event(const oyl_event *e) {
@@ -213,6 +250,16 @@ static outcome events_stream(void) { return events(stream, false, false, NULL); 
 static outcome events_yaml11(void) { return events(RICH, true, false, oyl_dialect_yaml11()); }
 static outcome events_deep(void) { return events(deep, false, false, NULL); }
 static outcome events_many(void) { return events(many, true, true, NULL); }
+/* the eager parser (merge keys on) through deep nesting */
+static outcome events_deep_eager(void) { return events(deep, true, false, NULL); }
+static outcome events_merge_keys(void) { return events(merge_keys, true, true, NULL); }
+static outcome events_tags(void) { return events(TAGGED, false, false, NULL); }
+/* A flow collection as a key at a document's start: the incremental
+ * parser hands it to the eager one, which reads again from the checkpoint
+ * taken there */
+static outcome events_flow_key(void) {
+    return events("[a]: c\n{a: b}: d\n---\n[x, y]: z\n", false, false, NULL);
+}
 
 static outcome events_schema(void) {
     oyl_arena *a = oyl_arena_new(4096);
@@ -283,6 +330,14 @@ static outcome trees_stream(void) { return trees(stream); }
 static outcome trees_deep(void) { return trees(deep); }
 static outcome trees_many(void) { return trees(many); }
 static outcome trees_graph(void) { return trees(graph); }
+static outcome trees_merge_keys(void) { return trees(merge_keys); }
+static outcome trees_tags(void) { return trees(TAGGED); }
+
+/* A lookup that can only miss for want of memory: clean if the allocation
+ * failing was one of its own (from `before`), wrong otherwise */
+static outcome lost(long before) {
+    return fail_at > before && fail_at <= calls ? OUT_OF_MEMORY : WRONG_STATUS;
+}
 
 /* A key whose value takes memory to read (a float too long for the stack
  * buffer): failing, a lookup gives OYL_NO_NODE and entries OYL_ERR_MEMORY,
@@ -301,11 +356,12 @@ static outcome trees_long_key(void) {
         o = failed(st);
     } else {
         oyl_value one = { .kind = OYL_VALUE_FLOAT, .as = { .f = 1.0 } };
+        long before = calls;
         uint32_t v = oyl_node_get_value(t, 0, &one);
         const oyl_pair *pairs;
         size_t np;
         if (v == OYL_NO_NODE) {
-            o = OUT_OF_MEMORY;   /* it's there: only memory can lose it */
+            o = lost(before);   /* it's there: only memory can lose it */
         } else {
             put_str(oyl_node_text(t, v));
             if ((st = oyl_node_entries(t, 0, 0, a, &pairs, &np)) != OYL_OK) o = failed(st);
@@ -371,12 +427,16 @@ static outcome trees_costly(void) {
     if (st != OYL_OK) {
         o = failed(st);
     } else {
-        uint32_t m = oyl_node_get(t, 0, (oyl_str){ "m", 1 });
-        const oyl_pair *pairs;
-        size_t np;
-        put("entries %d", oyl_node_entries(t, m, 0, a, &pairs, &np));
-        uint32_t v = oyl_node_get(t, m, (oyl_str){ "1", 1 });
-        if (v == OYL_NO_NODE) o = OUT_OF_MEMORY;   /* it's there: only memory can lose it */
+        long before = calls;
+        uint32_t m = oyl_node_get(t, 0, (oyl_str){ "m", 1 }), v = OYL_NO_NODE;
+        if (m != OYL_NO_NODE) {
+            const oyl_pair *pairs;
+            size_t np;
+            put("entries %d", oyl_node_entries(t, m, 0, a, &pairs, &np));
+            before = calls;
+            v = oyl_node_get(t, m, (oyl_str){ "1", 1 });
+        }
+        if (v == OYL_NO_NODE) o = lost(before);   /* it's there: only memory can lose it */
         else put_str(oyl_node_text(t, v));
     }
     oyl_tree_free(t);
@@ -413,6 +473,7 @@ static outcome json_shared(void) {
     return json("a: &a {x: 1, -0.0: z}\nb: &b {y: 2, 0.0: w}\nl: &l [*a, *b]\nc: {<<: *l}\nd: {<<: *l, x: 3}\n", 0);
 }
 static outcome json_many(void) { return json(many, 0); }
+static outcome json_merge_keys(void) { return json(merge_keys, 0); }
 /* Each document of a stream, in go-yaml v2's merge order (counted before
  * writing) and with a merge of more than 16 mappings; a call after a
  * failure fails alike, as an error is final */
@@ -482,6 +543,40 @@ static outcome emit(const char *yaml) {
 static outcome emit_rich(void) { return emit(RICH); }
 static outcome emit_deep(void) { return emit(deep); }
 
+/* Output built with the event functions: documents without "---" one
+ * after another, keys too long to be implicit, characters escaped */
+static outcome emit_built(void) {
+    static char key[1100];
+    memset(key, 'k', sizeof key);
+    oyl_arena *a = oyl_arena_new(4096);
+    if (!a) return OUT_OF_MEMORY;
+    oyl_emitter *em = oyl_emitter_new(a);
+    if (!em) { oyl_arena_free(a); return OUT_OF_MEMORY; }
+    oyl_str none = OYL_STR_NULL;
+    oyl_emit_stream_start(em);
+    for (int d = 0; d < 3; d++) {
+        oyl_emit_document_start(em, true);
+        oyl_emit_sequence_start(em, OYL_STR_LIT("s"), none, false);
+        oyl_emit_mapping_start(em, none, none, false);
+        oyl_emit_scalar(em, (oyl_str){ key, sizeof key }, OYL_SCALAR_PLAIN, OYL_STR_LIT("k"), none);
+        oyl_emit_scalar(em, OYL_STR_LIT("x\xC2\x9By\xEF\xBB\xBF\xE2\x80\xA8"), OYL_SCALAR_PLAIN, none, none);
+        oyl_emit_alias(em, OYL_STR_LIT("k"));
+        oyl_emit_scalar(em, OYL_STR_LIT("a\x01"), OYL_SCALAR_SINGLE_QUOTED, none, none);
+        oyl_emit_mapping_end(em);
+        oyl_emit_sequence_end(em);
+        oyl_emit_document_end(em, true);
+    }
+    oyl_status st = oyl_emit_stream_end(em);   /* the first error, if any */
+    if (st == OYL_OK) {
+        oyl_str o = oyl_emitter_output(em);
+        if (o.data) put_str(o);
+        else st = OYL_ERR_MEMORY;
+    }
+    oyl_emitter_free(em);
+    oyl_arena_free(a);
+    return st == OYL_OK ? DONE : failed(st);
+}
+
 static bool yes_word(oyl_str text, oyl_value *v, void *user) {
     (void)user;
     if (text.len != 3 || memcmp(text.data, "yup", 3) != 0) return false;
@@ -528,6 +623,29 @@ static outcome schema_and_dialect(void) {
     return st == OYL_OK ? DONE : failed(st);
 }
 
+/* A schema of more rules than the builder first holds (16) */
+static outcome schema_many_rules(void) {
+    static const char *words[] = { "w0", "w1", "w2", "w3", "w4", "w5", "w6", "w7", "w8", "w9",
+                                   "w10", "w11", "w12", "w13", "w14", "w15", "w16", "w17", "w18", "w19" };
+    oyl_arena *a = oyl_arena_new(4096);
+    if (!a) return OUT_OF_MEMORY;
+    oyl_schema_builder *b = oyl_schema_builder_new(a);
+    if (!b) { oyl_arena_free(a); return OUT_OF_MEMORY; }
+    for (int i = 0; i < 20; i++)
+        oyl_schema_builder_add(b, OYL_MATCH_EXACT, words[i], i % 2 ? OYL_TAG_NULL : OYL_TAG_STR);
+    oyl_schema_builder_add_int_flags(b, OYL_INT_CORE);
+    const oyl_schema *sc = oyl_schema_builder_finish(b);
+    oyl_schema_builder_free(b);
+    if (!sc) { oyl_arena_free(a); return OUT_OF_MEMORY; }
+    for (int i = 0; i < 20; i++) {
+        oyl_str tag = oyl_schema_resolve(sc, (oyl_str){ words[i], strlen(words[i]) }, OYL_SCALAR_PLAIN);
+        put_str(tag);
+    }
+    put_str(oyl_schema_resolve(sc, OYL_STR_LIT("12"), OYL_SCALAR_PLAIN));
+    oyl_arena_free(a);
+    return DONE;
+}
+
 static outcome tokens(void) {
     oyl_arena *a = oyl_arena_new(4096);
     if (!a) return OUT_OF_MEMORY;
@@ -545,7 +663,7 @@ static outcome tokens(void) {
     return st == OYL_OK ? DONE : failed(st);
 }
 
-static const char *file_path = "/tmp/oyl_test_oom.yaml";
+static char file_path[256];
 
 static outcome read_file(void) {
     oyl_arena *a = oyl_arena_new(4096);
@@ -571,6 +689,11 @@ static void run(const char *name, outcome (*scenario)(void)) {
     long total = calls;
     if (o != DONE || overflow) {
         printf("  FAIL: %s fails with nothing failing (%d)\n", name, o);
+        bad++;
+        return;
+    }
+    if (total == 0) {   /* the wrapped allocator isn't in use */
+        printf("  FAIL: %s counted no allocations\n", name);
         bad++;
         return;
     }
@@ -605,9 +728,14 @@ int main(void) {
     make_many();
     make_graph();
     make_costly();
+    make_merge_keys();
     snprintf(long_float, sizeof long_float, "a: 1.%070d1\n", 0);
-    FILE *f = fopen(file_path, "wb");
+    const char *tmp = getenv("TMPDIR");
+    snprintf(file_path, sizeof file_path, "%s/oyl_test_oom_XXXXXX", tmp && *tmp ? tmp : "/tmp");
+    int fd = mkstemp(file_path);
+    FILE *f = fd >= 0 ? fdopen(fd, "wb") : NULL;
     if (f) { fputs(RICH, f); fclose(f); }
+    else if (fd >= 0) close(fd);
     run("events", events_plain);
     run("events, merged", events_merged);
     run("events, a stream", events_stream);
@@ -615,23 +743,32 @@ int main(void) {
     run("events, deep", events_deep);
     run("events, many merges", events_many);
     run("events, a schema", events_schema);
+    run("events, deep, eager", events_deep_eager);
+    run("events, merge keys", events_merge_keys);
+    run("events, tags", events_tags);
+    run("events, a flow key", events_flow_key);
     run("trees", trees_rich);
     run("trees, a stream", trees_stream);
     run("trees, deep", trees_deep);
     run("trees, many merges", trees_many);
     run("trees, a merge graph", trees_graph);
+    run("trees, merge keys", trees_merge_keys);
+    run("trees, tags", trees_tags);
     run("trees, costly merges", trees_costly);
     run("trees, a long key", trees_long_key);
     run("events, a long float", events_long_float);
     run("trees, a long float", trees_long_float);
     run("JSON", json_core);
     run("JSON, many merges", json_many);
+    run("JSON, merge keys", json_merge_keys);
     run("JSON, go-yaml v2", json_k8s);
     run("JSON, a stream", json_stream);
     run("JSON, a shared merge", json_shared);
     run("emitting", emit_rich);
     run("emitting, deep", emit_deep);
+    run("emitting, built", emit_built);
     run("schema and dialect", schema_and_dialect);
+    run("schema, many rules", schema_many_rules);
     run("tokens", tokens);
     run("reading a file", read_file);
     remove(file_path);

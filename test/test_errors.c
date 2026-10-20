@@ -193,6 +193,8 @@ static void test_empty_anchor(void) {
     oyl_arena_free(a);
 }
 
+static const char *parse_error(const char *yaml, size_t len, oyl_mark *at, char *buf, size_t cap);
+
 static void test_control_char_anchor(void) {
     printf("test_control_char_anchor:\n");
 
@@ -210,6 +212,21 @@ static void test_control_char_anchor(void) {
 
     oyl_scanner_free(s);
     oyl_arena_free(a);
+
+    /* nor C1 controls but NEL, U+FEFF, U+FFFE, U+FFFF, which a name can't
+     * escape (found by the fuzzer through the emitter, 2026-10-20) */
+    const char *bad[] = { "&a\xC2\x9B x\n", "- *\357\273\277a\n", "[&a\xEF\xBF\xBE x]\n",
+                          "&\xEF\xBF\xBF x\n", "&a\xC2\x80" };
+    for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        char buf[256];
+        oyl_mark at;
+        const char *m = parse_error(bad[i], strlen(bad[i]), &at, buf, sizeof buf);
+        ASSERT(m && strstr(m, "not allowed in anchor or alias name"), "a character a name can't hold");
+    }
+    const char *good = "- &a\xC2\x85\xC3\xA9\xE2\x80\xA8 x\n- *a\xC2\x85\xC3\xA9\xE2\x80\xA8\n";
+    char buf[256];
+    oyl_mark at;
+    ASSERT(!parse_error(good, strlen(good), &at, buf, sizeof buf), "NEL, U+2028 and other UTF-8 are fine");
 }
 
 /* The first error in all of yaml's events, copied to buf, or NULL; its mark in *at */

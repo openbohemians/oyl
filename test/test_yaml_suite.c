@@ -713,9 +713,10 @@ static size_t canon_event(const oyl_event *e, char *out, size_t cap) {
 }
 
 /* Parse `yaml` and write its canonical event stream to `out`. When `e` is
- * given, also feed every event to it. Returns false on a parse error. */
+ * given, also feed every event to it, keeping the first failure in
+ * `*emitted`. Returns false on a parse error. */
 static bool canon_parse(const char *yaml, size_t len, bool eager, oyl_emitter *e,
-                        char *out, size_t cap) {
+                        oyl_status *emitted, char *out, size_t cap) {
     oyl_arena *a = oyl_arena_new(4096);
     oyl_parser *p = oyl_parser_new(yaml, len, a);
     if (eager) oyl_parser_set_merge(p, true);
@@ -725,7 +726,10 @@ static bool canon_parse(const char *yaml, size_t len, bool eager, oyl_emitter *e
     size_t n = 0;
     out[0] = '\0';
     while ((st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_NONE) {
-        if (e) oyl_emit(e, evt);
+        if (e) {
+            oyl_status est = oyl_emit(e, evt);
+            if (*emitted == OYL_OK) *emitted = est;
+        }
         n += canon_event(evt, out + n, cap - n);
         if (evt->type == OYL_EVT_STREAM_END) break;
     }
@@ -747,11 +751,14 @@ static bool roundtrip_ok(const test_case *tc, bool eager, oyl_emit_style style,
     oyl_emitter *e = oyl_emitter_new(a);
     oyl_emitter_set_style(e, style);
 
-    bool ok = canon_parse(tc->yaml, len, eager, e, before, sizeof before);
+    oyl_status emitted = OYL_OK;
+    bool ok = canon_parse(tc->yaml, len, eager, e, &emitted, before, sizeof before);
     oyl_str out = oyl_emitter_output(e);
     const char *why = NULL;
-    if (ok) {
-        if (!canon_parse(out.data ? out.data : "", out.len, eager, NULL, after, sizeof after))
+    if (ok && emitted != OYL_OK) {
+        why = "the emitter failed";
+    } else if (ok) {
+        if (!canon_parse(out.data ? out.data : "", out.len, eager, NULL, NULL, after, sizeof after))
             why = "emitted YAML does not parse";
         else if (strcmp(before, after) != 0)
             why = "emitted YAML parses to different events";
@@ -972,7 +979,9 @@ static bool tree_emits(const test_case *tc, oyl_emit_style style, bool verbose) 
     oyl_emitter *ee = oyl_emitter_new(a), *et = oyl_emitter_new(a);
     oyl_emitter_set_style(ee, style);
     oyl_emitter_set_style(et, style);
-    bool ok = canon_parse(tc->yaml, len, false, ee, events, sizeof events);
+    oyl_status emitted = OYL_OK;
+    bool ok = canon_parse(tc->yaml, len, false, ee, &emitted, events, sizeof events) &&
+              emitted == OYL_OK;
     oyl_parser *p = oyl_parser_new(tc->yaml, len, a);
     oyl_tree *t;
     oyl_status st = oyl_emit_stream_start(et);

@@ -193,9 +193,11 @@ The emitter converts an event stream back into YAML text that parses back
 to the same data: every valid YAML Test Suite case round-trips (parse,
 emit, parse) with identical events in all three styles, and the fuzzer
 checks the same property on arbitrary input. Block scalars are written as
-exact literals, collections used as keys take the explicit `? key` form,
-and tags are written in a form that reads back unchanged. Three output
-styles are available:
+exact literals, collections used as keys (and keys longer than YAML allows
+an implicit key) take the explicit `? key` form, and tags are written in a
+form that reads back unchanged. Events out of order are an error
+(`OYL_ERR_EMIT`), and the first error is final. Three output styles are
+available:
 
 | Style | Description |
 |-------|-------------|
@@ -215,7 +217,9 @@ Plain scalars are written plain whenever that reads back as the same text,
 so `8080`, `true` and `null` keep their meaning; text that would be misread
 (`: ` or ` #` inside, leading indicators, line breaks, ...) is quoted. A
 scalar tagged `!!str` whose text looks like a number or keyword is quoted to
-stay a string.
+stay a string. Characters YAML doesn't allow unescaped (control characters,
+C1 controls, U+FEFF, U+FFFE, U+FFFF), and NEL, U+2028 and U+2029, which
+YAML 1.1 readers take as line breaks, are escaped in double quotes.
 
 ## Merge Keys
 

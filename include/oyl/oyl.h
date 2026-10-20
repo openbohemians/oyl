@@ -868,7 +868,14 @@ OYL_API void         oyl_emitter_set_indent(oyl_emitter *e, int indent);
 /* Events are fed in the same well-formed order the parser produces:
  * STREAM_START (DOC_START node DOC_END)* STREAM_END. Anchor and tag
  * arguments may be OYL_STR_NULL. Tags are full tags (e.g.
- * "tag:yaml.org,2002:str", written as !!str) or local tags ("!foo"). */
+ * "tag:yaml.org,2002:str", written as !!str) or local tags ("!foo").
+ * Events in another order (two roots, a mapping ended after a key, an end
+ * that doesn't match its start), and anchor or alias names YAML can't
+ * hold (empty, or with blanks, flow indicators or control characters),
+ * are OYL_ERR_EMIT. An error is final: every later call returns it, and
+ * the output so far may be incomplete. A mapping key longer than YAML
+ * allows an implicit key (1024 characters, its anchor and tag included)
+ * is written explicit ("? key"). */
 
 /** Re-emit an event obtained from oyl_parse_next() (e.g. to reformat a
  *  document). To build output yourself, use the functions below. */
@@ -877,7 +884,9 @@ OYL_API oyl_status   oyl_emit(oyl_emitter *e, const oyl_event *evt);
 OYL_API oyl_status   oyl_emit_stream_start(oyl_emitter *e);
 OYL_API oyl_status   oyl_emit_stream_end(oyl_emitter *e);
 
-/** Start a document; @p implicit omits the "---" marker. */
+/** Start a document; @p implicit omits the "---" marker where YAML
+ *  allows: not after a document that ended without "...", and not for an
+ *  empty one. */
 OYL_API oyl_status   oyl_emit_document_start(oyl_emitter *e, bool implicit);
 
 /** End a document; @p implicit omits the "..." marker. */
@@ -886,7 +895,11 @@ OYL_API oyl_status   oyl_emit_document_end(oyl_emitter *e, bool implicit);
 /** Emit a scalar. OYL_SCALAR_PLAIN writes the value plain when that reads
  *  back as the same text, and quotes it otherwise; the other styles are
  *  honored where valid (block styles fall back to double-quoted in flow
- *  context). */
+ *  context). Characters YAML doesn't allow unescaped (control characters
+ *  but tab and line feed, DEL, the C1 controls, U+FEFF, U+FFFE, U+FFFF),
+ *  and NEL, U+2028 and U+2029, which YAML 1.1 reads as line breaks, are
+ *  written escaped, in double quotes. The emitter doesn't decode UTF-8:
+ *  invalid UTF-8 is written as it is. */
 OYL_API oyl_status   oyl_emit_scalar(oyl_emitter *e, oyl_str value,
                                      oyl_scalar_style style,
                                      oyl_str anchor, oyl_str tag);

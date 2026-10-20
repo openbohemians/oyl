@@ -982,6 +982,16 @@ static oyl_status scan_tag(oyl_scanner *s, oyl_token *tok) {
     return OYL_OK;
 }
 
+/* A character at buf[i] that YAML doesn't allow, found without decoding
+ * UTF-8: a C1 control but NEL, U+FEFF (a byte order mark), U+FFFE or
+ * U+FFFF? */
+static bool unallowed_char_at(const char *buf, size_t len, size_t i) {
+    uint8_t c = (uint8_t)buf[i];
+    uint8_t c1 = i + 1 < len ? (uint8_t)buf[i + 1] : 0, c2 = i + 2 < len ? (uint8_t)buf[i + 2] : 0;
+    if (c == 0xC2) return c1 >= 0x80 && c1 <= 0x9F && c1 != 0x85;
+    return c == 0xEF && ((c1 == 0xBB && c2 == 0xBF) || (c1 == 0xBF && c2 >= 0xBE));
+}
+
 static oyl_status scan_anchor_or_alias(oyl_scanner *s, oyl_token *tok) {
     oyl_mark start = mark(s);
     bool is_anchor = (PEEK(s) == '&');
@@ -995,6 +1005,10 @@ static oyl_status scan_anchor_or_alias(oyl_scanner *s, oyl_token *tok) {
         if (ch == ',' || ch == '[' || ch == ']' || ch == '{' || ch == '}') break;
         if (ch < 0x20 || ch == 0x7F)
             SCAN_ERROR(s, "control character in anchor or alias name");
+        /* a name can't be escaped: these can't be in one (in scalars, the
+         * emitter escapes them) */
+        if (ch >= 0xC2 && unallowed_char_at(s->buf, s->len, s->pos))
+            SCAN_ERROR(s, "character not allowed in anchor or alias name");
         advance(s, 1);
     }
     size_t name_len = BUF_AT(s) - name_start;

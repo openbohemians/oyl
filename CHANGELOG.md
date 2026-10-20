@@ -80,8 +80,8 @@
   the rules that could accept it: for text starting with `n`, go-yaml v2's
   schema tries `null`, `n` and `no`, not all 30 rules. Building a tree is
   about 8% faster for it.
-- The emitter is 1.5x to 7x faster, with the same output byte for byte:
-  it decides a scalar's style in one pass over it instead of up to four,
+- The emitter is 1.5x to 7x faster, with the same output byte for byte
+  (but for the fixes below): it decides a scalar's style in one pass over it instead of up to four,
   writes quoted scalars a chunk at a time, no longer counts output
   columns it never used, and emits events and trees without building an
   event per node. Writing held trees as YAML: block mappings 214 to 340
@@ -101,6 +101,36 @@
   and DEL outside quotes. Quoted scalars may hold DEL, as YAML 1.2 allows
   (libyaml refuses it). Parsing costs 1–3% more instructions on text-heavy
   input, none measurable in time.
+- Anchor and alias names may not hold a C1 control character (but NEL),
+  U+FEFF, U+FFFE or U+FFFF, which YAML doesn't allow and a name can't
+  escape; they were read as part of the name.
+- The emitter writes what reads back as the events given it, where it
+  didn't:
+  - A document written without `---` after one that ended without `...`
+    ran into it (two trees `a: 1` and `b: 2` read back as one document,
+    `- x` and `k: v` not at all), and an empty one vanished: both now get
+    `---`. Streams re-emitted from the parser weren't affected.
+  - A single-quoted scalar asked for with control characters was written
+    with them raw, which no parser reads, and with DEL, which YAML output
+    may not hold raw: it is double-quoted, and they are escaped.
+  - C1 control characters, U+FEFF inside text, U+FFFE and U+FFFF were
+    written raw, even in double quotes; NEL, U+2028 and U+2029 were
+    written raw, which YAML 1.1 readers take as line breaks. All are
+    written escaped in double quotes (`\x9B`, `\uFEFF`, `\N`, `\L`, `\P`).
+  - A mapping key longer than 1024 characters was written implicit,
+    which YAML forbids: it is written explicit (`? key`).
+  - Plain text starting with `?` or `:` in a flow collection (`[:x]`),
+    valid YAML 1.2 that libyaml and libfyaml read as a mapping, is quoted.
+- The emitter checks the order of events: two roots, a mapping ended
+  after a key, an end that doesn't match its start, a node outside a
+  document, and anchor or alias names YAML can't hold (`a b`, `c,d`, an
+  empty alias) were written as broken YAML; they are `OYL_ERR_EMIT`. The
+  first error is final, as the parser's are (before, a call after a
+  failed one could succeed and write on from a broken state).
+- The parser running out of memory while expanding a tag gave the tag as
+  written (`!!str`) and succeeded; it gives `OYL_ERR_MEMORY`. Out of memory
+  saving its first restart point (for a flow collection as a key, `[a]:
+  c`), it gave a parse error; it gives `OYL_ERR_MEMORY`.
 - `oyl_parse_json`: a chain of merges in go-yaml v2's order recursed once
   per link without counting it, so 2,000 links overflowed a 512 KB thread
   stack; a 28 KB document merging a big mapping 1,200 times wrote 24 MB,

@@ -12,6 +12,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#if defined(__SSE2__)
+#include <emmintrin.h>   /* part of x86-64: no runtime check */
+#endif
 
 /* ── Context types ───────────────────────────────────────── */
 
@@ -52,25 +55,49 @@ struct oyl_emitter {
     int       stack_cap;
     int       flow_depth;   /* flow collections on the stack */
 
-    /* state */
+    /* where the events are: oyl_emit checks they come in a valid order */
+    bool stream_started;
+    bool stream_ended;
     bool doc_open;
+    bool root_done;       /* the document has its root node (maybe still open) */
+    bool open_ended;      /* the last document ended without "...", so the
+                           * next one needs "---" */
+    bool bare_doc;        /* the document started without "---" */
+    oyl_status error;     /* the first error; every later call returns it */
+
+    /* state */
     bool first_doc;
     bool wrote_block_key; /* just wrote a block map key, value next */
     bool after_seq_dash;  /* just wrote "- " for a block seq entry */
     bool key_was_alias;   /* the current mapping key is an alias */
     bool wrote_props;     /* the current node has an anchor or tag */
+    size_t key_start;     /* where the current block mapping key starts */
 };
+
+/* ── Failing ─────────────────────────────────────────────── */
+
+/* The emitter fails: it keeps the first error and sets its state so that
+ * every later call fails the checks of event order, and comes here for
+ * that error. Nothing on the way of a call that succeeds checks for it. */
+NOINLINE oyl_status emit_fail(oyl_emitter *e, oyl_status st) {
+    if (!e->error) e->error = st;
+    e->stream_started = e->stream_ended = true;
+    e->doc_open = false;
+    e->stack_len = 0;
+    e->flow_depth = 0;
+    return e->error;
+}
 
 /* ── Buffer management ───────────────────────────────────── */
 
 #define EMIT_INIT_CAP 4096
 
 NOINLINE oyl_status buf_grow(oyl_emitter *e, size_t need) {
-    if (need > SIZE_MAX - e->len) return OYL_ERR_MEMORY;
+    if (need > SIZE_MAX - e->len) return emit_fail(e, OYL_ERR_MEMORY);
     size_t new_cap = e->cap * 2;
     if (new_cap < e->len + need) new_cap = e->len + need;
     char *nb = realloc(e->buf, new_cap);
-    if (!nb) return OYL_ERR_MEMORY;
+    if (!nb) return emit_fail(e, OYL_ERR_MEMORY);
     e->buf = nb;
     e->cap = new_cap;
     return OYL_OK;
@@ -113,7 +140,7 @@ static oyl_status push_ctx(oyl_emitter *e, emit_ctx_type type, int indent) {
         int new_cap = e->stack_cap * 2;
         if (new_cap < 8) new_cap = 8;
         emit_ctx *ns = realloc(e->stack, (size_t)new_cap * sizeof(emit_ctx));
-        if (!ns) return OYL_ERR_MEMORY;
+        if (!ns) return emit_fail(e, OYL_ERR_MEMORY);
         e->stack = ns;
         e->stack_cap = new_cap;
     }
@@ -224,6 +251,7 @@ enum {
     SC_COLON = 1 << 3,
     SC_HASH  = 1 << 4,
     SC_FLOW  = 1 << 5,   /* , [ ] { } */
+    SC_UNI   = 1 << 6,   /* a lead byte of a character escaped_char() finds */
 };
 
 #define C_ SC_CTRL
@@ -232,6 +260,7 @@ enum {
 #define CO SC_COLON
 #define HA SC_HASH
 #define FL SC_FLOW
+#define UN SC_UNI
 static const uint8_t scalar_class[256] = {
     /*       0   1   2   3   4   5   6   7   8   9   A   B   C   D   E   F */
     /* 0x */ C_, C_, C_, C_, C_, C_, C_, C_, C_, 0,  LF, C_, C_, CR, C_, C_,
@@ -242,7 +271,14 @@ static const uint8_t scalar_class[256] = {
     /* 5x */ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  FL, 0,  FL, 0,  0,
     /* 6x */ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
     /* 7x */ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  FL, 0,  FL, 0,  C_,
-    /* 8x-Fx: 0 */
+    /* 8x */ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+    /* 9x */ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+    /* Ax */ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+    /* Bx */ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+    /* Cx */ 0,  0,  UN, 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+    /* Dx */ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+    /* Ex */ 0,  0,  UN, 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  UN,
+    /* Fx: 0 */
 };
 #undef C_
 #undef LF
@@ -250,11 +286,95 @@ static const uint8_t scalar_class[256] = {
 #undef CO
 #undef HA
 #undef FL
+#undef UN
 
 static unsigned scalar_classes(const char *s, size_t len) {
     unsigned f = 0;
     for (size_t i = 0; i < len; i++) f |= scalar_class[(uint8_t)s[i]];
     return f;
+}
+
+/* Is there a character at s[i] that only a double-quoted scalar can hold,
+ * escaped? Returns its length in bytes (0 if none) and its code point.
+ * They are the C1 control characters, U+FEFF (a byte order mark), U+FFFE
+ * and U+FFFF, which YAML doesn't allow unescaped; and NEL, U+2028 and
+ * U+2029, which it does, but which YAML 1.1 readers take as line breaks.
+ * Oyl doesn't decode UTF-8, so invalid UTF-8 is written as it is. */
+static size_t escaped_char(const char *s, size_t len, size_t i, uint32_t *code) {
+    uint8_t c = (uint8_t)s[i];
+    if (c == 0xC2 && i + 1 < len && (uint8_t)s[i + 1] >= 0x80 && (uint8_t)s[i + 1] <= 0x9F) {
+        *code = (uint8_t)s[i + 1];
+        return 2;
+    }
+    if (i + 2 >= len) return 0;
+    uint8_t c1 = (uint8_t)s[i + 1], c2 = (uint8_t)s[i + 2];
+    if ((c == 0xE2 && c1 == 0x80 && (c2 == 0xA8 || c2 == 0xA9)) ||
+        (c == 0xEF && ((c1 == 0xBB && c2 == 0xBF) || (c1 == 0xBF && c2 >= 0xBE)))) {
+        *code = (uint32_t)(c & 0x0F) << 12 | (uint32_t)(c1 & 0x3F) << 6 | (c2 & 0x3F);
+        return 3;
+    }
+    return 0;
+}
+
+#if defined(__SSE2__)
+/* Where in b[0..16) a character escaped_char() finds starts, as a bit
+ * mask, reading two bytes past them */
+static inline int escaped_starts(const char *b) {
+#define SPLAT(x) _mm_set1_epi8((char)(x))
+#define EQ(a, b) _mm_cmpeq_epi8(a, b)
+#define AND(a, b) _mm_and_si128(a, b)
+    __m128i v0 = _mm_loadu_si128((const __m128i *)b);
+    if (!_mm_movemask_epi8(v0)) return 0;   /* ASCII */
+    __m128i v1 = _mm_loadu_si128((const __m128i *)(b + 1));
+    __m128i v2 = _mm_loadu_si128((const __m128i *)(b + 2));
+    __m128i ef = EQ(v0, SPLAT(0xEF));
+    __m128i c1 = AND(EQ(v0, SPLAT(0xC2)), EQ(AND(v1, SPLAT(0xE0)), SPLAT(0x80)));   /* C2 80-9F */
+    __m128i ls = AND(AND(EQ(v0, SPLAT(0xE2)), EQ(v1, SPLAT(0x80))),
+                     EQ(AND(v2, SPLAT(0xFE)), SPLAT(0xA8)));                       /* E2 80 A8-A9 */
+    __m128i bom = AND(AND(ef, EQ(v1, SPLAT(0xBB))), EQ(v2, SPLAT(0xBF)));          /* EF BB BF */
+    __m128i nc = AND(AND(ef, EQ(v1, SPLAT(0xBF))),
+                     EQ(AND(v2, SPLAT(0xFE)), SPLAT(0xBE)));                       /* EF BF BE-BF */
+    return _mm_movemask_epi8(_mm_or_si128(_mm_or_si128(c1, ls), _mm_or_si128(bom, nc)));
+#undef SPLAT
+#undef EQ
+#undef AND
+}
+#endif
+
+/* The first character escaped_char() finds in s[from..len): its offset
+ * (len if none), with its length and code point. With SSE2, 16 starting
+ * bytes at a time, each with the two after it: text full of other UTF-8
+ * (CJK punctuation, typographic quotes) has a C2, E2 or EF lead byte every
+ * few characters, so only a whole match may branch. */
+static size_t next_escaped_char(const char *s, size_t from, size_t len, size_t *w, uint32_t *code) {
+    size_t i = from;
+#if defined(__SSE2__)
+    int m = 0;
+    for (; i + 18 <= len; i += 16)
+        if ((m = escaped_starts(s + i))) break;
+    if (!m && i < len) {
+        /* the last 17 bytes or fewer, copied with zeros after them */
+        char pad[48] = { 0 };
+        memcpy(pad, s + i, len - i);
+        if (!(m = escaped_starts(pad)) && len - i > 16 && (m = escaped_starts(pad + 16))) i += 16;
+    }
+    if (!m) return len;
+    i += (size_t)__builtin_ctz((unsigned)m);
+    *w = escaped_char(s, len, i, code);
+    return i;
+#else
+    for (; i < len; i++)
+        if ((uint8_t)s[i] >= 0xC2 && (*w = escaped_char(s, len, i, code))) return i;
+    return len;
+#endif
+}
+
+/* Does `s` hold a character escaped_char() finds? `f` is
+ * scalar_classes(s, len). */
+static bool has_escaped_char(const char *s, size_t len, unsigned f) {
+    size_t w;
+    uint32_t code;
+    return (f & SC_UNI) && next_escaped_char(s, 0, len, &w, &code) < len;
 }
 
 /* Could this text be misread if emitted plain? Only syntax is considered
@@ -265,22 +385,20 @@ static bool needs_quoting(const char *s, size_t len, bool flow_ctx, unsigned f) 
 
     /* starts with an indicator. '-', '?' and ':' may start a plain scalar
      * when followed by a "safe" character: not a blank, and in flow
-     * context not a flow indicator ("-123", "?x", ":x", "-foo") */
+     * context not a flow indicator ("-123", "?x", ":x", "-foo"). In flow
+     * context "?x" and ":x" are quoted all the same: libyaml and libfyaml
+     * read "[:x]" and "[?x]" as mappings. */
     uint8_t first = (uint8_t)s[0];
     if (oyl_is_indicator(first)) {
         if (!(first == '-' || first == '?' || first == ':')) return true;
         if (len < 2) return true;
         uint8_t next = (uint8_t)s[1];
         if (oyl_is_blank_or_break(next)) return true;
-        if (flow_ctx && oyl_is_flow(next)) return true;
+        if (flow_ctx && (first != '-' || oyl_is_flow(next))) return true;
     }
     /* space or tab at either end */
     if (first == ' ' || first == '\t') return true;
     if (s[len - 1] == ' ' || s[len - 1] == '\t') return true;
-
-    /* U+FEFF at the start would read as a byte order mark and be dropped */
-    if (len >= 3 && first == 0xEF && (uint8_t)s[1] == 0xBB && (uint8_t)s[2] == 0xBF)
-        return true;
 
     /* document markers */
     if (len >= 3 && (memcmp(s, "---", 3) == 0 || memcmp(s, "...", 3) == 0))
@@ -308,11 +426,13 @@ static bool needs_quoting(const char *s, size_t len, bool flow_ctx, unsigned f) 
 }
 
 /* Can `s` be written as a literal block scalar and read back exactly?
- * Not with control characters (other than tab and line feed), and not
- * when the first non-empty line starts with a space: that would need an
- * indentation indicator. `f` is scalar_classes(s, len). */
+ * Not with control characters (other than tab and line feed) or the
+ * characters escaped_char() finds, and not when the first non-empty line
+ * starts with a space: that would need an indentation indicator. `f` is
+ * scalar_classes(s, len). */
 static bool literal_ok(const char *s, size_t len, unsigned f) {
     if (f & SC_CTRL) return false;
+    if (has_escaped_char(s, len, f)) return false;
     size_t i = 0;
     while (i < len && s[i] == '\n') i++;
     return !(i < len && s[i] == ' ');
@@ -338,14 +458,16 @@ static oyl_scalar_style choose_style(oyl_scalar_style requested,
     if (requested == OYL_SCALAR_LITERAL || requested == OYL_SCALAR_FOLDED)
         return !flow_ctx && !is_key && literal_ok(val, len, f) ? OYL_SCALAR_LITERAL
                                                                 : OYL_SCALAR_DOUBLE_QUOTED;
-    /* single quotes fold line breaks; keep the value exact with escapes */
+    /* single quotes fold line breaks and can't escape: keep the value
+     * exact with double quotes */
     if (requested == OYL_SCALAR_SINGLE_QUOTED)
-        return f & SC_BREAK ? OYL_SCALAR_DOUBLE_QUOTED : requested;
+        return (f & (SC_BREAK | SC_CTRL)) || has_escaped_char(val, len, f)
+                   ? OYL_SCALAR_DOUBLE_QUOTED : requested;
 
     /* PLAIN requested — auto-detect */
     if (len == 0 && !is_str_tag(tag))
         return OYL_SCALAR_PLAIN;              /* empty (null) node */
-    if (f & (SC_CTRL | SC_LF))
+    if ((f & (SC_CTRL | SC_LF)) || has_escaped_char(val, len, f))
         return OYL_SCALAR_DOUBLE_QUOTED;      /* control characters, line feeds */
     if (!needs_quoting(val, len, flow_ctx, f)) {
         if (is_str_tag(tag) && (is_yaml_keyword(val, len) || looks_like_number(val, len)))
@@ -382,15 +504,20 @@ static oyl_status emit_single_quoted(oyl_emitter *e, const char *s, size_t len) 
     return st == OYL_OK ? buf_put(e, '\'') : st;
 }
 
-static oyl_status emit_double_quoted(oyl_emitter *e, const char *s, size_t len) {
+/* Write s[0..len) escaped for double quotes: all but the characters
+ * escaped_char() finds, which emit_double_quoted takes apart. `*bytes`
+ * gets every byte or'ed together: under 0x80, there are none. */
+static oyl_status emit_dq_run(oyl_emitter *e, const char *s, size_t len, unsigned *bytes) {
     static const char hex[] = "0123456789ABCDEF";
-    oyl_status st = buf_put(e, '"');
+    oyl_status st = OYL_OK;
+    unsigned all = 0;
     for (size_t i = 0; i < len && st == OYL_OK;) {
         size_t n = len - i < CHUNK ? len - i : CHUNK;
         if ((st = buf_ensure(e, 4 * n)) != OYL_OK) break;   /* \xHH */
         char *o = e->buf + e->len;
         for (size_t end = i + n; i < end; i++) {
             uint8_t c = (uint8_t)s[i];
+            all |= c;
             if (c >= 0x20 && c != 0x7F && c != '\\' && c != '"') {
                 *o++ = (char)c;
                 continue;
@@ -413,6 +540,52 @@ static oyl_status emit_double_quoted(oyl_emitter *e, const char *s, size_t len) 
             }
         }
         e->len = (size_t)(o - e->buf);
+    }
+    *bytes = all;
+    return st;
+}
+
+/* The escape for a character escaped_char() finds: \N, \L and \P, \xHH for
+ * the C1 controls, \uHHHH for the rest */
+static oyl_status emit_escape(oyl_emitter *e, uint32_t code) {
+    static const char hex[] = "0123456789ABCDEF";
+    oyl_status st = buf_ensure(e, 6);
+    if (st != OYL_OK) return st;
+    char *o = e->buf + e->len;
+    *o++ = '\\';
+    if (code == 0x85 || code == 0x2028 || code == 0x2029) {
+        *o++ = code == 0x85 ? 'N' : code == 0x2028 ? 'L' : 'P';
+    } else if (code < 0x100) {
+        *o++ = 'x';
+        *o++ = hex[code >> 4];
+        *o++ = hex[code & 15];
+    } else {
+        *o++ = 'u';
+        for (int sh = 12; sh >= 0; sh -= 4) *o++ = hex[(code >> sh) & 15];
+    }
+    e->len = (size_t)(o - e->buf);
+    return OYL_OK;
+}
+
+static oyl_status emit_double_quoted(oyl_emitter *e, const char *s, size_t len) {
+    oyl_status st = buf_put(e, '"');
+    if (st != OYL_OK) return st;
+    /* most text has none of the characters escaped_char() finds: written
+     * as it is, then looked for if there's anything but ASCII */
+    size_t start = e->len, w = 0;
+    uint32_t code = 0;
+    unsigned bytes;
+    st = emit_dq_run(e, s, len, &bytes);
+    size_t at = st == OYL_OK && bytes >= 0x80 ? next_escaped_char(s, 0, len, &w, &code) : len;
+    if (at < len) {
+        e->len = start;   /* written again, taken apart */
+        for (size_t from = 0; st == OYL_OK;) {
+            st = emit_dq_run(e, s + from, at - from, &bytes);
+            if (st != OYL_OK || at == len) break;
+            st = emit_escape(e, code);
+            from = at + w;
+            at = next_escaped_char(s, from, len, &w, &code);
+        }
     }
     return st == OYL_OK ? buf_put(e, '"') : st;
 }
@@ -479,6 +652,9 @@ static oyl_status emit_scalar(oyl_emitter *e, oyl_str value, oyl_scalar_style re
              * the space after an anchor or tag ("&a : v", not "&a: v") */
             if (ctx && ctx->type == EMIT_CTX_FLOW_SEQ && !e->wrote_props)
                 return buf_put(e, '~');
+            /* a document of nothing reads back only with "---" */
+            if (!ctx && !e->wrote_props && e->bare_doc)
+                return PUTS(e, "---");
             if (!e->wrote_props && !is_key && e->len > 0 && e->buf[e->len - 1] == ' ')
                 e->len--;
             return OYL_OK;
@@ -492,13 +668,35 @@ static oyl_status emit_scalar(oyl_emitter *e, oyl_str value, oyl_scalar_style re
     case OYL_SCALAR_FOLDED:
         return emit_block_scalar(e, val, vlen, indent);
     }
-    return OYL_ERR_EMIT;
+    return emit_fail(e, OYL_ERR_EMIT);
 }
 
 /* ── Property emission (anchor, tag) ─────────────────────── */
 
+/* Can `name` be written as an anchor or alias name, and read back as it
+ * is? Not empty, and every character YAML's ns-anchor-char: no spaces,
+ * line breaks or flow indicators, nothing YAML must escape (control
+ * characters, DEL, the C1 controls but NEL, U+FEFF, U+FFFE, U+FFFF). */
+static bool anchor_name_ok(oyl_str name) {
+    if (!name.data || name.len == 0) return false;
+    for (size_t i = 0; i < name.len; i++) {
+        uint8_t c = (uint8_t)name.data[i];
+        uint32_t code;
+        if (c <= ' ' || c == 0x7F || c == ',' || c == '[' || c == ']' || c == '{' || c == '}')
+            return false;
+        if ((scalar_class[c] & SC_UNI) && escaped_char(name.data, name.len, i, &code) &&
+            code != 0x85 && code != 0x2028 && code != 0x2029)
+            return false;
+    }
+    return true;
+}
+
+static bool has_anchor(oyl_str anchor) {
+    return anchor.data && anchor.len;
+}
+
 static oyl_status emit_anchor(oyl_emitter *e, oyl_str anchor) {
-    if (!anchor.data || anchor.len == 0) return OYL_OK;
+    if (!has_anchor(anchor)) return OYL_OK;
     oyl_status st = buf_put(e, '&');
     if (st != OYL_OK) return st;
     st = buf_puts(e, anchor.data, anchor.len);
@@ -607,6 +805,31 @@ static oyl_status emit_complex_key_open(oyl_emitter *e, emit_ctx *map,
 
 /* ── Pre-node prefix ─────────────────────────────────────── */
 
+/* Is the block mapping key just written too long to be implicit? YAML
+ * allows at most 1024 characters, its properties and the space before
+ * ':' included. */
+static bool key_too_long(const oyl_emitter *e) {
+    size_t n = e->len - e->key_start + e->key_was_alias;
+    if (n <= 1024) return false;
+    size_t chars = e->key_was_alias;
+    for (size_t i = e->key_start; i < e->len; i++)
+        chars += ((uint8_t)e->buf[i] & 0xC0) != 0x80;   /* not a UTF-8 continuation byte */
+    return chars > 1024;
+}
+
+/* Make the key just written explicit ("? key"), so that its value goes on
+ * the next line */
+static oyl_status make_key_explicit(oyl_emitter *e, emit_ctx *map) {
+    oyl_status st = buf_ensure(e, 2);
+    if (st != OYL_OK) return st;
+    memmove(e->buf + e->key_start + 2, e->buf + e->key_start, e->len - e->key_start);
+    memcpy(e->buf + e->key_start, "? ", 2);
+    e->len += 2;
+    map->complex_key = true;
+    e->key_was_alias = false;   /* ':' starts its own line */
+    return OYL_OK;
+}
+
 static oyl_status emit_pre_node(oyl_emitter *e, bool is_collection) {
     emit_ctx *ctx = top_ctx(e);
     oyl_status st;
@@ -636,7 +859,12 @@ static oyl_status emit_pre_node(oyl_emitter *e, bool is_collection) {
                 st = buf_indent(e, ctx->indent);
                 if (st != OYL_OK) return st;
             }
+            e->key_start = e->len;
         } else {
+            if (!ctx->complex_key && key_too_long(e)) {
+                st = make_key_explicit(e, ctx);
+                if (st != OYL_OK) return st;
+            }
             /* after an explicit "? key", the value indicator starts its own
              * line at the mapping's indentation */
             if (ctx->complex_key) {
@@ -713,7 +941,10 @@ static oyl_status emit_pre_node(oyl_emitter *e, bool is_collection) {
 /* Advance the parent context after emitting a node */
 static void advance_ctx(oyl_emitter *e) {
     emit_ctx *ctx = top_ctx(e);
-    if (!ctx) return;
+    if (!ctx) {
+        e->root_done = true;
+        return;
+    }
 
     if (ctx->type == EMIT_CTX_BLOCK_MAP || ctx->type == EMIT_CTX_FLOW_MAP) {
         if (ctx->expect_key) {
@@ -736,8 +967,18 @@ static void advance_ctx(oyl_emitter *e) {
 /* One function per kind of event, taking its fields: oyl_emit, the
  * building functions below and oyl_emit_tree all come here */
 
+/* Is a node allowed next: the document's root, or an entry of the
+ * collection open? */
+static bool node_ok(const oyl_emitter *e) {
+    return e->stack_len > 0 || (e->doc_open && !e->root_done);
+}
+
 static oyl_status emit_document_start(oyl_emitter *e, bool implicit) {
     oyl_status st;
+    if (!e->stream_started || e->stream_ended || e->doc_open)
+        return emit_fail(e, OYL_ERR_EMIT);
+    /* a document without "---" can only start the stream or follow "..." */
+    if (e->open_ended) implicit = false;
     if (!implicit) {
         if (!e->first_doc && e->len > 0 && e->buf[e->len - 1] != '\n') {
             st = buf_put(e, '\n');
@@ -747,12 +988,16 @@ static oyl_status emit_document_start(oyl_emitter *e, bool implicit) {
         if (st != OYL_OK) return st;
     }
     e->doc_open = true;
+    e->root_done = false;
+    e->bare_doc = implicit;
     e->first_doc = false;
     return OYL_OK;
 }
 
 static oyl_status emit_document_end(oyl_emitter *e, bool implicit) {
     oyl_status st;
+    if (!e->doc_open || !e->root_done || e->stack_len)
+        return emit_fail(e, OYL_ERR_EMIT);
     if (!implicit) {
         if (e->len > 0 && e->buf[e->len - 1] != '\n') {
             st = buf_put(e, '\n');
@@ -762,11 +1007,14 @@ static oyl_status emit_document_end(oyl_emitter *e, bool implicit) {
         if (st != OYL_OK) return st;
     }
     e->doc_open = false;
+    e->open_ended = implicit;
     return OYL_OK;
 }
 
 static oyl_status emit_mapping_start(oyl_emitter *e, oyl_str anchor, oyl_str tag, bool flow) {
     oyl_status st;
+    if (!node_ok(e) || (has_anchor(anchor) && !anchor_name_ok(anchor)))
+        return emit_fail(e, OYL_ERR_EMIT);
     /* inside a flow collection everything must be flow */
     bool use_flow = (e->opts.style != OYL_EMIT_BLOCK) || flow || in_any_flow(e);
     emit_ctx *outer = top_ctx(e);
@@ -819,7 +1067,10 @@ static oyl_status emit_mapping_start(oyl_emitter *e, oyl_str anchor, oyl_str tag
 static oyl_status emit_mapping_end(oyl_emitter *e) {
     oyl_status st;
     emit_ctx *ctx = top_ctx(e);
-    if (!ctx) return OYL_ERR_EMIT;
+    /* a mapping ends after a value, not a key */
+    if (!ctx || (ctx->type != EMIT_CTX_BLOCK_MAP && ctx->type != EMIT_CTX_FLOW_MAP) ||
+        !ctx->expect_key)
+        return emit_fail(e, OYL_ERR_EMIT);
 
     if (ctx->type == EMIT_CTX_FLOW_MAP) {
         st = buf_put(e, '}');
@@ -840,6 +1091,8 @@ static oyl_status emit_mapping_end(oyl_emitter *e) {
 
 static oyl_status emit_sequence_start(oyl_emitter *e, oyl_str anchor, oyl_str tag, bool flow) {
     oyl_status st;
+    if (!node_ok(e) || (has_anchor(anchor) && !anchor_name_ok(anchor)))
+        return emit_fail(e, OYL_ERR_EMIT);
     /* inside a flow collection everything must be flow */
     bool use_flow = (e->opts.style != OYL_EMIT_BLOCK) || flow || in_any_flow(e);
     emit_ctx *outer = top_ctx(e);
@@ -885,7 +1138,8 @@ static oyl_status emit_sequence_start(oyl_emitter *e, oyl_str anchor, oyl_str ta
 static oyl_status emit_sequence_end(oyl_emitter *e) {
     oyl_status st;
     emit_ctx *ctx = top_ctx(e);
-    if (!ctx) return OYL_ERR_EMIT;
+    if (!ctx || (ctx->type != EMIT_CTX_BLOCK_SEQ && ctx->type != EMIT_CTX_FLOW_SEQ))
+        return emit_fail(e, OYL_ERR_EMIT);
 
     if (ctx->type == EMIT_CTX_FLOW_SEQ) {
         st = buf_put(e, ']');
@@ -906,6 +1160,9 @@ static oyl_status emit_sequence_end(oyl_emitter *e) {
 
 static oyl_status emit_scalar_node(oyl_emitter *e, oyl_str value, oyl_scalar_style style,
                                    oyl_str anchor, oyl_str tag) {
+    if (!node_ok(e) || (has_anchor(anchor) && !anchor_name_ok(anchor)))
+        return emit_fail(e, OYL_ERR_EMIT);
+    if (!value.data && value.len) return emit_fail(e, OYL_ERR_EMIT);
     oyl_status st = emit_pre_node(e, false);
     if (st != OYL_OK) return st;
 
@@ -920,6 +1177,7 @@ static oyl_status emit_scalar_node(oyl_emitter *e, oyl_str value, oyl_scalar_sty
 }
 
 static oyl_status emit_alias_node(oyl_emitter *e, oyl_str name) {
+    if (!node_ok(e) || !anchor_name_ok(name)) return emit_fail(e, OYL_ERR_EMIT);
     oyl_status st = emit_pre_node(e, false);
     if (st != OYL_OK) return st;
     emit_ctx *ctx = top_ctx(e);
@@ -935,19 +1193,29 @@ static oyl_status emit_alias_node(oyl_emitter *e, oyl_str name) {
     return OYL_OK;
 }
 
+static oyl_status emit_stream_start(oyl_emitter *e) {
+    if (e->stream_started) return emit_fail(e, OYL_ERR_EMIT);
+    e->stream_started = true;
+    e->first_doc = true;
+    return OYL_OK;
+}
+
+static oyl_status emit_stream_end(oyl_emitter *e) {
+    if (!e->stream_started || e->stream_ended || e->doc_open)
+        return emit_fail(e, OYL_ERR_EMIT);
+    e->stream_ended = true;
+    /* ensure trailing newline */
+    if (e->len > 0 && e->buf[e->len - 1] != '\n')
+        return buf_put(e, '\n');
+    return OYL_OK;
+}
+
 /* ── Main emit function ──────────────────────────────────── */
 
-oyl_status oyl_emit(oyl_emitter *e, const oyl_event *evt) {
+static oyl_status emit_event(oyl_emitter *e, const oyl_event *evt) {
     switch (evt->type) {
-    case OYL_EVT_STREAM_START:
-        e->first_doc = true;
-        return OYL_OK;
-
-    case OYL_EVT_STREAM_END:
-        /* ensure trailing newline */
-        if (e->len > 0 && e->buf[e->len - 1] != '\n')
-            return buf_put(e, '\n');
-        return OYL_OK;
+    case OYL_EVT_STREAM_START:   return emit_stream_start(e);
+    case OYL_EVT_STREAM_END:     return emit_stream_end(e);
 
     case OYL_EVT_DOC_START:      return emit_document_start(e, evt->implicit);
     case OYL_EVT_DOC_END:        return emit_document_end(e, evt->implicit);
@@ -959,8 +1227,12 @@ oyl_status oyl_emit(oyl_emitter *e, const oyl_event *evt) {
         return emit_scalar_node(e, evt->value, evt->scalar_style, evt->anchor, evt->tag);
     case OYL_EVT_ALIAS:          return emit_alias_node(e, evt->value);
     default:
-        return OYL_ERR_EMIT;
+        return emit_fail(e, OYL_ERR_EMIT);
     }
+}
+
+oyl_status oyl_emit(oyl_emitter *e, const oyl_event *evt) {
+    return emit_event(e, evt);
 }
 
 /* ── Constructor / destructor ────────────────────────────── */
@@ -999,13 +1271,11 @@ void oyl_emitter_set_indent(oyl_emitter *e, int indent) {
 /* ── Event constructors ──────────────────────────────────── */
 
 oyl_status oyl_emit_stream_start(oyl_emitter *e) {
-    oyl_event evt = { .type = OYL_EVT_STREAM_START };
-    return oyl_emit(e, &evt);
+    return emit_stream_start(e);
 }
 
 oyl_status oyl_emit_stream_end(oyl_emitter *e) {
-    oyl_event evt = { .type = OYL_EVT_STREAM_END };
-    return oyl_emit(e, &evt);
+    return emit_stream_end(e);
 }
 
 oyl_status oyl_emit_document_start(oyl_emitter *e, bool implicit) {
