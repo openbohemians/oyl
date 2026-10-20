@@ -1,6 +1,6 @@
 # Ideas
 
-*Updated 2026-10-19*
+*Updated 2026-10-20*
 
 Larger features agreed in principle. None blocks 1.0, and none is started.
 
@@ -85,9 +85,20 @@ bug. Proposed shape (mine, not decided): make a file read the same under
 `true`, `1.0e-12`, `"1976-07-04"`), by policy plus a report, leaving
 comments and layout untouched (events carry exact spans); fix the
 mechanical syntax cases. Check it as Oyl is fuzzed: after rewriting, PyYAML
-and Oyl must read the same data. Related: a `oyl_schema_yaml11()` preset
-(additive) for programs that must read 1.1 types as they are; the builder
-cannot express 0-octal, sexagesimal or timestamps.
+and Oyl must read the same data.
+
+**2026-10-20: the parts exist now.** The yaml11 and goyaml2 dialects read
+the source as PyYAML and go-yaml v2 do (`oyl_schema_yaml11()`, built since,
+covers 0-octal, base 60 and timestamps), and events carry exact spans, so
+the rewrite needs no emitter; `oyl_emit_tree` is the fallback when layout
+needn't survive. Asked the same day whether Oyl should convert 1.1 or
+go-yaml documents to 1.2 text *before* parsing, as its way of reading them:
+no (my answer, accepted). A text rewrite needs the scanner's context
+(quotes, comments, block scalars), would copy the input and move every
+error mark, can't say 1.1 types in 1.2 text without changing what event
+and tree users see, and doesn't reach the decoding differences (go-yaml's
+merge order and alias counting), where most of the JSON review's findings
+were. As a tool for moving users to 1.2, yes.
 
 ## Performance
 
