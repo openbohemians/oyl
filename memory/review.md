@@ -107,7 +107,21 @@ a second %TAG for one handle an error. Documented, not emulated (the user
 agreed): YAML 1.1 timestamps of one instant are two keys; base 60 floats
 past 14 parts may differ in the last bits. Left: the reviewer's
 suspicion that localeconv() isn't thread-safe (now called only in a
-locale whose point isn't '.'). Codex on #3 not run yet.
+locale whose point isn't '.').
+**Codex reviewed #3 2026-10-19** (on `73054bb`): 5 findings, all
+reproduced, fixed in `0fb977f` (the user approved all five): untagged
+YAML 1.1 timestamps that don't exist (2001-02-29) now have no value
+(OYL_ERR_PARSE; resolution keeps the tag, as PyYAML's resolver; JSON
+fails "cannot decode ... as !!timestamp"); agrees with PyYAML's
+constructor on all 8,818 untagged timestamps of the corpus (the earlier
+oracle compared tags only for timestamps, which hid it). Base 60 ints
+take the rule's sign/underscore/range flags. PyYAML's !!int base 60
+cancels past 64 bits exactly when each part fits in 64 bits (0 diffs on
+200,000 boundary cases); a part beyond 64 bits stays text, documented in
+oyl.h (the user agreed). oyl_dialect_new takes any minor an int holds
+(the 100000 cap is gone). %YAML minor saturation checked against 9, not
+the digit (my slip in `73054bb`). Two of the five were slips in
+`73054bb`.
 
 **PR #5 (parser) reviewed 2026-10-19:** 7 findings, all verified. (The
 review's comment couldn't be posted: GitHub said the account "cannot
