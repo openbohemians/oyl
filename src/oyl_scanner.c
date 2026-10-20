@@ -185,6 +185,7 @@ ALWAYS_INLINE const char *skip_blanks_and_comments(oyl_scanner *s) {
                 return "comment must be separated from other tokens by whitespace";
             size_t to_break = oyl_scan_to_break(BUF_AT(s), REMAINING(s));
             advance_cols(s, to_break);
+            if (!AT_END(s) && !oyl_is_break(PEEK(s))) return "control character in comment";
         }
 
         /* line break? continue with the next line */
@@ -646,7 +647,7 @@ static oyl_status scan_single_quoted(oyl_scanner *s, oyl_token *tok) {
 
     /* fast path: no '' escapes or line breaks → zero-copy slice of the input */
     {
-        size_t j = s->pos + oyl_find_any4_short(BUF_AT(s), REMAINING(s), '\'', '\n', '\r', '\'');
+        size_t j = s->pos + oyl_find_in_quotes_short(BUF_AT(s), REMAINING(s), '\'', '\'');
         if (j < s->len && s->buf[j] == '\'' &&
             !(j + 1 < s->len && s->buf[j + 1] == '\'')) {
             oyl_str val = {s->buf + s->pos, j - s->pos};
@@ -711,7 +712,8 @@ static oyl_status scan_single_quoted(oyl_scanner *s, oyl_token *tok) {
             }
         } else {
             /* a run of ordinary bytes, up to the next quote or break */
-            size_t n = oyl_find_any4(BUF_AT(s), REMAINING(s), '\'', '\n', '\r', '\'');
+            if (PEEK(s) < 0x20 && PEEK(s) != '\t') SCAN_ERROR(s, "control character in quoted scalar");
+            size_t n = oyl_find_in_quotes(BUF_AT(s), REMAINING(s), '\'', '\'');
             SQ_ENSURE(n);
             memcpy(buf + out, BUF_AT(s), n);
             out += n;
@@ -738,7 +740,7 @@ static oyl_status scan_double_quoted(oyl_scanner *s, oyl_token *tok) {
 
     /* fast path: no escapes or line breaks → zero-copy slice of the input */
     {
-        size_t j = s->pos + oyl_find_any4_short(BUF_AT(s), REMAINING(s), '"', '\\', '\n', '\r');
+        size_t j = s->pos + oyl_find_in_quotes_short(BUF_AT(s), REMAINING(s), '"', '\\');
         if (j < s->len && s->buf[j] == '"') {
             oyl_str val = {s->buf + s->pos, j - s->pos};
             s->col += j + 1 - s->pos;
@@ -907,8 +909,9 @@ static oyl_status scan_double_quoted(oyl_scanner *s, oyl_token *tok) {
             }
         } else {
             /* a run of ordinary bytes, up to the next quote, escape or break */
+            if (PEEK(s) < 0x20 && PEEK(s) != '\t') SCAN_ERROR(s, "control character in quoted scalar");
             const char *run = BUF_AT(s);
-            size_t n = oyl_find_any4(run, REMAINING(s), '"', '\\', '\n', '\r');
+            size_t n = oyl_find_in_quotes(run, REMAINING(s), '"', '\\');
             memcpy(buf + out, run, n);
             size_t k = n;               /* trailing blanks don't count as content */
             while (k > 0 && oyl_is_blank((uint8_t)run[k - 1])) k--;
@@ -1154,6 +1157,7 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
         const char *line_start = BUF_AT(s);
         size_t len = oyl_scan_to_break(line_start, REMAINING(s));
         advance_cols(s, len);
+        if (!AT_END(s) && !oyl_is_break(PEEK(s))) SCAN_ERROR(s, "control character in directive");
         *tok = (oyl_token){
             .type  = OYL_TOK_DIRECTIVE,
             .value = {line_start, len},
@@ -1348,7 +1352,10 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
         if (!AT_END(s) && PEEK(s) == '#') {
             if (s->pos == hdr_blanks)
                 SCAN_ERROR(s, "comment must be separated from other tokens by whitespace");
-            while (!AT_END(s) && !oyl_is_break(PEEK(s))) advance(s, 1);
+            while (!AT_END(s) && !oyl_is_break(PEEK(s))) {
+                if (oyl_is_control(PEEK(s))) SCAN_ERROR(s, "control character in comment");
+                advance(s, 1);
+            }
         }
         if (!AT_END(s) && !oyl_is_break(PEEK(s))) SCAN_ERROR(s, "invalid block scalar indicator");
         if (!AT_END(s)) skip_break(s);
@@ -1448,6 +1455,12 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
             }
             size_t line_start = s->pos + base_indent;
             size_t rest = oyl_scan_to_break(s->buf + line_start, s->len - line_start);
+            if (line_start + rest < s->len && !oyl_is_break((uint8_t)s->buf[line_start + rest])) {
+                size_t at = line_start + rest;
+                s->pos = save_pos; s->line = save_line; s->col = save_col;
+                advance(s, at - save_pos);
+                SCAN_ERROR(s, "control character in block scalar");
+            }
             needed += rest + 1; /* content + newline */
             s->pos = line_start + rest;
             if (s->pos < s->len && s->buf[s->pos] == '\r') s->pos++;
@@ -1470,7 +1483,7 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
             size_t tp = s->pos;
             size_t cnt = 0;
             while (tp < end_pos) {
-                tp += oyl_scan_to_break(s->buf + tp, end_pos - tp);
+                tp += oyl_find_break(s->buf + tp, end_pos - tp);
                 cnt++;
                 if (tp < end_pos && s->buf[tp] == '\r') tp++;
                 if (tp < end_pos && s->buf[tp] == '\n') tp++;
@@ -1513,8 +1526,9 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
             /* check if content starts with whitespace (tab counts as more-indented) */
             bool starts_with_ws = (extra > 0) ||
                 (!AT_END(s) && !oyl_is_break(PEEK(s)) && oyl_is_blank(PEEK(s)));
-            /* copy line content: up to the break, so no line changes */
-            size_t n = oyl_scan_to_break(BUF_AT(s), REMAINING(s));
+            /* copy line content: up to the break, so no line changes (the
+             * first pass checked it for control characters) */
+            size_t n = oyl_find_break(BUF_AT(s), REMAINING(s));
             memcpy(buf + out, BUF_AT(s), n);
             out += n;
             advance_cols(s, n);

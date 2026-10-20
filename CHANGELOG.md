@@ -91,6 +91,12 @@
   with a length gives NULL.
 - The escapes `\L` and `\P` (U+2028 and U+2029), which YAML 1.2 has, were
   rejected as invalid.
+- Control characters YAML forbids are rejected wherever they are: C0 but
+  tab and line breaks, in quoted and block scalars, comments and
+  directives (before, only plain scalars, tags and anchors were checked),
+  and DEL outside quotes. Quoted scalars may hold DEL, as YAML 1.2 allows
+  (libyaml refuses it). Parsing costs 1–3% more instructions on text-heavy
+  input, none measurable in time.
 - `oyl_parse_json`: a chain of merges in go-yaml v2's order recursed once
   per link without counting it, so 2,000 links overflowed a 512 KB thread
   stack; a 28 KB document merging a big mapping 1,200 times wrote 24 MB,

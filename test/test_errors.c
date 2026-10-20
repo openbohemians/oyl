@@ -212,6 +212,68 @@ static void test_control_char_anchor(void) {
     oyl_arena_free(a);
 }
 
+/* The first error in all of yaml's events, copied to buf, or NULL; its mark in *at */
+static const char *parse_error(const char *yaml, size_t len, oyl_mark *at, char *buf, size_t cap) {
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_parser *p = oyl_parser_new(yaml, len, a);
+    const oyl_event *e;
+    oyl_status st;
+    while ((st = oyl_parse_next(p, &e)) == OYL_OK && e->type != OYL_EVT_STREAM_END) {}
+    const char *msg = NULL;
+    if (st != OYL_OK) {
+        snprintf(buf, cap, "%s", oyl_parser_error(p) ? oyl_parser_error(p) : "?");
+        *at = oyl_parser_error_mark(p);
+        msg = buf;
+    }
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+    return msg;
+}
+
+/* YAML text holds no control characters but tab and line breaks (C0 and
+ * DEL), outside quotes nor DEL; quoted scalars may hold DEL, and escapes
+ * write any character (found by review, 2026-10-20) */
+static void test_control_chars(void) {
+    printf("test_control_chars:\n");
+    static const struct { const char *yaml; size_t len; const char *where; size_t line, col; } bad[] = {
+#define CASE(y, where, line, col) { y, sizeof y - 1, where, line, col }
+        CASE("a: \"x\x01y\"\n", "quoted", 1, 6),
+        CASE("a: 'x\x01y'\n", "quoted", 1, 6),
+        CASE("a: \"a long run of text, past sixteen bytes \x1b[31m\"\n", "quoted", 1, 44),
+        CASE("a: \"x\n  y\x02z\"\n", "quoted", 2, 4),
+        CASE("a: 1 # comment \x01\n", "comment", 1, 16),
+        CASE("# \x7f\na: 1\n", "comment", 1, 3),
+        CASE("a: | # c\x01\n  x\n", "comment", 1, 9),
+        CASE("a: |\n  x\x01y\n", "block scalar", 2, 4),
+        CASE("a: >\n  one\n  t\x7fwo\n", "block scalar", 3, 4),
+        CASE("a: x\x7fy\n", "plain scalar", 1, 5),
+        CASE("%YAML 1.2\x01\n---\na\n", "directive", 1, 10),
+#undef CASE
+    };
+    char buf[256];
+    for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        oyl_mark at = { 0, 0, 0 };
+        const char *msg = parse_error(bad[i].yaml, bad[i].len, &at, buf, sizeof buf);
+        char want[64];
+        snprintf(want, sizeof want, "control character in %s", bad[i].where);
+        ASSERT(msg && strstr(msg, want), want);
+        if (msg && (at.line != bad[i].line || at.col != bad[i].col))
+            printf("    case %zu at %zu:%zu, expected %zu:%zu\n", i, at.line, at.col, bad[i].line, bad[i].col);
+        ASSERT(msg && at.line == bad[i].line && at.col == bad[i].col, "where the control character is");
+    }
+    const char *good[] = {
+        "a: \"tab\there\"\nb: 'tab\there'\nc: |\n  tab\there\n# tab\there\n",
+        "a: \"del \x7f in quotes\"\nb: 'and \x7f here'\n",
+        "a: \"\\x01 \\x7f \\e escaped\"\n",
+    };
+    for (size_t i = 0; i < sizeof good / sizeof good[0]; i++) {
+        oyl_mark at;
+        const char *msg = parse_error(good[i], strlen(good[i]), &at, buf, sizeof buf);
+        if (msg) printf("    good case %zu: %s\n", i, msg);
+        ASSERT(!msg, "tabs, DEL in quotes and escapes are fine");
+    }
+}
+
 /* \L and \P, YAML 1.2's escapes for U+2028 and U+2029 (found by review, 2026-10-20) */
 static void test_line_separator_escapes(void) {
     printf("test_line_separator_escapes:\n");
@@ -721,6 +783,7 @@ int main(void) {
     test_invalid_escape();
     test_empty_anchor();
     test_control_char_anchor();
+    test_control_chars();
     test_line_separator_escapes();
     test_depth_limit_after_expansion();
     test_depth_limit_every_path();
