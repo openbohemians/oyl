@@ -712,6 +712,20 @@ static size_t canon_event(const oyl_event *e, char *out, size_t cap) {
     return n;
 }
 
+/* Feed `evt`, read from `p`, to the emitter `e`: a document's start with
+ * its directives */
+static oyl_status emit_event(oyl_emitter *e, oyl_parser *p, const oyl_event *evt) {
+    oyl_status st = OYL_OK;
+    if (evt->type == OYL_EVT_DOC_START) {
+        int major, minor;
+        oyl_str h, pf;
+        if (oyl_parser_yaml_version(p, &major, &minor)) st = oyl_emit_yaml_directive(e, major, minor);
+        for (int i = 0; st == OYL_OK && oyl_parser_tag_directive(p, i, &h, &pf); i++)
+            st = oyl_emit_tag_directive(e, h, pf);
+    }
+    return st == OYL_OK ? oyl_emit(e, evt) : st;
+}
+
 /* Parse `yaml` and write its canonical event stream to `out`. When `e` is
  * given, also feed every event to it, keeping the first failure in
  * `*emitted`. Returns false on a parse error. */
@@ -727,7 +741,7 @@ static bool canon_parse(const char *yaml, size_t len, bool eager, oyl_emitter *e
     out[0] = '\0';
     while ((st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_NONE) {
         if (e) {
-            oyl_status est = oyl_emit(e, evt);
+            oyl_status est = emit_event(e, p, evt);
             if (*emitted == OYL_OK) *emitted = est;
         }
         n += canon_event(evt, out + n, cap - n);

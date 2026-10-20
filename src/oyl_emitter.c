@@ -65,6 +65,18 @@ struct oyl_emitter {
     bool bare_doc;        /* the document started without "---" */
     oyl_status error;     /* the first error; every later call returns it */
 
+    /* the directives of the next document, then of the one open; its tags
+     * are written with their handles */
+    bool has_version;     /* %YAML 1.version_minor */
+    int  version_minor;
+    int  n_tag_dirs;
+    struct {
+        char     handle[16];
+        char     prefix[256];   /* its value: written with %-escapes where needed */
+        uint8_t  hlen;
+        uint16_t plen;
+    } tag_dirs[8];
+
     /* state */
     bool first_doc;
     bool wrote_block_key; /* just wrote a block map key, value next */
@@ -704,16 +716,10 @@ static oyl_status emit_anchor(oyl_emitter *e, oyl_str anchor) {
     return buf_put(e, ' ');
 }
 
-/* URI characters allowed in a verbatim tag, besides alphanumerics */
-static bool is_uri_char(uint8_t c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-           (c && strchr("-#;/?:@&=+$,_.!~*'()[]", c));
-}
-
 /* Characters allowed in a shorthand tag's suffix: URI characters other
  * than '!' and the flow indicators */
 static bool is_tag_char(uint8_t c) {
-    return is_uri_char(c) && c != '!' && !oyl_is_flow(c);
+    return oyl_is_uri_char(c) && c != '!' && !oyl_is_flow(c);
 }
 
 static bool all_tag_chars(const char *s, size_t len) {
@@ -722,34 +728,80 @@ static bool all_tag_chars(const char *s, size_t len) {
     return true;
 }
 
-/* Write a tag as "!!suffix" (standard tags), "!suffix" (local tags), or
+/* Does a %TAG prefix's byte need a %-escape: one that isn't a URI
+ * character, and a flow indicator first */
+static bool prefix_escaped(const char *s, size_t i) {
+    uint8_t c = (uint8_t)s[i];
+    return !oyl_is_uri_char(c) || (i == 0 && oyl_is_flow(c));
+}
+
+/* Write text as URI characters, any other byte %-escaped (a prefix: a
+ * flow indicator first too); the parser decodes them */
+static oyl_status emit_uri(oyl_emitter *e, const char *s, size_t len, bool prefix) {
+    oyl_status st = OYL_OK;
+    for (size_t i = 0; i < len && st == OYL_OK; i++) {
+        if (prefix ? !prefix_escaped(s, i) : oyl_is_uri_char((uint8_t)s[i])) {
+            st = buf_put(e, s[i]);
+        } else {
+            char esc[4];
+            snprintf(esc, sizeof esc, "%%%02X", (uint8_t)s[i]);
+            st = buf_puts(e, esc, 3);
+        }
+    }
+    return st;
+}
+
+/* The handle to write a tag with, and how much of the tag it stands for
+ * (*skip): the document's %TAG handle with the longest prefix of the tag,
+ * else !! for a standard tag and ! for a local one, unless the document's
+ * directives give that handle another prefix; each followed by tag
+ * characters. NULL: the tag can't be written short. */
+static const char *tag_handle(const oyl_emitter *e, oyl_str tag, size_t *skip) {
+    static const char std[] = "tag:yaml.org,2002:";
+    static const size_t slen = sizeof(std) - 1;
+    const char *handle = NULL;
+    bool std_free = true, local_free = true;
+    for (int i = 0; i < e->n_tag_dirs; i++) {
+        size_t plen = e->tag_dirs[i].plen;
+        if (e->tag_dirs[i].hlen == 2) std_free = false;
+        if (e->tag_dirs[i].hlen == 1) local_free = false;
+        if (tag.len > plen && (!handle || plen > *skip) &&
+            memcmp(tag.data, e->tag_dirs[i].prefix, plen) == 0 &&
+            all_tag_chars(tag.data + plen, tag.len - plen)) {
+            handle = e->tag_dirs[i].handle;
+            *skip = plen;
+        }
+    }
+    if (handle) return handle;
+    if (std_free && tag.len > slen && memcmp(tag.data, std, slen) == 0 &&
+        all_tag_chars(tag.data + slen, tag.len - slen)) {
+        *skip = slen;
+        return "!!";
+    }
+    if (local_free && tag.data[0] == '!' && all_tag_chars(tag.data + 1, tag.len - 1)) {
+        *skip = 1;
+        return "!";
+    }
+    return NULL;
+}
+
+/* Write a tag as a handle and a suffix ("!!str", "!foo", "!e!foo"), or
  * verbatim "!<...>" with any other byte percent-encoded; the parser
- * decodes verbatim tags, so each form reads back as the same tag. */
+ * decodes verbatim tags, so each form reads back as the same tag. A lone
+ * "!" is the non-specific tag, whatever the handles. */
 static oyl_status emit_tag(oyl_emitter *e, oyl_str tag) {
     if (!tag.data || tag.len == 0) return OYL_OK;
-    static const char prefix[] = "tag:yaml.org,2002:";
-    static const size_t plen = sizeof(prefix) - 1;
-
     oyl_status st;
-    if (tag.len > plen && memcmp(tag.data, prefix, plen) == 0 &&
-        all_tag_chars(tag.data + plen, tag.len - plen)) {
-        st = PUTS(e, "!!");
+    size_t skip = 1;
+    const char *handle = tag.len == 1 && tag.data[0] == '!' ? "!" : tag_handle(e, tag, &skip);
+    if (handle) {
+        st = buf_puts(e, handle, strlen(handle));
         if (st != OYL_OK) return st;
-        st = buf_puts(e, tag.data + plen, tag.len - plen);
-    } else if (tag.data[0] == '!' && all_tag_chars(tag.data + 1, tag.len - 1)) {
-        st = buf_puts(e, tag.data, tag.len);
+        if (tag.len > skip) st = buf_puts(e, tag.data + skip, tag.len - skip);
     } else {
         st = PUTS(e, "!<");
-        for (size_t i = 0; i < tag.len && st == OYL_OK; i++) {
-            uint8_t c = (uint8_t)tag.data[i];
-            if (is_uri_char(c)) {
-                st = buf_put(e, (char)c);
-            } else {
-                char esc[4];
-                snprintf(esc, sizeof esc, "%%%02X", c);
-                st = buf_puts(e, esc, 3);
-            }
-        }
+        if (st != OYL_OK) return st;
+        st = emit_uri(e, tag.data, tag.len, false);
         if (st != OYL_OK) return st;
         st = buf_put(e, '>');
     }
@@ -973,10 +1025,79 @@ static bool node_ok(const oyl_emitter *e) {
     return e->stack_len > 0 || (e->doc_open && !e->root_done);
 }
 
+/* Is a directive allowed next: between documents */
+static bool directive_ok(const oyl_emitter *e) {
+    return e->stream_started && !e->stream_ended && !e->doc_open;
+}
+
+static oyl_status emit_yaml_directive(oyl_emitter *e, int major, int minor) {
+    if (!directive_ok(e) || e->has_version || major != 1 || minor < 0)
+        return emit_fail(e, OYL_ERR_EMIT);
+    e->has_version = true;
+    e->version_minor = minor;
+    return OYL_OK;
+}
+
+static int tag_directive_index(const oyl_emitter *e, oyl_str handle) {
+    for (int i = 0; i < e->n_tag_dirs; i++)
+        if (e->tag_dirs[i].hlen == handle.len && memcmp(e->tag_dirs[i].handle, handle.data, handle.len) == 0)
+            return i;
+    return -1;
+}
+
+static oyl_status emit_tag_directive(oyl_emitter *e, oyl_str handle, oyl_str prefix) {
+    /* as long as the parser reads: 15 bytes of handle, 255 of prefix */
+    size_t written = prefix.len;
+    for (size_t i = 0; prefix.data && i < prefix.len; i++)
+        if (prefix_escaped(prefix.data, i)) written += 2;
+    if (!directive_ok(e) || e->n_tag_dirs == 8 || !handle.data || !prefix.data ||
+        !oyl_tag_handle_ok(handle.data, handle.len) || handle.len >= 16 ||
+        prefix.len == 0 || written >= 256 || tag_directive_index(e, handle) >= 0)
+        return emit_fail(e, OYL_ERR_EMIT);
+    int i = e->n_tag_dirs++;
+    memcpy(e->tag_dirs[i].handle, handle.data, handle.len);
+    e->tag_dirs[i].hlen = (uint8_t)handle.len;
+    memcpy(e->tag_dirs[i].prefix, prefix.data, prefix.len);
+    e->tag_dirs[i].plen = (uint16_t)prefix.len;
+    return OYL_OK;
+}
+
+bool oyl_emitter_has_directive(const oyl_emitter *e, oyl_str handle) {
+    return handle.data ? tag_directive_index(e, handle) >= 0 : e->has_version;
+}
+
+/* The document's directives, before its "---": after a document that
+ * ended without "...", that first, as YAML has it */
+static oyl_status emit_directives(oyl_emitter *e) {
+    oyl_status st = OYL_OK;
+    if (e->open_ended) {
+        if (e->len > 0 && e->buf[e->len - 1] != '\n') st = buf_put(e, '\n');
+        if (st == OYL_OK) st = PUTS(e, "...\n");
+    }
+    if (st == OYL_OK && e->has_version) {
+        char line[32];
+        int n = snprintf(line, sizeof line, "%%YAML 1.%d\n", e->version_minor);
+        st = buf_puts(e, line, (size_t)n);
+    }
+    for (int i = 0; i < e->n_tag_dirs && st == OYL_OK; i++) {
+        st = PUTS(e, "%TAG ");
+        if (st == OYL_OK) st = buf_puts(e, e->tag_dirs[i].handle, e->tag_dirs[i].hlen);
+        if (st == OYL_OK) st = buf_put(e, ' ');
+        if (st == OYL_OK) st = emit_uri(e, e->tag_dirs[i].prefix, e->tag_dirs[i].plen, true);
+        if (st == OYL_OK) st = buf_put(e, '\n');
+    }
+    return st;
+}
+
 static oyl_status emit_document_start(oyl_emitter *e, bool implicit) {
     oyl_status st;
     if (!e->stream_started || e->stream_ended || e->doc_open)
         return emit_fail(e, OYL_ERR_EMIT);
+    if (e->has_version || e->n_tag_dirs) {
+        st = emit_directives(e);
+        if (st != OYL_OK) return st;
+        implicit = false;
+    }
     /* a document without "---" can only start the stream or follow "..." */
     if (e->open_ended) implicit = false;
     if (!implicit) {
@@ -1008,6 +1129,8 @@ static oyl_status emit_document_end(oyl_emitter *e, bool implicit) {
     }
     e->doc_open = false;
     e->open_ended = implicit;
+    e->has_version = false;
+    e->n_tag_dirs = 0;
     return OYL_OK;
 }
 
@@ -1201,7 +1324,8 @@ static oyl_status emit_stream_start(oyl_emitter *e) {
 }
 
 static oyl_status emit_stream_end(oyl_emitter *e) {
-    if (!e->stream_started || e->stream_ended || e->doc_open)
+    /* directives must have a document */
+    if (!e->stream_started || e->stream_ended || e->doc_open || e->has_version || e->n_tag_dirs)
         return emit_fail(e, OYL_ERR_EMIT);
     e->stream_ended = true;
     /* ensure trailing newline */
@@ -1276,6 +1400,14 @@ oyl_status oyl_emit_stream_start(oyl_emitter *e) {
 
 oyl_status oyl_emit_stream_end(oyl_emitter *e) {
     return emit_stream_end(e);
+}
+
+oyl_status oyl_emit_yaml_directive(oyl_emitter *e, int major, int minor) {
+    return emit_yaml_directive(e, major, minor);
+}
+
+oyl_status oyl_emit_tag_directive(oyl_emitter *e, oyl_str handle, oyl_str prefix) {
+    return emit_tag_directive(e, handle, prefix);
 }
 
 oyl_status oyl_emit_document_start(oyl_emitter *e, bool implicit) {

@@ -292,6 +292,53 @@ static void test_flow_empty_props(void) {
     check("!<> x", "ERR");         /* empty verbatim tag */
 }
 
+/* ── %TAG directives ───────────────────────────────────────── */
+
+/* A %TAG prefix is URI characters and %-escapes, decoded as tags are; a
+ * lone ! is the non-specific tag whatever the ! handle stands for */
+static void test_tag_directives(void) {
+    printf("test_tag_directives:\n");
+    check("%TAG ! tag:ex.com:\n--- [! a, !b c, !<!d> e]\n", "[ <!> a <tag:ex.com:b> c <!d> e ]");
+    check("%TAG !e! tag:ex%2Ccom:\n--- !e!x a\n", "<tag:ex,com:x> a");
+    check("%TAG !e! !my-\n--- !e!x a\n", "<!my-x> a");
+    check("%TAG !e! %21x\n--- !e!y a\n", "<!xy> a");
+    check("%TAG !e! tag:x#y\n--- !e!z a\n", "<tag:x#yz> a");
+    check("%TAG !e! a,[b]\n--- !e!x a\n", "<a,[b]x> a");
+    check("%TAG !e! ,foo\n--- a\n", "ERR");          /* a flow indicator first */
+    check("%TAG !e! [foo\n--- a\n", "ERR");
+    check("%TAG !e! foo{bar\n--- a\n", "ERR");       /* not URI characters */
+    check("%TAG !e! foo\"bar\n--- a\n", "ERR");
+    check("%TAG !e! foo<bar>\n--- a\n", "ERR");
+    check("%TAG !e! tag:\xc3\xa9:\n--- a\n", "ERR");
+    check("%TAG !e! %zz\n--- a\n", "ERR");           /* not an escape */
+    check("%TAG !e! a%2\n--- a\n", "ERR");
+
+    /* oyl_parser_tag_directive */
+    const char *y = "%TAG !e! tag:a%20b:\n%TAG ! !x-\n--- a\n...\n--- b\n";
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_parser *p = oyl_parser_new(y, strlen(y), a);
+    const oyl_event *e;
+    char got[256];
+    size_t n = 0;
+    while (oyl_parse_next(p, &e) == OYL_OK && e->type != OYL_EVT_STREAM_END) {
+        if (e->type != OYL_EVT_DOC_START) continue;
+        oyl_str h, pf;
+        for (int i = 0; oyl_parser_tag_directive(p, i, &h, &pf); i++)
+            n += (size_t)snprintf(got + n, sizeof got - n, "%.*s=%.*s ", (int)h.len, h.data,
+                                  (int)pf.len, pf.data);
+        n += (size_t)snprintf(got + n, sizeof got - n, "| ");
+    }
+    tests_run++;
+    if (strcmp(got, "!e!=tag:a b: !=!x- | | ") == 0) {
+        tests_passed++;
+    } else {
+        printf("  FAIL: oyl_parser_tag_directive: %s\n", got);
+        tests_failed++;
+    }
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+}
+
 /* ── JSON-style input ──────────────────────────────────────── */
 
 static void test_json(void) {
@@ -746,6 +793,7 @@ int main(void) {
     test_flow_keys();
     test_flow_keys_plain_quotes();
     test_flow_empty_props();
+    test_tag_directives();
     test_json();
     test_quoted_values();
     test_error_after_events();

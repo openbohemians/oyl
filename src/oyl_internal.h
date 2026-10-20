@@ -309,6 +309,52 @@ void oyl_scanner_set_syntax(oyl_scanner *s, unsigned syntax, oyl_warn_state *w);
  * checkpoint at a document start). */
 bool oyl_scanner_copy(oyl_scanner *dst, const oyl_scanner *src);
 
+/* ── Tags, for the parser and the emitter ────────────────── */
+
+/* A URI character (YAML's ns-uri-char, but for %-escapes) */
+static inline bool oyl_is_uri_char(uint8_t c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+           (c && strchr("-#;/?:@&=+$,_.!~*'()[]", c));
+}
+
+/* A %TAG handle: "!", "!!", or "!name!" of letters, digits and '-' */
+static inline bool oyl_tag_handle_ok(const char *s, size_t n) {
+    if (n == 0 || s[0] != '!' || s[n - 1] != '!') return false;
+    for (size_t i = 1; i + 1 < n; i++) {
+        char c = s[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              c == '-'))
+            return false;
+    }
+    return true;
+}
+
+/* A %TAG prefix as written: URI characters and %-escapes, not starting
+ * with a flow indicator */
+static inline bool oyl_tag_prefix_ok(const char *s, size_t n) {
+    if (n == 0 || s[0] == ',' || s[0] == '[' || s[0] == ']') return false;
+    for (size_t i = 0; i < n; i++) {
+        if (s[i] != '%') {
+            if (!oyl_is_uri_char((uint8_t)s[i])) return false;
+            continue;
+        }
+        if (n - i < 3) return false;
+        for (size_t j = i + 1; j <= i + 2; j++) {
+            char c = s[j];
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))
+                return false;
+        }
+        i += 2;
+    }
+    return true;
+}
+
+/* ── Emitter, for oyl_tree.c ─────────────────────────────── */
+
+/* Whether the next document's directives have the %TAG @p handle, or with
+ * a NULL handle a %YAML */
+bool oyl_emitter_has_directive(const oyl_emitter *e, oyl_str handle);
+
 /* ── Parser, for oyl_json.c and oyl_tree.c ──────────────────────────────── */
 
 /* Report an error found after parsing (a converter's), as parse errors
@@ -365,6 +411,10 @@ struct oyl_tree {
     const oyl_schema  *schema;
     oyl_merge_order    merge;
     bool               implicit_start, implicit_end;   /* no "---", no "..." */
+    bool               has_version;   /* the document's %YAML */
+    int                version_major, version_minor;
+    int                tag_dir_count; /* its %TAG directives, in the pool */
+    struct { uint32_t handle, prefix; uint16_t handle_len, prefix_len; } tag_dirs[8];
     oyl_dialect        own_dialect;   /* a copy of a dialect the parser owned */
     struct oyl_merges *merges;      /* the pairs of mappings that merge, worked out
                                        as the tree is built (oyl_tree.c); NULL: none */

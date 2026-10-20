@@ -119,6 +119,19 @@ static void count_warning(void *user, oyl_warning code, oyl_mark mark, const cha
     warnings_seen++;
 }
 
+/* Emit `evt`, read from `p`: a document's start with its directives */
+static oyl_status emit_event(oyl_emitter *em, oyl_parser *p, const oyl_event *evt) {
+    oyl_status st = OYL_OK;
+    if (evt->type == OYL_EVT_DOC_START) {
+        int major, minor;
+        oyl_str h, pf;
+        if (oyl_parser_yaml_version(p, &major, &minor)) st = oyl_emit_yaml_directive(em, major, minor);
+        for (int i = 0; st == OYL_OK && oyl_parser_tag_directive(p, i, &h, &pf); i++)
+            st = oyl_emit_tag_directive(em, h, pf);
+    }
+    return st == OYL_OK ? oyl_emit(em, evt) : st;
+}
+
 /* Parse `yaml` into a canonical string, optionally feeding an emitter.
  * Returns false if parsing fails. */
 static bool parse_canon(const char *yaml, size_t len, uint8_t flags, oyl_emitter *em,
@@ -146,7 +159,7 @@ static bool parse_canon(const char *yaml, size_t len, uint8_t flags, oyl_emitter
     while ((st = oyl_parse_next(p, &evt)) == OYL_OK) {
         if (evt->type == OYL_EVT_NONE) __builtin_trap(); /* no STREAM_END */
         if (++events > MAX_EVENTS) __builtin_trap(); /* limit bypassed */
-        if (em && oyl_emit(em, evt) != OYL_OK) __builtin_trap(); /* the parser's events didn't emit */
+        if (em && emit_event(em, p, evt) != OYL_OK) __builtin_trap(); /* the parser's events didn't emit */
         if (evt->type == OYL_EVT_SCALAR) check_values(evt);
         canon(evt, out, out_len, &cap);
         if (evt->type == OYL_EVT_STREAM_END) break;
@@ -278,7 +291,7 @@ static bool same_value(oyl_value a, oyl_value b) {
 static const oyl_event *next_event(oyl_parser *p, oyl_emitter *em, oyl_status *st) {
     const oyl_event *e;
     if (oyl_parse_next(p, &e) != OYL_OK) __builtin_trap();
-    oyl_status s = oyl_emit(em, e);
+    oyl_status s = emit_event(em, p, e);
     if (*st == OYL_OK) *st = s;
     return e;
 }
@@ -433,7 +446,7 @@ static void check_tree(const char *yaml, size_t len, bool dialect, oyl_emit_styl
             oyl_status se;
             do {
                 se = oyl_parse_next(pe, &e);
-                if (se == OYL_OK && est == OYL_OK) est = oyl_emit(ee, e);
+                if (se == OYL_OK && est == OYL_OK) est = emit_event(ee, pe, e);
             } while (se == OYL_OK && e->type == OYL_EVT_STREAM_START);
             oyl_tree *t = NULL;
             oyl_status st = oyl_parse_tree(pt, &t);

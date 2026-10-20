@@ -115,7 +115,9 @@ struct oyl_parser {
     /* tag directives: handle → prefix mapping */
     struct {
         char handle[16];  /* e.g., "!", "!!", "!e!" */
-        char prefix[256]; /* e.g., "tag:example.com,2000:app/" */
+        char prefix[256]; /* e.g., "tag:example.com,2000:app/", %-escapes decoded */
+        uint8_t  handle_len;
+        uint16_t prefix_len;
     } tag_directives[8];
     int tag_dir_count;
 
@@ -492,6 +494,8 @@ static size_t pct_decode(char *dst, const char *src, size_t len) {
  * returns OYL_STR_NULL. */
 static oyl_str expand_tag(oyl_parser *p, oyl_str raw) {
     if (raw.len < 1 || raw.data[0] != '!') return raw;
+    /* a lone "!" is the non-specific tag, whatever %TAG gives the ! handle */
+    if (raw.len == 1) return raw;
 
     /* verbatim tag: !<...> → strip !< and > */
     if (raw.len >= 3 && raw.data[1] == '<' && raw.data[raw.len - 1] == '>') {
@@ -520,10 +524,10 @@ static oyl_str expand_tag(oyl_parser *p, oyl_str raw) {
 
     /* look up the handle in tag directives */
     for (int i = 0; i < p->tag_dir_count; i++) {
-        size_t hlen = strlen(p->tag_directives[i].handle);
+        size_t hlen = p->tag_directives[i].handle_len;
         if (hlen == handle_len && memcmp(raw.data, p->tag_directives[i].handle, hlen) == 0) {
             const char *prefix = p->tag_directives[i].prefix;
-            size_t plen = strlen(prefix);
+            size_t plen = p->tag_directives[i].prefix_len;
             size_t suffix_len = raw.len - handle_len;
             size_t total = plen + suffix_len; /* max size before decoding */
             char *buf = oyl_arena_alloc(p->arena, total + 1, 1);
@@ -563,7 +567,7 @@ static bool tag_handle_declared(const oyl_parser *p, oyl_str raw) {
     }
     if (hlen == 0) return true; /* local tag: !suffix */
     for (int i = 0; i < p->tag_dir_count; i++) {
-        if (strlen(p->tag_directives[i].handle) == hlen &&
+        if (p->tag_directives[i].handle_len == hlen &&
             memcmp(p->tag_directives[i].handle, raw.data, hlen) == 0)
             return true;
     }
@@ -1978,25 +1982,23 @@ static oyl_status parse_directive(oyl_parser *p, bool *had_yaml) {
         if (directive_word(&cur, end, &extra, &lx))
             PARSE_ERROR(p, "unexpected text after %TAG prefix");
         /* handle: !, !!, or !word! */
-        bool ok = w1[0] == '!' && w1[l1 - 1] == '!';
-        for (size_t i = 1; ok && i + 1 < l1; i++) {
-            char c = w1[i];
-            ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
-                 (c >= 'A' && c <= 'Z') || c == '-';
-        }
-        if (!ok) PARSE_ERROR(p, "invalid %TAG handle");
+        if (!oyl_tag_handle_ok(w1, l1)) PARSE_ERROR(p, "invalid %TAG handle");
+        /* prefix: URI characters and %-escapes, kept decoded as in tags */
+        if (!oyl_tag_prefix_ok(w2, l2)) PARSE_ERROR(p, "invalid %TAG prefix");
         if (l1 >= 16 || l2 >= 256) PARSE_ERROR(p, "%TAG handle or prefix too long");
 
         /* the spec: one %TAG per handle in a document, even with the same prefix */
         for (int i = 0; i < p->tag_dir_count; i++)
-            if (strlen(p->tag_directives[i].handle) == l1 && memcmp(p->tag_directives[i].handle, w1, l1) == 0)
+            if (p->tag_directives[i].handle_len == l1 && memcmp(p->tag_directives[i].handle, w1, l1) == 0)
                 PARSE_ERROR(p, "duplicate %TAG directive");
         if (p->tag_dir_count >= 8) PARSE_ERROR(p, "too many %TAG directives");
         int idx = p->tag_dir_count++;
         memcpy(p->tag_directives[idx].handle, w1, l1);
         p->tag_directives[idx].handle[l1] = '\0';
-        memcpy(p->tag_directives[idx].prefix, w2, l2);
-        p->tag_directives[idx].prefix[l2] = '\0';
+        p->tag_directives[idx].handle_len = (uint8_t)l1;
+        size_t plen = pct_decode(p->tag_directives[idx].prefix, w2, l2);
+        p->tag_directives[idx].prefix[plen] = '\0';
+        p->tag_directives[idx].prefix_len = (uint16_t)plen;
         return OYL_OK;
     }
 
@@ -2061,10 +2063,13 @@ static oyl_status select_dialect(oyl_parser *p) {
     for (int i = 0; i < p->tag_dir_count && !d; i++) {
         if (strcmp(p->tag_directives[i].handle, "!!") != 0) continue;
         const char *prefix = p->tag_directives[i].prefix;
+        size_t plen = p->tag_directives[i].prefix_len;
         for (int j = 0; j < p->n_dialect_prefixes && !d; j++)
-            if (strcmp(p->dialect_prefixes[j].prefix, prefix) == 0) d = p->dialect_prefixes[j].d;
+            if (strlen(p->dialect_prefixes[j].prefix) == plen &&
+                memcmp(p->dialect_prefixes[j].prefix, prefix, plen) == 0)
+                d = p->dialect_prefixes[j].d;
         if (d) registered = true;
-        else if (strcmp(prefix, "tag:yaml.org,2002:") != 0) {
+        else if (plen != 18 || memcmp(prefix, "tag:yaml.org,2002:", 18) != 0) {
             snprintf(msg, sizeof msg, "no dialect registered for %%TAG !! %s: untagged values "
                      "keep the standard types", prefix);
             oyl_warn(&p->warn, OYL_WARN_DIALECT, p->current.start, msg);
@@ -5137,6 +5142,13 @@ bool oyl_parser_yaml_version(oyl_parser *p, int *major, int *minor) {
     if (!p || !p->doc_has_version) return false;
     if (major) *major = p->doc_major;
     if (minor) *minor = p->doc_minor;
+    return true;
+}
+
+bool oyl_parser_tag_directive(oyl_parser *p, int i, oyl_str *handle, oyl_str *prefix) {
+    if (!p || i < 0 || i >= p->tag_dir_count) return false;
+    if (handle) *handle = (oyl_str){ p->tag_directives[i].handle, p->tag_directives[i].handle_len };
+    if (prefix) *prefix = (oyl_str){ p->tag_directives[i].prefix, p->tag_directives[i].prefix_len };
     return true;
 }
 

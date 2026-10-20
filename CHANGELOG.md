@@ -31,6 +31,18 @@
   events would (checked on the suite in every style, and by the fuzzer).
   From a parser with a schema, whose events tag every node, the tree
   writes only the tags in the input.
+- Documents keep their directives through the emitter. Before, a
+  document's `%YAML` and `%TAG` lines were lost, so `%YAML 1.1` with `a:
+  yes` came back as YAML 1.2, where `yes` is text. `oyl_emit_yaml_directive`
+  and `oyl_emit_tag_directive` write them for the next document (with
+  `---`, and `...` ending the one before), and its tags are written with
+  its handles (`!e!foo`), with `!` and `!!` only as it defines them.
+  `oyl_parser_tag_directive` gives a document's `%TAG` lines, as
+  `oyl_parser_yaml_version` gives its `%YAML`, to re-emit them; trees keep
+  both (`oyl_tree_yaml_version`, `oyl_tree_tag_directive`) and
+  `oyl_emit_tree` writes them. The emitter writes no `%YAML` of its own:
+  YAML 1.2 readers take a document without one as 1.2, and go-yaml v2
+  and v3 reject any but `%YAML 1.1`.
 
 ### Changed
 
@@ -132,6 +144,13 @@
   mapping's keys and explicit `?` keys are unlimited). It counts
   characters, the key's anchor and tag and the blanks before its `:`
   included.
+- A `%TAG` prefix must be URI characters and %-escapes, not starting
+  with a flow indicator, as YAML has it; anything was accepted. Its
+  escapes are decoded, as libyaml does and as Oyl already did in a tag's
+  suffix and in verbatim tags: `%TAG !e! tag:a%2Cb:` makes `!e!x`
+  `tag:a,b:x` (it was `tag:a%2Cb:x`).
+- A lone `!` is the non-specific tag even when `%TAG` gives the `!`
+  handle a prefix; it was read as that prefix.
 - The parser running out of memory while expanding a tag gave the tag as
   written (`!!str`) and succeeded; it gives `OYL_ERR_MEMORY`. Out of memory
   saving its first restart point (for a flow collection as a key, `[a]:

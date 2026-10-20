@@ -935,6 +935,269 @@ static void test_invalid_events(void) {
     oyl_arena_free(a);
 }
 
+/* Each document's directives and the tags of its nodes, read back:
+ * "%YAML 1.1 %TAG !e! tag:x: D <tag:x:y> D" */
+static bool read_back_tags(oyl_str out, char *buf, size_t cap) {
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_parser *p = oyl_parser_new(out.data ? out.data : "", out.len, a);
+    const oyl_event *e;
+    oyl_status st;
+    size_t n = 0;
+    buf[0] = '\0';
+    while ((st = oyl_parse_next(p, &e)) == OYL_OK && e->type != OYL_EVT_STREAM_END && n < cap) {
+        if (e->type == OYL_EVT_DOC_START) {
+            int major, minor;
+            oyl_str h, pf;
+            if (oyl_parser_yaml_version(p, &major, &minor))
+                n += (size_t)snprintf(buf + n, cap - n, "%%YAML %d.%d ", major, minor);
+            for (int i = 0; n < cap && oyl_parser_tag_directive(p, i, &h, &pf); i++)
+                n += (size_t)snprintf(buf + n, cap - n, "%%TAG %.*s %.*s ", (int)h.len, h.data,
+                                      (int)pf.len, pf.data);
+            if (n < cap) n += (size_t)snprintf(buf + n, cap - n, "D ");
+        } else if (e->tag.len) {
+            n += (size_t)snprintf(buf + n, cap - n, "<%.*s> ", (int)e->tag.len, e->tag.data);
+        }
+    }
+    if (n && n <= cap) buf[n - 1] = '\0';
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+    return st == OYL_OK && n < cap;
+}
+
+static bool output_is(oyl_emitter *e, const char *want) {
+    oyl_str out = oyl_emitter_output(e);
+    if (str_eq(out, want)) return true;
+    printf("    got: \"%.*s\"\n", (int)out.len, out.data ? out.data : "");
+    return false;
+}
+
+static void tagged(oyl_emitter *e, const char *tag) {
+    oyl_emit_scalar(e, S("v"), OYL_SCALAR_PLAIN, N, (oyl_str){ tag, strlen(tag) });
+}
+
+/* %YAML and %TAG directives: written before "---", with "..." ending the
+ * document before; tags written with the document's handles; trees keep
+ * theirs */
+static void test_directives(void) {
+    printf("test_directives:\n");
+    oyl_arena *a = oyl_arena_new(4096);
+    char got[512];
+    oyl_emitter *e = oyl_emitter_new(a);
+    oyl_emit_stream_start(e);
+    ASSERT(oyl_emit_yaml_directive(e, 1, 2) == OYL_OK, "%YAML before the first document");
+    oyl_emit_document_start(e, true);
+    scalar(e, S("a"));
+    oyl_emit_document_end(e, true);
+    oyl_emit_yaml_directive(e, 1, 1);
+    oyl_emit_document_start(e, true);
+    scalar(e, S("b"));
+    oyl_emit_document_end(e, false);
+    oyl_emit_tag_directive(e, S("!e!"), S("tag:example.com,2000:"));
+    oyl_emit_document_start(e, false);
+    scalar(e, S("c"));
+    oyl_emit_document_end(e, true);
+    oyl_emit_document_start(e, true);
+    scalar(e, S("d"));
+    oyl_emit_document_end(e, true);
+    ASSERT(oyl_emit_stream_end(e) == OYL_OK, "four documents, three with directives");
+    ASSERT(output_is(e, "%YAML 1.2\n---\na\n...\n%YAML 1.1\n---\nb\n...\n"
+                        "%TAG !e! tag:example.com,2000:\n---\nc\n---\nd\n"),
+           "\"...\" before a directive, only where the document before has none");
+    ASSERT(read_back_tags(oyl_emitter_output(e), got, sizeof got) &&
+           strcmp(got, "%YAML 1.2 D %YAML 1.1 D %TAG !e! tag:example.com,2000: D D") == 0,
+           "the directives read back, each for its document");
+    oyl_emitter_free(e);
+
+    /* tags with the document's handles: the longest prefix; !! and ! as ever */
+    e = oyl_emitter_new(a);
+    oyl_emit_stream_start(e);
+    oyl_emit_tag_directive(e, S("!e!"), S("tag:example.com,2000:app/"));
+    oyl_emit_tag_directive(e, S("!f!"), S("tag:example.com,2000:"));
+    oyl_emit_document_start(e, true);
+    oyl_emit_sequence_start(e, N, N, false);
+    tagged(e, "tag:example.com,2000:app/foo");
+    tagged(e, "tag:example.com,2000:bar");
+    tagged(e, "tag:example.com,2000:app/");
+    tagged(e, "tag:yaml.org,2002:str");
+    tagged(e, "!loc");
+    tagged(e, "!");
+    oyl_emit_sequence_end(e);
+    oyl_emit_document_end(e, true);
+    oyl_emit_document_start(e, true);
+    tagged(e, "tag:example.com,2000:app/foo");
+    oyl_emit_document_end(e, true);
+    ASSERT(oyl_emit_stream_end(e) == OYL_OK, "named handles");
+    ASSERT(output_is(e, "%TAG !e! tag:example.com,2000:app/\n%TAG !f! tag:example.com,2000:\n"
+                        "---\n- !e!foo v\n- !f!bar v\n- !f!app/ v\n- !!str v\n- !loc v\n- ! v\n"
+                        "---\n!<tag:example.com,2000:app/foo> v\n"),
+           "written with them, in their document only");
+    ASSERT(read_back_tags(oyl_emitter_output(e), got, sizeof got) &&
+           strcmp(got, "%TAG !e! tag:example.com,2000:app/ %TAG !f! tag:example.com,2000: D "
+                       "<tag:example.com,2000:app/foo> <tag:example.com,2000:bar> "
+                       "<tag:example.com,2000:app/> <tag:yaml.org,2002:str> <!loc> <!> "
+                       "D <tag:example.com,2000:app/foo>") == 0, "and read back the same");
+    oyl_emitter_free(e);
+
+    /* ! and !! given other prefixes: the tags they stood for go verbatim */
+    e = oyl_emitter_new(a);
+    oyl_emit_stream_start(e);
+    oyl_emit_tag_directive(e, S("!!"), S("tag:example.com,2000:"));
+    oyl_emit_tag_directive(e, S("!"), S("tag:ex.com:"));
+    oyl_emit_document_start(e, true);
+    oyl_emit_sequence_start(e, N, N, true);
+    tagged(e, "tag:example.com,2000:x");
+    tagged(e, "tag:yaml.org,2002:int");
+    tagged(e, "tag:ex.com:y");
+    tagged(e, "!loc");
+    tagged(e, "!");
+    oyl_emit_sequence_end(e);
+    oyl_emit_document_end(e, true);
+    ASSERT(oyl_emit_stream_end(e) == OYL_OK, "! and !! redefined");
+    ASSERT(output_is(e, "%TAG !! tag:example.com,2000:\n%TAG ! tag:ex.com:\n"
+                        "---\n[!!x v, !<tag:yaml.org,2002:int> v, !y v, !<!loc> v, ! v]\n"),
+           "standard and local tags verbatim, ! alone non-specific");
+    ASSERT(read_back_tags(oyl_emitter_output(e), got, sizeof got) &&
+           strcmp(got, "%TAG !! tag:example.com,2000: %TAG ! tag:ex.com: D <tag:example.com,2000:x> "
+                       "<tag:yaml.org,2002:int> <tag:ex.com:y> <!loc> <!>") == 0,
+           "and read back the same");
+    oyl_emitter_free(e);
+
+    /* prefixes written with %-escapes where YAML needs them */
+    e = oyl_emitter_new(a);
+    oyl_emit_stream_start(e);
+    oyl_emit_tag_directive(e, S("!s!"), S("tag:ex com:"));
+    oyl_emit_tag_directive(e, S("!b!"), S("[x,"));
+    oyl_emit_tag_directive(e, S("!p!"), S("a%b"));
+    oyl_emit_document_start(e, true);
+    oyl_emit_sequence_start(e, N, N, false);
+    tagged(e, "tag:ex com:z");
+    tagged(e, "[x,y");
+    tagged(e, "a%bq");
+    oyl_emit_sequence_end(e);
+    oyl_emit_document_end(e, true);
+    ASSERT(oyl_emit_stream_end(e) == OYL_OK, "prefixes to escape");
+    ASSERT(output_is(e, "%TAG !s! tag:ex%20com:\n%TAG !b! %5Bx,\n%TAG !p! a%25b\n"
+                        "---\n- !s!z v\n- !b!y v\n- !p!q v\n"), "escaped");
+    ASSERT(read_back_tags(oyl_emitter_output(e), got, sizeof got) &&
+           strcmp(got, "%TAG !s! tag:ex com: %TAG !b! [x, %TAG !p! a%b D <tag:ex com:z> <[x,y> "
+                       "<a%bq>") == 0, "and read back decoded");
+    oyl_emitter_free(e);
+
+    /* trees keep their directives; ones given before take their place */
+    const char *doc = "%YAML 1.1\n%TAG !e! tag:ex.com:\n--- !e!x a\n";
+    oyl_parser *p = oyl_parser_new(doc, strlen(doc), a);
+    oyl_tree *t = NULL;
+    int major = 0, minor = 0;
+    oyl_str h = N, pf = N;
+    ASSERT(oyl_parse_tree(p, &t) == OYL_OK && t, "a tree with directives");
+    ASSERT(oyl_tree_yaml_version(t, &major, &minor) && major == 1 && minor == 1, "its %YAML");
+    ASSERT(oyl_tree_tag_directive(t, 0, &h, &pf) && str_eq(h, "!e!") && str_eq(pf, "tag:ex.com:") &&
+           !oyl_tree_tag_directive(t, 1, &h, &pf), "its %TAG");
+    e = oyl_emitter_new(a);
+    oyl_emit_stream_start(e);
+    oyl_emit_document_start(e, true);
+    scalar(e, S("first"));
+    oyl_emit_document_end(e, true);
+    oyl_emit_tree(e, t);
+    oyl_emit_tag_directive(e, S("!e!"), S("tag:other:"));
+    oyl_emit_tree(e, t);
+    ASSERT(oyl_emit_stream_end(e) == OYL_OK, "trees emitted");
+    ASSERT(output_is(e, "first\n...\n%YAML 1.1\n%TAG !e! tag:ex.com:\n---\n!e!x a\n"
+                        "...\n%YAML 1.1\n%TAG !e! tag:other:\n---\n!<tag:ex.com:x> a\n"),
+           "with their directives, or those given");
+    oyl_emitter_free(e);
+    oyl_tree_free(t);
+    oyl_parser_free(p);
+    p = oyl_parser_new("a\n", 2, a);
+    ASSERT(oyl_parse_tree(p, &t) == OYL_OK && t && !oyl_tree_yaml_version(t, NULL, NULL) &&
+           !oyl_tree_tag_directive(t, 0, NULL, NULL), "a tree without");
+    oyl_tree_free(t);
+    oyl_parser_free(p);
+
+    /* directives where YAML or Oyl's parser can't take them */
+    e = oyl_emitter_new(a);
+    ASSERT(oyl_emit_yaml_directive(e, 1, 2) == OYL_ERR_EMIT, "before the stream");
+    oyl_emitter_free(e);
+#define FRESH(doc) do { e = oyl_emitter_new(a); oyl_emit_stream_start(e); \
+                        if (doc) oyl_emit_document_start(e, true); } while (0)
+    FRESH(true);
+    ASSERT(oyl_emit_yaml_directive(e, 1, 2) == OYL_ERR_EMIT, "%YAML in a document");
+    oyl_emitter_free(e);
+    FRESH(true);
+    ASSERT(oyl_emit_tag_directive(e, S("!e!"), S("x:")) == OYL_ERR_EMIT, "%TAG in a document");
+    oyl_emitter_free(e);
+    FRESH(false);
+    oyl_emit_yaml_directive(e, 1, 2);
+    ASSERT(oyl_emit_yaml_directive(e, 1, 2) == OYL_ERR_EMIT, "two %YAML");
+    ASSERT(oyl_emit_document_start(e, true) == OYL_ERR_EMIT, "the error is final");
+    oyl_emitter_free(e);
+    FRESH(false);
+    ASSERT(oyl_emit_yaml_directive(e, 2, 0) == OYL_ERR_EMIT, "%YAML 2.0");
+    oyl_emitter_free(e);
+    FRESH(false);
+    ASSERT(oyl_emit_yaml_directive(e, 1, -1) == OYL_ERR_EMIT, "%YAML 1.-1");
+    oyl_emitter_free(e);
+    FRESH(false);
+    oyl_emit_tag_directive(e, S("!e!"), S("x:"));
+    ASSERT(oyl_emit_tag_directive(e, S("!e!"), S("x:")) == OYL_ERR_EMIT, "a handle twice");
+    oyl_emitter_free(e);
+    FRESH(false);
+    oyl_emit_yaml_directive(e, 1, 2);
+    ASSERT(oyl_emit_stream_end(e) == OYL_ERR_EMIT, "%YAML without a document");
+    oyl_emitter_free(e);
+    FRESH(false);
+    oyl_emit_tag_directive(e, S("!e!"), S("x:"));
+    ASSERT(oyl_emit_stream_end(e) == OYL_ERR_EMIT, "%TAG without a document");
+    oyl_emitter_free(e);
+    static const char *bad_handles[] = { "", "e", "!e", "e!", "!e_!", "!e!x", "!!!", "!e.f!",
+                                         "!aaaaaaaaaaaaaa!" };
+    for (size_t i = 0; i < sizeof bad_handles / sizeof *bad_handles; i++) {
+        FRESH(false);
+        ASSERT(oyl_emit_tag_directive(e, (oyl_str){ bad_handles[i], strlen(bad_handles[i]) },
+                                      S("x:")) == OYL_ERR_EMIT, "a bad handle");
+        oyl_emitter_free(e);
+    }
+    FRESH(false);
+    ASSERT(oyl_emit_tag_directive(e, N, S("x:")) == OYL_ERR_EMIT, "no handle");
+    oyl_emitter_free(e);
+    FRESH(false);
+    ASSERT(oyl_emit_tag_directive(e, S("!e!"), S("")) == OYL_ERR_EMIT, "an empty prefix");
+    oyl_emitter_free(e);
+    FRESH(false);
+    ASSERT(oyl_emit_tag_directive(e, S("!e!"), N) == OYL_ERR_EMIT, "no prefix");
+    oyl_emitter_free(e);
+    char long_prefix[300];
+    memset(long_prefix, 'p', sizeof long_prefix);
+    FRESH(false);
+    ASSERT(oyl_emit_tag_directive(e, S("!aaaaaaaaaaaaa!"), (oyl_str){ long_prefix, 255 }) == OYL_OK,
+           "a handle of 15 bytes, a prefix of 255");
+    oyl_emit_document_start(e, true);
+    scalar(e, S("v"));
+    oyl_emit_document_end(e, true);
+    ASSERT(oyl_emit_stream_end(e) == OYL_OK && read_back_tags(oyl_emitter_output(e), got, sizeof got),
+           "read back");
+    oyl_emitter_free(e);
+    FRESH(false);
+    ASSERT(oyl_emit_tag_directive(e, S("!e!"), (oyl_str){ long_prefix, 256 }) == OYL_ERR_EMIT,
+           "a prefix of 256");
+    oyl_emitter_free(e);
+    memset(long_prefix, ' ', 90);
+    FRESH(false);
+    ASSERT(oyl_emit_tag_directive(e, S("!e!"), (oyl_str){ long_prefix, 90 }) == OYL_ERR_EMIT,
+           "one of 270 escaped");
+    oyl_emitter_free(e);
+    FRESH(false);
+    char handle[4] = "!a!";
+    bool ok = true;
+    for (int i = 0; i < 8; i++, handle[1]++)
+        ok = ok && oyl_emit_tag_directive(e, (oyl_str){ handle, 3 }, S("x:")) == OYL_OK;
+    ASSERT(ok && oyl_emit_tag_directive(e, (oyl_str){ handle, 3 }, S("x:")) == OYL_ERR_EMIT,
+           "8 %TAG, not 9");
+    oyl_emitter_free(e);
+#undef FRESH
+    oyl_arena_free(a);
+}
+
 #undef S
 #undef N
 
@@ -992,6 +1255,7 @@ int main(void) {
     test_long_keys();
     test_flow_indicator_starts();
     test_invalid_events();
+    test_directives();
 
     printf("\n--- Emitter tests: %d / %d passed ---\n", tests_passed, tests_run);
     if (tests_failed > 0) printf("    %d FAILED\n", tests_failed);

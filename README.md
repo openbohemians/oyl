@@ -221,6 +221,16 @@ stay a string. Characters YAML doesn't allow unescaped (control characters,
 C1 controls, U+FEFF, U+FFFE, U+FFFF), and NEL, U+2028 and U+2029, which
 YAML 1.1 readers take as line breaks, are escaped in double quotes.
 
+The emitter writes YAML 1.2, and no `%YAML` line unless given one: a
+document without one is YAML 1.2 to a YAML 1.2 reader, and go-yaml v2 and
+v3 reject any but `%YAML 1.1`. A document's own directives aren't among
+its events, so they're given separately: `oyl_emit_yaml_directive` and
+`oyl_emit_tag_directive` before its start, with what
+`oyl_parser_yaml_version` and `oyl_parser_tag_directive` give for a parsed
+one (see [docs/api](docs/api/index.md#emitter)). `oyl_emit_tree` writes a
+tree's own. A `%YAML 1.1` document re-emitted with its directive reads
+back by YAML 1.1's rules, as it was read.
+
 ## Merge Keys
 
 Enable merge key expansion (`<<`) to inherit keys from anchored mappings:

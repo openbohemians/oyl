@@ -230,10 +230,42 @@ Events must arrive in the order the parser produces them:
 arguments may be `OYL_STR_NULL`; tags are full tags (`tag:yaml.org,2002:str`,
 written as `!!str`) or local tags (`!foo`).
 
+A document's `%YAML` and `%TAG` directives aren't among its events. Give
+them with `oyl_emit_yaml_directive` and `oyl_emit_tag_directive` before
+its `oyl_emit_document_start`: the document then starts with `---`, and
+the one before it ends with `...`. Its tags are written with its handles
+where they fit (`!e!foo` under `%TAG !e! tag:example.com,2000:`), and with
+`!` and `!!` only as its directives define them, otherwise verbatim
+(`!<tag:yaml.org,2002:int>` under `%TAG !! tag:example.com,2000:`). To
+re-emit a parsed document with its directives, pass what
+`oyl_parser_yaml_version` and `oyl_parser_tag_directive` give at its
+`DOC_START`:
+
+```c
+if (evt->type == OYL_EVT_DOC_START) {
+    int major, minor;
+    oyl_str handle, prefix;
+    if (oyl_parser_yaml_version(p, &major, &minor))
+        oyl_emit_yaml_directive(e, major, minor);
+    for (int i = 0; oyl_parser_tag_directive(p, i, &handle, &prefix); i++)
+        oyl_emit_tag_directive(e, handle, prefix);
+}
+oyl_emit(e, evt);
+```
+
+The emitter writes YAML 1.2, and writes no `%YAML` unless given one. A
+document without it is YAML 1.2 to a YAML 1.2 reader; `%YAML 1.1` makes
+Oyl read it by YAML 1.1's rules (see [Dialects](#dialects)). Other
+readers differ: go-yaml v2 and v3 reject a `%YAML` other than 1.1, and
+libyaml (PyYAML) reads YAML 1.1 whatever it says.
+
 Events in another order (two roots, a mapping ended after a key, an end
-that doesn't match its start), and anchor or alias names YAML can't hold
-(empty, or with blanks, flow indicators or control characters), are
-`OYL_ERR_EMIT`. An error is final: every later call returns it, and the
+that doesn't match its start, a directive inside a document or with no
+document after it), anchor or alias names YAML can't hold (empty, or with
+blanks, flow indicators or control characters), and directives YAML or
+Oyl's parser can't take (`%YAML` not 1.x or given twice, a `%TAG` handle
+given twice or not `!`, `!!` or `!name!`, more than 8, a handle of 16
+bytes or a prefix written in 256 or more) are `OYL_ERR_EMIT`. An error is final: every later call returns it, and the
 output so far may be incomplete.
 
 What the emitter writes reads back as the events it was given:
@@ -269,6 +301,8 @@ What the emitter writes reads back as the events it was given:
 | `void oyl_emitter_set_indent(e, n)` | Set spaces per indent level (1-10). |
 | `oyl_status oyl_emit(e, evt)` | Re-emit an event from `oyl_parse_next`. |
 | `oyl_emit_stream_start(e)` / `oyl_emit_stream_end(e)` | Stream boundaries. |
+| `oyl_emit_yaml_directive(e, major, minor)` | `%YAML` for the next document. |
+| `oyl_emit_tag_directive(e, handle, prefix)` | `%TAG` for the next document; its tags are written with the handle. |
 | `oyl_emit_document_start(e, implicit)` / `oyl_emit_document_end(e, implicit)` | Document boundaries; `implicit` omits `---` / `...` (`---` where YAML allows). |
 | `oyl_emit_scalar(e, value, style, anchor, tag)` | Scalar. Plain values are quoted only when needed to read back the same. |
 | `oyl_emit_alias(e, name)` | Alias (`*name`). |
@@ -448,6 +482,7 @@ schema set), events are tagged by the document's dialect.
 | `oyl_parser_add_dialect(p, d, version, prefix)` | Let documents choose `d` by `%YAML` or `%TAG !!`. |
 | `oyl_parser_document_dialect(p)` | The dialect of the document an `OYL_EVT_DOC_START` begins (ask then). |
 | `oyl_parser_yaml_version(p, &major, &minor)` | Likewise its `%YAML` version. |
+| `oyl_parser_tag_directive(p, i, &handle, &prefix)` | Likewise its `%TAG` directive `i` (from 0), the prefix with %-escapes decoded. |
 | `oyl_parser_set_warn(p, fn, user)` | Receive warnings. |
 
 | Syntax flag | Effect |
@@ -555,6 +590,8 @@ input, except text in the pool (`oyl_tree_pool`): what the parser rewrote
 | `oyl_tree_pool(t)` | the pool |
 | `oyl_tree_base(t)` | where the document starts in the input |
 | `oyl_tree_dialect(t)` | the document's dialect, which typed its scalars |
+| `oyl_tree_yaml_version(t, &major, &minor)` | the document's `%YAML` version, if it has one |
+| `oyl_tree_tag_directive(t, i, &handle, &prefix)` | its `%TAG` directive `i` (from 0), as the parser gives it |
 | `oyl_node_text(t, i)` | a scalar's text, or an alias's anchor name |
 | `oyl_node_tag(t, i)` | the tag written, else the one the dialect resolves |
 | `oyl_node_anchor(t, i)` | the anchor name, or empty |
@@ -617,8 +654,10 @@ oyl_emit_stream_end(e);
 ```
 
 It writes what emitting the document's events writes: the same styles,
-anchors, aliases and `<<` keys, and `---` and `...` where the document
-had them. The one difference is a parser with a schema
+anchors, aliases and `<<` keys, its `%YAML` and `%TAG` directives, and
+`---` and `...` where the document had them. Directives given for it
+first (`oyl_emit_yaml_directive`, `oyl_emit_tag_directive`) take the
+place of its own. The one difference is a parser with a schema
 (`oyl_parser_set_schema`): its events tag every node, marking the tags
 the schema gave `implicit`, and the tree keeps only the tags written, so
 `a: 1` comes out as `a: 1`, not `a: !!int 1`.

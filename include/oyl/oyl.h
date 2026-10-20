@@ -619,6 +619,14 @@ OYL_API const oyl_dialect *oyl_parser_document_dialect(oyl_parser *p);
 /** Likewise the document's %YAML version; false if it has none. */
 OYL_API bool oyl_parser_yaml_version(oyl_parser *p, int *major, int *minor);
 
+/** Likewise the document's %TAG directive @p i (from 0): its handle
+ *  ("!e!") and its prefix, %-escapes decoded as in tags; false past the
+ *  last. The strings are the parser's: use them before reading on. To
+ *  re-emit a document, pass these and its %YAML version to
+ *  oyl_emit_tag_directive() and oyl_emit_yaml_directive() before its
+ *  DOC_START. */
+OYL_API bool oyl_parser_tag_directive(oyl_parser *p, int i, oyl_str *handle, oyl_str *prefix);
+
 /** What a warning is about. Codes may be added at the end. */
 typedef enum {
     OYL_WARN_YAML_VERSION = 1,  /**< a %YAML 1.x version other than 1.1 or 1.2 */
@@ -781,6 +789,13 @@ OYL_API size_t oyl_tree_base(const oyl_tree *t);
 /** The document's dialect, which typed its scalars. */
 OYL_API const oyl_dialect *oyl_tree_dialect(const oyl_tree *t);
 
+/** The document's %YAML version; false if it has none. */
+OYL_API bool oyl_tree_yaml_version(const oyl_tree *t, int *major, int *minor);
+
+/** The document's %TAG directive @p i (from 0), as
+ *  oyl_parser_tag_directive() gives it; false past the last. */
+OYL_API bool oyl_tree_tag_directive(const oyl_tree *t, int i, oyl_str *handle, oyl_str *prefix);
+
 /** A scalar's text, or an alias's anchor name (empty for a collection). */
 OYL_API oyl_str oyl_node_text(const oyl_tree *t, uint32_t i);
 
@@ -868,7 +883,8 @@ OYL_API void         oyl_emitter_set_indent(oyl_emitter *e, int indent);
 /* Events are fed in the same well-formed order the parser produces:
  * STREAM_START (DOC_START node DOC_END)* STREAM_END. Anchor and tag
  * arguments may be OYL_STR_NULL. Tags are full tags (e.g.
- * "tag:yaml.org,2002:str", written as !!str) or local tags ("!foo").
+ * "tag:yaml.org,2002:str", written as !!str) or local tags ("!foo"),
+ * written with the document's %TAG handles where they fit.
  * Events in another order (two roots, a mapping ended after a key, an end
  * that doesn't match its start), and anchor or alias names YAML can't
  * hold (empty, or with blanks, flow indicators or control characters),
@@ -878,15 +894,37 @@ OYL_API void         oyl_emitter_set_indent(oyl_emitter *e, int indent);
  * is written explicit ("? key"). */
 
 /** Re-emit an event obtained from oyl_parse_next() (e.g. to reformat a
- *  document). To build output yourself, use the functions below. */
+ *  document). A document's directives aren't among its events: see
+ *  oyl_parser_tag_directive(). To build output yourself, use the
+ *  functions below. */
 OYL_API oyl_status   oyl_emit(oyl_emitter *e, const oyl_event *evt);
 
 OYL_API oyl_status   oyl_emit_stream_start(oyl_emitter *e);
 OYL_API oyl_status   oyl_emit_stream_end(oyl_emitter *e);
 
+/** Write a %YAML directive for the next document: @p major must be 1. A
+ *  document without one is YAML 1.2 to a YAML 1.2 reader; one with it
+ *  chooses that version's dialect in Oyl (see Dialects), but go-yaml v2
+ *  and v3 reject a %YAML other than 1.1, and libyaml reads YAML 1.1
+ *  whatever it says. Call it, and oyl_emit_tag_directive(), between
+ *  documents, before oyl_emit_document_start(): a document with
+ *  directives starts with "---", and the one before it ends with "...".
+ *  One %YAML per document; a directive and no document after it, or
+ *  given inside one, is OYL_ERR_EMIT. */
+OYL_API oyl_status   oyl_emit_yaml_directive(oyl_emitter *e, int major, int minor);
+
+/** Write a %TAG directive for the next document: @p handle is "!", "!!"
+ *  or "!name!" (letters, digits, '-'), @p prefix the tags it stands for,
+ *  written with %-escapes where YAML needs them. The document's tags are
+ *  written with its handles where they fit, and with "!" and "!!" only as
+ *  its directives define them (otherwise verbatim, "!<...>"). One per
+ *  handle, at most 8 per document, as long as the parser reads (handle
+ *  under 16 bytes, prefix as written under 256); otherwise OYL_ERR_EMIT. */
+OYL_API oyl_status   oyl_emit_tag_directive(oyl_emitter *e, oyl_str handle, oyl_str prefix);
+
 /** Start a document; @p implicit omits the "---" marker where YAML
- *  allows: not after a document that ended without "...", and not for an
- *  empty one. */
+ *  allows: not after a document that ended without "...", not for an
+ *  empty one, and not with directives. */
 OYL_API oyl_status   oyl_emit_document_start(oyl_emitter *e, bool implicit);
 
 /** End a document; @p implicit omits the "..." marker. */
@@ -917,11 +955,13 @@ OYL_API oyl_status   oyl_emit_sequence_start(oyl_emitter *e, oyl_str anchor,
                                              oyl_str tag, bool flow);
 OYL_API oyl_status   oyl_emit_sequence_end(oyl_emitter *e);
 
-/** Emit a tree as one document, with "---" and "..." where they were
- *  written; call it between oyl_emit_stream_start() and
- *  oyl_emit_stream_end(). The output is what the document's events give,
- *  but for a parser with a schema (oyl_parser_set_schema()): its events
- *  tag every node, and the tree keeps only the tags written. */
+/** Emit a tree as one document, with its %YAML and %TAG directives, and
+ *  "---" and "..." where they were written; call it between
+ *  oyl_emit_stream_start() and oyl_emit_stream_end(). Directives given
+ *  for it already (oyl_emit_yaml_directive(), oyl_emit_tag_directive())
+ *  take the place of its own. The output is what the document's events
+ *  give, but for a parser with a schema (oyl_parser_set_schema()): its
+ *  events tag every node, and the tree keeps only the tags written. */
 OYL_API oyl_status   oyl_emit_tree(oyl_emitter *e, const oyl_tree *t);
 
 /** The emitter's output so far, copied into the emitter's arena and valid

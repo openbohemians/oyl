@@ -277,6 +277,21 @@ ALWAYS_INLINE bool add_event(builder *b, const oyl_event *e) {
 
 static bool work_out_merges(oyl_tree *t);
 
+/* The document's directives, asked of the parser at its DOC_START */
+static bool add_directives(builder *b) {
+    oyl_tree *t = b->t;
+    oyl_str h, pf;
+    t->has_version = oyl_parser_yaml_version(b->p, &t->version_major, &t->version_minor);
+    for (int i = 0; i < 8 && oyl_parser_tag_directive(b->p, i, &h, &pf); i++) {
+        if (!pool_add(b, h, &t->tag_dirs[i].handle) || !pool_add(b, pf, &t->tag_dirs[i].prefix))
+            return false;
+        t->tag_dirs[i].handle_len = (uint16_t)h.len;
+        t->tag_dirs[i].prefix_len = (uint16_t)pf.len;
+        t->tag_dir_count = i + 1;
+    }
+    return true;
+}
+
 static oyl_status parse_tree(oyl_parser *p, oyl_tree **tree, bool merges) {
     if (!p || !tree) return OYL_ERR_INPUT;
     *tree = NULL;
@@ -318,7 +333,8 @@ static oyl_status parse_tree(oyl_parser *p, oyl_tree **tree, bool merges) {
         return OYL_ERR_MEMORY;
     }
     t->props[0] = (oyl_node_props){ 0, 0, 0, 0 };
-    while ((st = oyl_parse_next(p, &e)) == OYL_OK && e->type != OYL_EVT_DOC_END)
+    bool ok = add_directives(&b);
+    while (ok && (st = oyl_parse_next(p, &e)) == OYL_OK && e->type != OYL_EVT_DOC_END)
         if (!add_event(&b, e)) break;
     if (st == OYL_OK) t->implicit_end = e->implicit;
     if (st == OYL_OK && b.status == OYL_OK && t->len == 0) {
@@ -386,6 +402,20 @@ const oyl_dialect *oyl_tree_dialect(const oyl_tree *t) { return t ? t->dialect :
 
 static oyl_str pooled(const oyl_tree *t, uint32_t at, uint32_t len) {
     return len ? (oyl_str){ t->pool + at, len } : OYL_STR_NULL;
+}
+
+bool oyl_tree_yaml_version(const oyl_tree *t, int *major, int *minor) {
+    if (!t || !t->has_version) return false;
+    if (major) *major = t->version_major;
+    if (minor) *minor = t->version_minor;
+    return true;
+}
+
+bool oyl_tree_tag_directive(const oyl_tree *t, int i, oyl_str *handle, oyl_str *prefix) {
+    if (!t || i < 0 || i >= t->tag_dir_count) return false;
+    if (handle) *handle = pooled(t, t->tag_dirs[i].handle, t->tag_dirs[i].handle_len);
+    if (prefix) *prefix = pooled(t, t->tag_dirs[i].prefix, t->tag_dirs[i].prefix_len);
+    return true;
 }
 
 
@@ -1621,7 +1651,16 @@ static oyl_status end_up_to(oyl_emitter *e, const oyl_tree *t, uint32_t j, uint3
 
 oyl_status oyl_emit_tree(oyl_emitter *e, const oyl_tree *t) {
     if (!e || !t) return OYL_ERR_INPUT;
-    oyl_status st = oyl_emit_document_start(e, t->implicit_start);
+    /* the document's directives, but for those given for it already */
+    oyl_status st = OYL_OK;
+    if (t->has_version && !oyl_emitter_has_directive(e, OYL_STR_NULL))
+        st = oyl_emit_yaml_directive(e, t->version_major, t->version_minor);
+    for (int i = 0; i < t->tag_dir_count && st == OYL_OK; i++) {
+        oyl_str h = pooled(t, t->tag_dirs[i].handle, t->tag_dirs[i].handle_len);
+        if (!oyl_emitter_has_directive(e, h))
+            st = oyl_emit_tag_directive(e, h, pooled(t, t->tag_dirs[i].prefix, t->tag_dirs[i].prefix_len));
+    }
+    if (st == OYL_OK) st = oyl_emit_document_start(e, t->implicit_start);
     for (uint32_t i = 0; i < t->len && st == OYL_OK; i++) {
         /* node i's parent is node i-1 or one of its ancestors: the
          * collections between them have ended */
