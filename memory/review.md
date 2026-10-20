@@ -1,6 +1,6 @@
 # Code review before 1.2.0
 
-*Updated 2026-10-19*
+*Updated 2026-10-20*
 
 The user asked for a thorough independent review of the C code (2026-10-18).
 Plan agreed: three layers. (1) Automated analysis and coverage, done
@@ -122,6 +122,35 @@ oyl.h (the user agreed). oyl_dialect_new takes any minor an int holds
 (the 100000 cap is gone). %YAML minor saturation checked against 9, not
 the digit (my slip in `73054bb`). Two of the five were slips in
 `73054bb`.
+
+**PR #4 (YAML to JSON) reviewed by a Claude subagent 2026-10-20** (on
+`0fb977f`; brief `outtake/review-json-brief.md`, not committed): 12
+findings, all reproduced; the user approved all fixes, in `b332a95` and
+`1a8cce6`. Biggest: go-yaml v2's aliasing was counted while writing, so
+values of overridden keys and values merged through an alias went
+uncounted (28 KB gave 24 MB of JSON where go-yaml refuses), and chained
+merges in go-yaml order recursed outside the depth limit (stack overflow
+at default limits on a 512 KB thread). Now: a check pass over every node
+first (decode errors anywhere, as go-yaml v2 and PyYAML decode every
+node; null/uint64 keys and inf fail only where written), and in go-yaml
+order a counting walk exactly as go-yaml v2 decodes (0 diffs on 7,650
+docs swept across the limit one alias at a time). Also: `! <<` merges
+(parser, trees, JSON); YAML 1.1 `!` scalars resolve as if plain
+(PyYAML); events with a schema mark resolved tags `implicit`, so trees
+keep exactly the tags written (my old tree rule dropped redundant
+written tags, see tree-design.md); STRICT checks every mapping; >64
+merges; first allocation failure reported; `\L`/`\P` escapes (a 1.0.0
+bug); control characters rejected in quoted/block scalars, comments,
+directives (DEL allowed in quotes, YAML 1.2), in its own commit
+`1a8cce6`: +1.1% instructions on k8s, up to +2.8% on block-only text,
+no time difference measured. Documented, not copied (the user agreed
+2026-10-20): go-yaml dialect's NEL/LS/PS line breaks, `\/` and DEL in
+quotes rejected by libyaml. The fuzz replay caught my own slip before
+commit (bad keys sorted last, a null key beside others written as "").
+**Open:** C1 characters (U+0080 to U+009F but NEL) outside quotes, which
+YAML 1.2 and libyaml forbid, aren't checked: that needs UTF-8 decoding,
+which Oyl doesn't do (no invalid-UTF-8 check either). Codex next, with
+the same brief.
 
 **PR #5 (parser) reviewed 2026-10-19:** 7 findings, all verified. (The
 review's comment couldn't be posted: GitHub said the account "cannot

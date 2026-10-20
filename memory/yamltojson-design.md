@@ -1,6 +1,6 @@
 # YAMLToJSON design
 
-*Updated 2026-10-11*
+*Updated 2026-10-20*
 
 **Built 2026-10-11 on the branch `schema-parsers` (`ed22e56`)**, with the
 user's go-ahead on the recommendations below (parser-based
@@ -42,6 +42,12 @@ YAML 1.2 (the suite's libyaml results agree):
 - everything after the first document's root node is ignored, even
   malformed text; Oyl reports it
 - invalid UTF-8 input is an error (Oyl doesn't validate UTF-8)
+- (found 2026-10-20, documented on `oyl_dialect_goyaml2`, not copied:)
+  NEL, U+2028 and U+2029 are line breaks; `\/` and a raw DEL in quotes
+  are errors
+- C1 characters (U+0080 to U+009F but NEL) outside quotes are errors to
+  libyaml and YAML 1.2 alike; Oyl doesn't check them, as it doesn't
+  decode UTF-8 (**open**, see review.md)
 
 **Decided (the user, 2026-10-11): make them opt-in**, for the first two,
 which occur in real manifests. Folded into dialects (dialects-design.md)

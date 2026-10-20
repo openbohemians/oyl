@@ -1,6 +1,6 @@
 # Tree API: design for review
 
-*Updated 2026-10-12*
+*Updated 2026-10-20*
 
 **Agreed with the user 2026-10-12: all six decisions below as recommended.**
 **Step 1 built 2026-10-12** on the `tree` branch (from `schema-parsers`),
@@ -299,6 +299,8 @@ result must be byte for byte the tree one thread builds: an exact test.
     memoizes sources, so doubling merge chains stay linear.
   - A parser with a schema tags every node; a tag equal to what it would
     resolve isn't kept (an explicit `!!int 12` then looks implicit).
+    **Changed in `b332a95` (2026-10-20):** the parser marks the tags its
+    schema gives `implicit`, and trees keep exactly the tags written.
   - An alias to an unknown anchor fails the tree (`OYL_ERR_PARSE`), as
     YAML requires; events don't check it.
   - Block collections end at their last child's end (their end events
@@ -360,7 +362,8 @@ result must be byte for byte the tree one thread builds: an exact test.
   failed 64 and 48 suite checks, and trapped the fuzzer.
 - **By design, one difference:** a parser with a schema tags every node
   in its events (`!!map`, `!!str a: !!int 1`); a tree keeps only tags
-  that differ from the schema's resolution, so it writes `a: 1`.
+  that differ from the schema's resolution, so it writes `a: 1`. (Since
+  `b332a95`, only the tags written: `a: !!int 1` written stays.)
 - **Speed (866 manifests, CPU 3):** a built tree emits at ~600 MB/s;
   the emitter fed recorded events ~640. The walk adds ~83 instructions
   per event over the emitter's ~738 (own PMU count). Parse to tree +

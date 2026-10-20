@@ -1,6 +1,6 @@
 # TODO
 
-*Updated 2026-10-18*
+*Updated 2026-10-20*
 
 Small deferred tasks: each is agreed or obvious, but none is planned yet.
 Larger features go in ideas.md, and the order of work in roadmap.md.
@@ -13,6 +13,12 @@ Larger features go in ideas.md, and the order of work in roadmap.md.
   writer over a given tree. Add it when the Go library or parallel JSON
   (each thread writing its own documents) needs it. The user asked for
   this note, 2026-10-13.
+- **Emitter: leave out implicit tags** (**Open**, mine, 2026-10-20). Since
+  `b332a95`, a parser with a schema marks the tags it gives `implicit`.
+  The emitter still writes every event's tag, so a schema parser's
+  events come out as `!!map`, `!!str a: !!int 1`, where its tree writes
+  `a: 1`. Skipping implicit tags would make the two alike. Ask first:
+  it changes what the emitter writes for such events.
 - **Emitter: no trailing space after `- `** (**Open**). A block sequence
   inside a block sequence is written `- ` + newline. That's valid YAML,
   but it leaves trailing whitespace. Seen 2026-10-12 while testing
