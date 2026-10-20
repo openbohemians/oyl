@@ -19,19 +19,22 @@ Larger features go in ideas.md, and the order of work in roadmap.md.
   events come out as `!!map`, `!!str a: !!int 1`, where its tree writes
   `a: 1`. Skipping implicit tags would make the two alike. Ask first:
   it changes what the emitter writes for such events.
-- **Emitter: a document's directives are lost** (**Open**, found
-  2026-10-20). A tree read from `%YAML 1.1` is written without the
-  directive, so Oyl reads the output as 1.2: `a: yes`, `b: 0777`,
-  `c: 1_000` give `{"a":true,"b":511,"c":1000}` in, `{"a":"yes","b":777,
-  "c":"1_000"}` back. Same for `%TAG !!` (it picks a dialect), and for
-  events (the emitter has no way to be told). tree-design.md said trees
-  keep the `%YAML` version and directives; they were built without them.
-  Proposed to the user: trees keep them and `oyl_emit_tree` writes them
-  back; a new emitter call writes a directive before a document start
-  (with `...` before it if the previous document is open). Not writing
-  `%YAML 1.2` by default: go-yaml v2 and v3 (v3.0.5 too) reject any
-  `%YAML` but 1.1 ("found incompatible YAML document"), and libyaml 0.2.5
-  takes `%YAML 1.2` but reads it by 1.1 rules anyway (`yes` is true).
+- **Emitter: a document's directives are lost** (**Fixed in
+  `476782e`**, 2026-10-20; the user said "ok" to the proposal). A tree
+  read from `%YAML 1.1` was written without the directive, so Oyl read
+  the output as 1.2 (`a: yes`, `b: 0777`, `c: 1_000` gave
+  `{"a":true,"b":511,"c":1000}` in, `{"a":"yes","b":777,"c":"1_000"}`
+  back). Now: `oyl_emit_yaml_directive`, `oyl_emit_tag_directive` (for the
+  next document; `...` before it if the one before is open; tags written
+  with its handles, `!`/`!!` verbatim where it redefines them),
+  `oyl_parser_tag_directive`, `oyl_tree_yaml_version`,
+  `oyl_tree_tag_directive`; `oyl_emit_tree` writes a tree's own (ones
+  given first win). Parser fixes found on the way: a lone `!` stays
+  non-specific under `%TAG !`; `%TAG` prefixes checked (URI characters,
+  %-escapes, no flow indicator first) and decoded, as libyaml does. Not
+  writing `%YAML 1.2` by default: go-yaml v2 and v3 (v3.0.5 too) reject
+  any `%YAML` but 1.1 ("found incompatible YAML document"), and libyaml
+  0.2.5 takes `%YAML 1.2` but reads it by 1.1 rules anyway.
 - **Emitter: aliases to anchors not yet written** (**Open**, mine,
   2026-10-20). Since the #6 review fixes the emitter checks event order
   and anchor/alias names (OYL_ERR_EMIT), but not that an alias names an
@@ -44,6 +47,10 @@ Larger features go in ideas.md, and the order of work in roadmap.md.
   implicit may still get `---`; implicit keys over 1024 characters are a
   parse error. Check the Rust `Emitter` wrapper and its tests and docs
   (stream start before documents, errors after a failure).
+  Also bind the directive functions (`oyl_emit_yaml_directive`,
+  `oyl_emit_tag_directive`, `oyl_parser_tag_directive`,
+  `oyl_tree_yaml_version`, `oyl_tree_tag_directive`), and have the Rust
+  re-emit path pass a document's directives.
 - **Emitter: no trailing space after `- `** (**Open**). A block sequence
   inside a block sequence is written `- ` + newline. That's valid YAML,
   but it leaves trailing whitespace. Seen 2026-10-12 while testing
