@@ -92,7 +92,8 @@ typedef struct {
 /* The rule that resolves untagged plain `text`, or -1 for the default (for
  * oyl_tree.c, which keeps it per node) */
 int oyl_schema_rule_of(const oyl_schema *schema, oyl_str text);
-/* Rule `rule`'s value of `text`: 1 accepted, 0 declined, -1 out of memory */
+/* Rule `rule`'s value of `text`: 1 accepted, 0 declined, -1 out of memory,
+ * -2 accepted but without a value (oyl_schema_value_of's OYL_ERR_PARSE) */
 int oyl_schema_rule_value(const oyl_schema *schema, int rule, oyl_str text, oyl_value *out);
 
 /* ── Hashing ─────────────────────────────────────────────── */

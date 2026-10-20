@@ -473,7 +473,7 @@ static bool scalar_value(doc *d, uint32_t i, oyl_value *v) {
         }
         int r = n->type < 255 ? oyl_schema_rule_value(d->schema, n->type - 1, t, v) : 0;
         if (r > 0) return true;
-        if (r < 0) return fail(d, OYL_ERR_MEMORY, node_mark(d, i), "out of memory");
+        if (r == -1) return fail(d, OYL_ERR_MEMORY, node_mark(d, i), "out of memory");
     }
     oyl_str tag = written_tag(d, i);
     if (same(tag, OYL_TAG_BINARY)) {
@@ -488,6 +488,7 @@ static bool scalar_value(doc *d, uint32_t i, oyl_value *v) {
     oyl_status st = d->typed ? oyl_node_value(d->t, i, v)
                              : oyl_schema_value_of(d->schema, t, (oyl_scalar_style)d->n[i].style, tag, v);
     if (st == OYL_ERR_PARSE) {
+        if (!tag.len) tag = oyl_schema_resolve(d->schema, t, (oyl_scalar_style)n->style);
         int tl;
         const char *ts = short_tag(tag, &tl);
         return fail(d, OYL_ERR_PARSE, node_mark(d, i), "cannot decode `%.*s` as !!%.*s",

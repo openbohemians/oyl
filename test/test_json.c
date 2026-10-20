@@ -223,6 +223,28 @@ static void test_standard(void) {
                "{\"a\":\"yes\",\"b\":777,\"c\":15,\"d\":\"1_000\",\"e\":0.5}");
 }
 
+/* YAML 1.1: a timestamp that doesn't exist has no value, as PyYAML's
+ * constructor refuses it, whether or not the tree typed it */
+static void test_yaml11_timestamps(void) {
+    printf("test_yaml11_timestamps:\n");
+    check_with("%YAML 1.1\n---\na: 2001-02-28\n", oyl_schema_yaml11(), 0, "{\"a\":\"2001-02-28\"}");
+    const char *docs[] = { "%YAML 1.1\n---\na: 2001-02-29\n", "a: 2001-02-29\n" };
+    for (int i = 0; i < 2; i++) {
+        oyl_arena *a = oyl_arena_new(4096);
+        oyl_parser *p = oyl_parser_new(docs[i], strlen(docs[i]), a);
+        oyl_str json;
+        oyl_status st = oyl_parse_json(p, oyl_schema_yaml11(), 0, &json);
+        const char *msg = oyl_parser_error(p);
+        tests_run++;
+        if (st == OYL_ERR_PARSE && msg && strstr(msg, "cannot decode `2001-02-29` as !!timestamp"))
+            tests_passed++;
+        else
+            printf("  FAIL: %s: status %d, %s\n", i ? "untyped" : "typed", st, msg ? msg : "");
+        oyl_parser_free(p);
+        oyl_arena_free(a);
+    }
+}
+
 /* One call per document */
 static void test_stream(void) {
     printf("test_stream:\n");
@@ -254,6 +276,7 @@ int main(void) {
     test_strict();
     test_errors();
     test_standard();
+    test_yaml11_timestamps();
     test_stream();
     printf("\n--- JSON tests: %d / %d passed ---\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;

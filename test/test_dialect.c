@@ -122,15 +122,43 @@ static void test_version(void) {
     oyl_parser_free(p);
     oyl_arena_free(a);
 
-    /* a minor version of any length, up to an int's */
+    /* a minor version of any length, up to an int's, and a dialect for it */
     a = oyl_arena_new(4096);
     y = "%YAML 1.1234567\n---\nv: 1\n";
     p = oyl_parser_new(y, strlen(y), a);
+    const oyl_dialect *d = oyl_dialect_new(a, "1.1234567", oyl_schema_failsafe(), 0, OYL_MERGE_YAML);
+    ASSERT(d && oyl_parser_add_dialect(p, d, "1.1234567", NULL) == OYL_OK, "a dialect for 1.1234567");
     has = false;
     while (oyl_parse_next(p, &e) == OYL_OK && e->type != OYL_EVT_STREAM_END)
         if (e->type == OYL_EVT_DOC_START) has = oyl_parser_yaml_version(p, &major, &minor);
     ASSERT(has && major == 1 && minor == 1234567, "%YAML 1.1234567 is 1.1234567");
+    ASSERT(oyl_parser_document_dialect(p) == d, "... and reads with that dialect");
     oyl_parser_free(p);
+    struct { const char *doc; int minor; } near[] = {
+        { "%YAML 1.2147483640\n---\nv\n", 2147483640 },
+        { "%YAML 1.2147483646\n---\nv\n", 2147483646 },
+        { "%YAML 1.2147483647\n---\nv\n", 2147483647 },
+        { "%YAML 1.2147483648\n---\nv\n", 2147483647 },   /* past an int */
+        { "%YAML 1.99999999999\n---\nv\n", 2147483647 },
+    };
+    bool right = true;
+    for (size_t i = 0; i < sizeof near / sizeof *near; i++) {
+        p = oyl_parser_new(near[i].doc, strlen(near[i].doc), a);
+        has = false;
+        while (oyl_parse_next(p, &e) == OYL_OK && e->type != OYL_EVT_STREAM_END)
+            if (e->type == OYL_EVT_DOC_START) has = oyl_parser_yaml_version(p, &major, &minor);
+        if (!has || minor != near[i].minor) {
+            printf("  (%.*s: %d)\n", (int)strcspn(near[i].doc, "\n"), near[i].doc, minor);
+            right = false;
+        }
+        oyl_parser_free(p);
+    }
+    ASSERT(right, "minor versions up to an int's, then INT_MAX");
+    d = oyl_dialect_new(a, "1.2147483647", oyl_schema_failsafe(), 0, OYL_MERGE_YAML);
+    oyl_dialect_version(d, &major, &minor);
+    ASSERT(d && minor == 2147483647, "oyl_dialect_new: 1.2147483647");
+    ASSERT(!oyl_dialect_new(a, "1.2147483648", oyl_schema_failsafe(), 0, OYL_MERGE_YAML),
+           "... but not past an int");
     oyl_arena_free(a);
 }
 

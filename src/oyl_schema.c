@@ -106,19 +106,33 @@ static void int_value(uint64_t mag, bool neg, bool big, const char *s, size_t le
         *out = (oyl_value){ .kind = OYL_VALUE_UINT, .as = { .u = mag } };
 }
 
+/* The int's value in *out, unless OYL_INT_RANGE declines it: false */
+static bool int_result(uint64_t mag, bool sign, bool neg, bool big, unsigned flags,
+                       const char *s, size_t len, oyl_value *out) {
+    if (!big && neg && mag > (uint64_t)INT64_MAX + 1) big = true;
+    if (!big && sign && !neg && mag > INT64_MAX && (flags & OYL_INT_RANGE)) big = true;
+    if (big && (flags & OYL_INT_RANGE)) return false;
+    if (out) int_value(mag, neg, big, s, len, out);
+    return true;
+}
+
 static bool mul_add(uint64_t *v, uint64_t m, uint64_t a) {
     return !__builtin_mul_overflow(*v, m, v) && !__builtin_add_overflow(*v, a, v);
 }
 
 /* YAML 1.1's base 60 int, [-+]?[1-9][0-9_]*(:[0-5]?[0-9])+: 190:20:30 is
- * 190 * 3600 + 20 * 60 + 30 */
-static bool parse_int60(const char *s, size_t len, oyl_value *out) {
-    size_t i = s[0] == '+' || s[0] == '-';
+ * 190 * 3600 + 20 * 60 + 30. The sign, the underscores and the range are
+ * as `flags` allow. */
+static bool parse_int60(const char *s, size_t len, unsigned flags, oyl_value *out) {
+    bool sign = s[0] == '+' || s[0] == '-';
+    if (sign && !(flags & OYL_INT_SIGN)) return false;
+    bool underscores = (flags & (OYL_INT_UNDERSCORE | OYL_INT_DIGIT_UNDERSCORE)) != 0;
+    size_t i = sign;
     bool neg = s[0] == '-', big = false;
     if (i >= len || s[i] < '1' || s[i] > '9') return false;
     uint64_t v = 0;
     for (; i < len && s[i] != ':'; i++) {
-        if (s[i] == '_') continue;
+        if (s[i] == '_' && underscores) continue;
         if (!isdigit((unsigned char)s[i])) return false;
         if (!big && !mul_add(&v, 10, (uint64_t)(s[i] - '0'))) big = true;
     }
@@ -132,15 +146,14 @@ static bool parse_int60(const char *s, size_t len, oyl_value *out) {
         parts++;
     }
     if (!parts) return false;
-    if (out) int_value(v, neg, big, s, len, out);
-    return true;
+    return int_result(v, sign, neg, big, flags, s, len, out);
 }
 
 static bool parse_int(const char *s, size_t len, unsigned flags, oyl_value *out) {
     bool digit_underscores = (flags & OYL_INT_DIGIT_UNDERSCORE) != 0;
     bool underscores = (flags & OYL_INT_UNDERSCORE) != 0 || digit_underscores;
     if (len == 0 || (underscores && s[0] == '_')) return false;
-    if ((flags & OYL_INT_BASE60) && memchr(s, ':', len)) return parse_int60(s, len, out);
+    if ((flags & OYL_INT_BASE60) && memchr(s, ':', len)) return parse_int60(s, len, flags, out);
     /* YAML 1.1: no underscore right after the sign */
     if (digit_underscores && len > 1 && (s[0] == '+' || s[0] == '-') && s[1] == '_') return false;
     cursor c = { s, len, 0, underscores };
@@ -202,11 +215,7 @@ static bool parse_int(const char *s, size_t len, unsigned flags, oyl_value *out)
                      __builtin_add_overflow(mag, (uint64_t)d, &mag)))
             big = true;
     }
-    if (!big && neg && mag > (uint64_t)INT64_MAX + 1) big = true;
-    if (!big && sign && !neg && mag > INT64_MAX && (flags & OYL_INT_RANGE)) big = true;
-    if (big && (flags & OYL_INT_RANGE)) return false;
-    if (out) int_value(mag, neg, big, s, len, out);
-    return true;
+    return int_result(mag, sign, neg, big, flags, s, len, out);
 }
 
 /* ── The built-in float parser ───────────────────────────── */
@@ -568,8 +577,12 @@ static inline bool word_misses(const oyl_schema_rule *r, oyl_str text) {
     return false;
 }
 
+static bool py_construct_timestamp(const char *s, size_t len);
+
 /* Does rule `r` accept `text`? If so and `out` isn't NULL, fill in the
- * value. 1 accepted, 0 declined, -1 out of memory. */
+ * value. 1 accepted, 0 declined, -1 out of memory, -2 accepted but without
+ * a value (a YAML 1.1 timestamp of a date or time that doesn't exist,
+ * which PyYAML's constructor refuses; only asked for a value). */
 static int rule_parse(const oyl_schema_rule *r, oyl_str text, oyl_value *out) {
     switch (r->kind) {
     case RULE_WORD:
@@ -588,6 +601,7 @@ static int rule_parse(const oyl_schema_rule *r, oyl_str text, oyl_value *out) {
         if (!(r->flags ? parse_timestamp11(text.data, text.len)
                        : parse_timestamp(text.data, text.len)))
             return 0;
+        if (out && r->flags && !py_construct_timestamp(text.data, text.len)) return -2;
         if (out) *out = (oyl_value){ .kind = OYL_VALUE_STR, .as = { .s = text } };
         return 1;
     case RULE_CUSTOM: {
@@ -644,7 +658,8 @@ static long fill_cand(const oyl_schema_rule *rules, int n, uint16_t *at, uint8_t
 }
 
 /* The first rule that accepts untagged plain `text`: its index, -1 for
- * none, or -2 if a rule ran out of memory giving its value in `out` */
+ * none, or giving its value in `out`, -2 if the rule ran out of memory and
+ * -3 if the value doesn't exist (rule_parse's -2) */
 static int match(const oyl_schema *s, oyl_str text, oyl_value *out) {
     if (text.len && s->first && !s->first[(unsigned char)text.data[0]]) return -1;
     if (s->cand_at && s->cand_at[257]) {
@@ -654,7 +669,7 @@ static int match(const oyl_schema *s, oyl_str text, oyl_value *out) {
             if (word_misses(r, text)) continue;
             int x = rule_parse(r, text, out);
             if (x > 0) return s->cand[j];
-            if (x < 0 && out) return -2;
+            if (x < 0 && out) return x == -1 ? -2 : -3;
         }
         return -1;
     }
@@ -663,7 +678,7 @@ static int match(const oyl_schema *s, oyl_str text, oyl_value *out) {
         if (word_misses(r, text)) continue;
         int x = rule_parse(r, text, out);
         if (x > 0) return i;
-        if (x < 0 && out) return -2;
+        if (x < 0 && out) return x == -1 ? -2 : -3;
     }
     return -1;
 }
@@ -782,6 +797,12 @@ static bool py_is(const char *s, size_t i, size_t len, const char *word) {
     return py_peek(s, len, &i) < 0;
 }
 
+/* mag * 60 as hi * 2^64 + *lo: hi is the return */
+static uint64_t mul60(uint64_t mag, uint64_t *lo) {
+    *lo = mag * 60;
+    return ((mag >> 32) * 60 + (((mag & 0xffffffff) * 60) >> 32)) >> 32;
+}
+
 static bool py_construct_int(const char *s, size_t len, oyl_value *out) {
     size_t i = 0;
     int sign = py_sign(s, len, &i);
@@ -802,17 +823,22 @@ static bool py_construct_int(const char *s, size_t len, oyl_value *out) {
         if (!py_int(s, i, len, 8, &mag, &neg, &big)) return false;
     } else if (memchr(s + i, ':', len - i)) {
         /* base 60: every part an int() (PyYAML reads them all first, and
-         * any may have a sign), summed from the left times 60 */
+         * any may have a sign), summed from the left times 60. A part
+         * of the opposite sign may bring the sum times 60 back within 64
+         * bits; past them, no part within 64 bits can (the next sum is at
+         * least 59 times 2^64), and one beyond 64 bits gives text. */
         for (size_t start = i, p = i; p <= len; p++) {
             if (p < len && s[p] != ':') continue;
             uint64_t m;
             bool n, b;
             if (!py_int(s, start, p, 10, &m, &n, &b)) return false;
             start = p + 1;
-            if (big || (big = b || __builtin_mul_overflow(mag, (uint64_t)60, &mag))) continue;
-            if (n == neg) big = __builtin_add_overflow(mag, m, &mag);
-            else if (mag >= m) mag -= m;
-            else { mag = m - mag; neg = n; }
+            if (big || (big = b)) continue;
+            uint64_t lo, hi = mul60(mag, &lo);
+            if (n == neg) big = hi || __builtin_add_overflow(lo, m, &mag);
+            else if (hi > 1 || (hi == 1 && lo >= m)) big = true;
+            else if (hi == 1 || lo >= m) mag = lo - m;   /* 2^64 + lo - m wraps to it */
+            else { mag = m - lo; neg = n; }
             if (mag == 0) neg = false;
         }
     } else if (!py_int(s, i, len, 10, &mag, &neg, &big)) {
@@ -967,6 +993,7 @@ oyl_status oyl_schema_value_of(const oyl_schema *schema, oyl_str text, oyl_scala
         if (style == OYL_SCALAR_PLAIN) {
             int i = match(schema, text, out);
             if (i == -2) return OYL_ERR_MEMORY;
+            if (i == -3) return OYL_ERR_PARSE;
             if (i >= 0) return OYL_OK;
         }
         text_value(out, text);
@@ -991,8 +1018,8 @@ oyl_status oyl_schema_value_of(const oyl_schema *schema, oyl_str text, oyl_scala
         if (!str_eq(schema->rules[i].tag, tag)) continue;
         bound = true;
         int r = rule_parse(&schema->rules[i], text, out);
-        if (r < 0) return OYL_ERR_MEMORY;
-        if (r) return OYL_OK;
+        if (r == -1) return OYL_ERR_MEMORY;
+        if (r > 0) return OYL_OK;
     }
     if (bound) return OYL_ERR_PARSE;
     text_value(out, text);

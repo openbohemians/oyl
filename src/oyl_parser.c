@@ -1954,8 +1954,10 @@ static oyl_status parse_directive(oyl_parser *p, bool *had_yaml) {
         if (dot - z != 1 || w1[z] != '1')
             PARSE_ERROR(p, "unsupported %YAML version: only 1.x is accepted");
         int minor = 0;   /* past an int, INT_MAX */
-        for (size_t k = dot + 1; k < l1; k++)
-            minor = minor <= (INT_MAX - 9) / 10 ? minor * 10 + (w1[k] - '0') : INT_MAX;
+        for (size_t k = dot + 1; k < l1; k++) {
+            int d = w1[k] - '0';
+            minor = minor <= (INT_MAX - d) / 10 ? minor * 10 + d : INT_MAX;
+        }
         p->doc_has_version = true;
         p->doc_major = 1;
         p->doc_minor = minor;

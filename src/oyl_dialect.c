@@ -6,6 +6,7 @@
  */
 
 #include "oyl_internal.h"
+#include <limits.h>
 
 static const oyl_dialect yaml12 = { .schema = NULL, .syntax = 0, .merge = OYL_MERGE_YAML,
                                     .minor = 2 };
@@ -42,10 +43,11 @@ int oyl_version_minor(const char *version) {
     const char *c = version;
     while (*c == '0') c++;
     if (*c++ != '1' || *c++ != '.' || *c < '0' || *c > '9') return -1;
-    int minor = 0;
+    int minor = 0;   /* any an int holds (the parser reads a longer %YAML one as INT_MAX) */
     for (; *c >= '0' && *c <= '9'; c++) {
-        minor = minor * 10 + (*c - '0');
-        if (minor > 100000) return -1;
+        int d = *c - '0';
+        if (minor > (INT_MAX - d) / 10) return -1;
+        minor = minor * 10 + d;
     }
     return *c ? -1 : minor;
 }

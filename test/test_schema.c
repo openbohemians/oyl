@@ -651,6 +651,34 @@ static void test_values_yaml11(void) {
     ASSERT(str_eq(resolve_plain(s, "2001-12-14 21:59:43.10 -5"), OYL_TAG_TIMESTAMP), "spaced, as the type's example");
     ASSERT(str_eq(resolve_plain(s, "2001-12-15 2:59:43.10"), OYL_TAG_TIMESTAMP), "no time zone");
     ASSERT(str_eq(resolve_plain(s, "2001-1-14"), OYL_TAG_STR), "a date alone has two-digit fields");
+    /* a date or time that doesn't exist resolves as PyYAML's resolver has
+     * it, and has no value: PyYAML's constructor refuses it */
+    const char *no_such[] = { "2001-13-01", "2001-02-29", "0000-01-01", "2001-01-01 25:00:00",
+                              "2001-01-01 01:02:03 +24:00" };
+    bool refused = true;
+    for (size_t i = 0; i < sizeof no_such / sizeof *no_such; i++) {
+        bool right = str_eq(resolve_plain(s, no_such[i]), OYL_TAG_TIMESTAMP) &&
+                     value_of(s, no_such[i], OYL_SCALAR_PLAIN, OYL_STR_NULL, &v) == OYL_ERR_PARSE;
+        if (!right) printf("  (%s)\n", no_such[i]);
+        refused = refused && right;
+    }
+    ASSERT(refused, "untagged timestamps that don't exist: OYL_ERR_PARSE");
+    ASSERT(is_text(plain_value(s, "2000-02-29"), "2000-02-29"), "2000-02-29 exists");
+    {
+        const char *y = "a: 2001-02-29\nb: 2001-02-28\n";
+        oyl_arena *a = oyl_arena_new(4096);
+        oyl_parser *p = oyl_parser_new(y, strlen(y), a);
+        oyl_parser_set_dialect(p, oyl_dialect_yaml11());
+        oyl_tree *t = NULL;
+        ASSERT(oyl_parse_tree(p, &t) == OYL_OK && t, "a YAML 1.1 tree");
+        ASSERT(t && oyl_node_value(t, oyl_node_get(t, 0, tag_of("a")), &v) == OYL_ERR_PARSE,
+               "a tree's timestamp that doesn't exist: OYL_ERR_PARSE");
+        ASSERT(t && oyl_node_value(t, oyl_node_get(t, 0, tag_of("b")), &v) == OYL_OK &&
+               is_text(v, "2001-02-28"), "and one that does: its text");
+        oyl_tree_free(t);
+        oyl_parser_free(p);
+        oyl_arena_free(a);
+    }
     ASSERT(str_eq(resolve_plain(s, "<<"), OYL_TAG_MERGE), "<< is !!merge");
     ASSERT(str_eq(resolve_plain(s, "="), OYL_TAG_VALUE), "= is !!value");
     ASSERT(is_text(plain_value(s, "._5"), "._5"), "._5: a digit after a leading dot");
@@ -680,6 +708,11 @@ static void test_values_yaml11(void) {
         { "int", "0b-1", OYL_SCALAR_PLAIN, OYL_VALUE_INT, 0, -1 },
         { "int", "-0b-1", OYL_SCALAR_PLAIN, OYL_VALUE_INT, 0, 1 },
         { "int", "1:-1", OYL_SCALAR_PLAIN, OYL_VALUE_INT, 0, 59 },
+        /* past 64 bits times 60, then back within them */
+        { "int", "307445734561825861:-18446744073709551615", OYL_SCALAR_PLAIN, OYL_VALUE_INT, 0, 45 },
+        { "int", "-307445734561825861:-18446744073709551615", OYL_SCALAR_PLAIN, OYL_VALUE_INT, 0, -45 },
+        { "int", "307445734561825861:-44", OYL_SCALAR_PLAIN, OYL_VALUE_STR, 0, 0 },   /* 2^64 */
+        { "int", "-307445734561825861:-9223372036854775852", OYL_SCALAR_PLAIN, OYL_VALUE_INT, 0, INT64_MIN },
         { "int", " 7 ", OYL_SCALAR_SINGLE_QUOTED, OYL_VALUE_INT, 0, 7 },
         { "int", "0X1F", OYL_SCALAR_PLAIN, -1, 0, 0 },
         { "int", "01:30", OYL_SCALAR_PLAIN, -1, 0, 0 },
@@ -710,6 +743,12 @@ static void test_values_yaml11(void) {
     ASSERT(ok, "tagged scalars as PyYAML constructs them");
     ASSERT(value_of(s, "153722867280912931:3", OYL_SCALAR_PLAIN, OYL_TAG_INT, &v) == OYL_OK &&
            is_uint(v, 9223372036854775863u), "!!int in base 60, past int64");
+    ASSERT(value_of(s, "307445734561825861:-45", OYL_SCALAR_PLAIN, OYL_TAG_INT, &v) == OYL_OK &&
+           is_uint(v, UINT64_MAX), "!!int in base 60: back to UINT64_MAX");
+    /* documented: a part beyond 64 bits is text, though PyYAML's 5 */
+    ASSERT(value_of(s, "1152921504606846976:-69175290276410818555", OYL_SCALAR_PLAIN, OYL_TAG_INT,
+                    &v) == OYL_OK &&
+           is_text(v, "1152921504606846976:-69175290276410818555"), "!!int with a part beyond 64 bits");
     ASSERT(value_of(s, ".nan", OYL_SCALAR_PLAIN, OYL_TAG_FLOAT, &v) == OYL_OK && isnan(v.as.f), "!!float .nan");
 }
 
@@ -789,6 +828,23 @@ static void test_custom_types(void) {
     ASSERT(is_bool(plain_value(s, "OFF"), false), "OFF → false");
     ASSERT(plain_value(s, "nil").kind == OYL_VALUE_NULL, "nil → null");
     ASSERT(is_text(plain_value(s, "pi"), "pi"), "a word with another tag gives its text");
+
+    /* base 60 follows the int rule's flags: the range, the sign, underscores */
+    b = oyl_schema_builder_new(a);
+    oyl_schema_builder_add_int_flags(b, OYL_INT_YAML11 | OYL_INT_RANGE);
+    oyl_schema_builder_add(b, OYL_MATCH_EXACT, "18446744073709551616:00", tag_of("!big"));
+    s = oyl_schema_builder_finish(b);
+    oyl_schema_builder_free(b);
+    ASSERT(str_eq(resolve_plain(s, "18446744073709551616:00"), tag_of("!big")),
+           "OYL_INT_RANGE declines base 60 past 64 bits, for the next rule");
+    ASSERT(is_int(plain_value(s, "-1:00"), -60), "-1:00 within them");
+    b = oyl_schema_builder_new(a);
+    oyl_schema_builder_add_int_flags(b, OYL_INT_BASE60);
+    s = oyl_schema_builder_finish(b);
+    oyl_schema_builder_free(b);
+    ASSERT(is_int(plain_value(s, "10:00"), 600), "OYL_INT_BASE60 alone: 10:00");
+    ASSERT(is_text(plain_value(s, "-1:00"), "-1:00"), "no OYL_INT_SIGN: -1:00 is a string");
+    ASSERT(is_text(plain_value(s, "1_0:00"), "1_0:00"), "no underscore flag: 1_0:00 is a string");
     oyl_arena_free(a);
 }
 

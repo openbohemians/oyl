@@ -277,6 +277,7 @@ oyl_str tag = oyl_schema_resolve(oyl_schema_core(), OYL_STR_LIT("42"),
 | `oyl_schema_failsafe()` | Everything is `!!str` / `!!seq` / `!!map`. |
 | `oyl_schema_json()` | `null`, `true`/`false`, integers, floats. |
 | `oyl_schema_core()` | JSON + `Null`/`NULL`/`~`, `True`/`TRUE`, `0x`/`0o` ints. |
+| `oyl_schema_yaml11()` | YAML 1.1's types as PyYAML reads them: `yes`/`no`/`on`/`off` booleans (not `y`/`n`), `0b` binary, `0`-octal, base 60, underscores, floats with a dot, timestamps, `<<` as `!!merge` and `=` as `!!value`; an explicit tag reads its scalar as PyYAML's constructor does (`!!float 1` is 1.0), and a timestamp that doesn't exist (`2001-02-29`) has no value (`OYL_ERR_PARSE`), as PyYAML refuses it. |
 | `oyl_schema_goyaml2()` | go-yaml v2's types, as Kubernetes reads YAML: `yes`/`no`/`on`/`off`/`y`/`n` booleans, `0777` octal, `0b` binary (`0b-101` too), underscores in numbers, an int beyond 64 bits as a float, timestamps; an explicit `!!float` takes an int, as in go-yaml v2 (`!!float 017` is 15). |
 
 The JSON preset shares Core's number rules, so it accepts more than YAML

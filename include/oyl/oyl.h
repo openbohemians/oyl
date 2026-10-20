@@ -352,7 +352,8 @@ enum {
     OYL_INT_RANGE        = 1 << 8,  /**< decline a value beyond 64 bits (else it is text) */
     OYL_INT_DIGIT_UNDERSCORE = 1 << 9,  /**< underscores after the first digit or a prefix:
                                              1_000, 0x_1F (YAML 1.1) */
-    OYL_INT_BASE60       = 1 << 10, /**< 1:20 is 80, 190:20:30 is 685230 (YAML 1.1) */
+    OYL_INT_BASE60       = 1 << 10, /**< 1:20 is 80, 190:20:30 is 685230 (YAML 1.1); the
+                                         sign, underscore and range options apply */
     OYL_INT_BIN_SIGN     = 1 << 11, /**< a sign after a lowercase 0b with none before it:
                                          0b-101 is -5 (go-yaml v2) */
     /** The Core schema's ints (with a sign also allowed before 0x or 0o) */
@@ -399,7 +400,8 @@ OYL_API void    oyl_schema_builder_add_type(oyl_schema_builder *b, oyl_str tag,
 /** The value of a scalar event. An untagged scalar (no schema on the
  *  parser) is resolved first; a tagged one is parsed by its tag's rules.
  *  Returns OYL_ERR_PARSE when none of them accepts it, as for
- *  @c !!int "abc", and OYL_ERR_INPUT if @p scalar isn't a scalar event. A
+ *  @c !!int "abc" (or for a YAML 1.1 timestamp that doesn't exist, see
+ *  oyl_schema_yaml11), and OYL_ERR_INPUT if @p scalar isn't a scalar event. A
  *  tag with no rules (!!str, !foo) gives the text. YAML 1.1's and go-yaml
  *  v2's schemas read a tagged scalar as their libraries do (see them).
  *  Floats are read alike in any locale, and need no memory. */
@@ -418,7 +420,9 @@ OYL_API oyl_status oyl_schema_value_of(const oyl_schema *schema, oyl_str text,
  *  (.5, but not -.5), timestamps, << as !!merge and = as !!value. An
  *  explicit tag reads its scalar as PyYAML's constructor for the type
  *  does, more leniently than resolution: !!float 1 is 1.0, !!int 0o17 is
- *  15, !!bool YeS is true, and anything tagged !!null is null. */
+ *  15, !!bool YeS is true, and anything tagged !!null is null. A timestamp
+ *  whose date or time doesn't exist, as 2001-02-29, has no value, tagged
+ *  or not (OYL_ERR_PARSE): PyYAML refuses it. */
 OYL_API const oyl_schema *oyl_schema_yaml11(void);
 
 /** go-yaml v2's types, as Kubernetes reads YAML: yes/no/on/off and y/n
@@ -556,7 +560,8 @@ typedef enum {
 } oyl_merge_order;
 
 /** A dialect of YAML @p version ("1.1", "1.2"), allocated in the arena.
- *  NULL for a version not 1.x, or out of memory. */
+ *  NULL for a version not 1.x (or whose minor an int can't hold), or out
+ *  of memory. */
 OYL_API const oyl_dialect *oyl_dialect_new(oyl_arena *a, const char *version,
                                            const oyl_schema *schema, unsigned syntax,
                                            oyl_merge_order merge);
@@ -570,16 +575,17 @@ OYL_API void              oyl_dialect_version(const oyl_dialect *d, int *major, 
 OYL_API const oyl_dialect *oyl_dialect_yaml12(void);
 /** YAML 1.1 with PyYAML's types (oyl_schema_yaml11) and YAML's merge: a
  *  document PyYAML reads gets the same values. The exceptions: ints
- *  beyond 64 bits are text; keys are equal as YAML has them, by tag and
- *  value, where Python's == also makes 1, 1.0 and true one key, and two
- *  timestamps of one instant written otherwise one key; and a base 60
- *  float of more than 14 parts may differ in its last bits. The
- *  syntax is YAML 1.2's,
- *  but a block scalar ending the input gets no final line feed, as in
- *  libyaml. Malformed YAML that libyaml lets through stays an error, such
- *  as a comment touching a closing quote or bracket or a block scalar's
- *  header ("a"#c, [a]#c, |#c), or a quoted scalar or flow collection
- *  whose later lines aren't indented past the block it sits in. */
+ *  beyond 64 bits are text, as is a base 60 !!int with a part beyond 64
+ *  bits even where later parts cancel it out; keys are equal as YAML has
+ *  them, by tag and value, where Python's == also makes 1, 1.0 and true
+ *  one key, and two timestamps of one instant written otherwise one key;
+ *  and a base 60 float of more than 14 parts may differ in its last bits.
+ *  The syntax is YAML 1.2's, but a block scalar ending the input gets no
+ *  final line feed, as in libyaml. Malformed YAML that libyaml lets
+ *  through stays an error, such as a comment touching a closing quote or
+ *  bracket or a block scalar's header ("a"#c, [a]#c, |#c), or a quoted
+ *  scalar or flow collection whose later lines aren't indented past the
+ *  block it sits in. */
 OYL_API const oyl_dialect *oyl_dialect_yaml11(void);
 /** go-yaml v2, as Kubernetes reads YAML: its types, its syntax
  *  leniencies (OYL_SYNTAX_GOYAML2), and its merge order. A dialect of
@@ -594,8 +600,8 @@ OYL_API void oyl_parser_set_dialect(oyl_parser *p, const oyl_dialect *d);
 /** Let documents choose @p d: by %YAML @p version ("1.1"), or by a
  *  %TAG !! @p tag_prefix; give one, the other NULL. A version's dialect
  *  comes before the default and the built-in one for it. OYL_ERR_INPUT for
- *  both or neither, a version not 1.x or a prefix too long, OYL_ERR_LIMIT
- *  past 8 of each. */
+ *  both or neither, a version not 1.x (as oyl_dialect_new) or a prefix too
+ *  long, OYL_ERR_LIMIT past 8 of each. */
 OYL_API oyl_status oyl_parser_add_dialect(oyl_parser *p, const oyl_dialect *d,
                                           const char *version, const char *tag_prefix);
 
@@ -773,8 +779,9 @@ OYL_API oyl_str oyl_node_tag(const oyl_tree *t, uint32_t i);
 OYL_API oyl_str oyl_node_anchor(const oyl_tree *t, uint32_t i);
 
 /** A scalar's value in the document's schema, through aliases. As
- *  oyl_schema_value(): OYL_ERR_PARSE if its explicit tag rejects it,
- *  OYL_ERR_INPUT if it isn't a scalar. */
+ *  oyl_schema_value(): OYL_ERR_PARSE if its explicit tag rejects it (or
+ *  it is a YAML 1.1 timestamp that doesn't exist), OYL_ERR_INPUT if it
+ *  isn't a scalar. */
 OYL_API oyl_status oyl_node_value(const oyl_tree *t, uint32_t i, oyl_value *v);
 
 /** Where a node starts: offset, line and column, as the parser's events

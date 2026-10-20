@@ -107,20 +107,24 @@
   dialect of that version (registered, or the default) or the built-in
   one (1.1 and 1.2), else the parser's default (`oyl_parser_set_dialect`,
   `oyl_parser_add_dialect`). The document picks the version, the program
-  the dialect for each. Built in:
+  the dialect for each; a version's minor may be any an int holds
+  (`oyl_parser_yaml_version` reports a longer one as `INT_MAX`). Built in:
   YAML 1.2; YAML 1.1 with PyYAML's types and merge; and go-yaml v2 with
   its leniencies, which makes `oyl_parse_json` identical to
   `sigs.k8s.io/yaml` on all 866 documents of the Kubernetes manifests it
   was checked on.
 - **`oyl_schema_yaml11()`**, YAML 1.1's types as PyYAML reads them, the
   usual loader on libyaml (base 60, 0-octal, yes/no/on/off booleans but
-  not y/n, timestamps), with new int and float flags for them. An
+  not y/n, timestamps), with new int and float flags for them (base 60
+  takes the int rule's sign, underscore and range options too). An
   explicit tag reads its scalar as PyYAML's constructor for the type does,
   more leniently than resolution: `!!float 1` is 1.0, `!!int 0o17` 15,
-  `!!bool YeS` true, anything tagged `!!null` null. Compared with PyYAML
-  on 463,694 untagged and 160,092 tagged scalars: the same tag and value,
-  but for what PyYAML itself can't read (`0b_`) and base 60 floats of more
-  than 14 parts, whose last bits may differ.
+  `!!bool YeS` true, anything tagged `!!null` null. A timestamp whose date
+  or time doesn't exist (`2001-02-29`) has no value, tagged or not, as
+  PyYAML refuses it. Compared with PyYAML on 463,694 untagged and 160,092
+  tagged scalars: the same tag and value, but for what PyYAML itself
+  can't read (`0b_`) and base 60 floats of more than 14 parts, whose last
+  bits may differ.
 - **Warnings**, to a callback (`oyl_parser_set_warn`).
 - `oyl_parser_document_dialect`, `oyl_parser_yaml_version`, `OYL_TAG_VALUE`.
 

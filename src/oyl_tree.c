@@ -452,6 +452,7 @@ oyl_status oyl_node_value(const oyl_tree *t, uint32_t i, oyl_value *v) {
         return OYL_OK;
     }
     int r = oyl_schema_rule_value(t->schema, n->type - 1, text, v);
+    if (r == -2) return OYL_ERR_PARSE;
     if (r < 0) return OYL_ERR_MEMORY;
     if (r == 0) return oyl_schema_value_of(t->schema, text, OYL_SCALAR_PLAIN, OYL_STR_NULL, v);
     return OYL_OK;
