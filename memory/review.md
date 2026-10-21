@@ -228,10 +228,20 @@ with `#` (from `%23`) was written raw, read as a comment by Oyl and
 libyaml alike (both refuse `%TAG !e! #foo`), now `%23`. **Fixed in `1832b2c`**; the new tests and Codex's inputs (as fuzz
 seeds) fail on the old code; then sanitize clean, corpus replay
 (78,600) clean, 251,879 fuzz runs clean.
-**Next: #7 (header and docs), by Codex:** brief
-`outtake/review-api-docs-brief.md` (2026-10-21), output to
-`intake/codex-review-api-docs.md`. Then close PRs #2-#7 and delete the
-`review/*` branches.
+Codex on #7 (header and docs) 2026-10-21 (brief
+`outtake/review-api-docs-brief.md`, output
+`intake/codex-review-api-docs.md`): 5 findings, all verified, the user
+said "yes" to the fixes: the reference and README left out that a
+schema or dialect given to the parser must outlive a tree; the reference
+didn't say what `oyl_parse_json` does with a NULL schema (the dialect's
+merge order replaces the MERGE flags); `oyl_emit_tree(e, NULL)` wasn't a
+final error (now `oyl_emitter_fail()`); `OYL_TAG_VALUE` and
+`OYL_TAG_BINARY` undocumented; CHANGELOG Fixed entries for code added
+since 1.0.0 (locale floats, JSON base64 and key-comparison OOM, the
+doubling merge chain from `5c12136`, `oyl_parse_json`'s merges; the last
+two found by me). **Fixed in `74a963e`**; all tests pass.
+**Next:** close PRs #2-#7 and delete the `review/*` branches (ask the
+user first).
 
 **PR #5 (parser) reviewed 2026-10-19:** 7 findings, all verified. (The
 review's comment couldn't be posted: GitHub said the account "cannot
