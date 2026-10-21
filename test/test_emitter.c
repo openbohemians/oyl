@@ -1043,6 +1043,22 @@ static void test_directives(void) {
                        "D <tag:example.com,2000:app/foo>") == 0, "and read back the same");
     oyl_emitter_free(e);
 
+    /* a handle shorter than the one before it */
+    e = oyl_emitter_new(a);
+    oyl_emit_stream_start(e);
+    oyl_emit_tag_directive(e, S("!long!"), S("tag:a:"));
+    oyl_emit_document_start(e, true);
+    tagged(e, "tag:a:y");
+    oyl_emit_document_end(e, true);
+    oyl_emit_tag_directive(e, S("!e!"), S("tag:b:"));
+    oyl_emit_document_start(e, true);
+    tagged(e, "tag:b:x");
+    oyl_emit_document_end(e, true);
+    ASSERT(oyl_emit_stream_end(e) == OYL_OK, "handles of two lengths");
+    ASSERT(output_is(e, "%TAG !long! tag:a:\n---\n!long!y v\n...\n%TAG !e! tag:b:\n---\n!e!x v\n"),
+           "each written as it is");
+    oyl_emitter_free(e);
+
     /* ! and !! given other prefixes: the tags they stood for go verbatim */
     e = oyl_emitter_new(a);
     oyl_emit_stream_start(e);
@@ -1073,19 +1089,21 @@ static void test_directives(void) {
     oyl_emit_tag_directive(e, S("!s!"), S("tag:ex com:"));
     oyl_emit_tag_directive(e, S("!b!"), S("[x,"));
     oyl_emit_tag_directive(e, S("!p!"), S("a%b"));
+    oyl_emit_tag_directive(e, S("!h!"), S("#x#"));
     oyl_emit_document_start(e, true);
     oyl_emit_sequence_start(e, N, N, false);
     tagged(e, "tag:ex com:z");
     tagged(e, "[x,y");
     tagged(e, "a%bq");
+    tagged(e, "#x#r");
     oyl_emit_sequence_end(e);
     oyl_emit_document_end(e, true);
     ASSERT(oyl_emit_stream_end(e) == OYL_OK, "prefixes to escape");
-    ASSERT(output_is(e, "%TAG !s! tag:ex%20com:\n%TAG !b! %5Bx,\n%TAG !p! a%25b\n"
-                        "---\n- !s!z v\n- !b!y v\n- !p!q v\n"), "escaped");
+    ASSERT(output_is(e, "%TAG !s! tag:ex%20com:\n%TAG !b! %5Bx,\n%TAG !p! a%25b\n%TAG !h! %23x#\n"
+                        "---\n- !s!z v\n- !b!y v\n- !p!q v\n- !h!r v\n"), "escaped");
     ASSERT(read_back_tags(oyl_emitter_output(e), got, sizeof got) &&
-           strcmp(got, "%TAG !s! tag:ex com: %TAG !b! [x, %TAG !p! a%b D <tag:ex com:z> <[x,y> "
-                       "<a%bq>") == 0, "and read back decoded");
+           strcmp(got, "%TAG !s! tag:ex com: %TAG !b! [x, %TAG !p! a%b %TAG !h! #x# D <tag:ex com:z> "
+                       "<[x,y> <a%bq> <#x#r>") == 0, "and read back decoded");
     oyl_emitter_free(e);
 
     /* trees keep their directives; ones given before take their place */

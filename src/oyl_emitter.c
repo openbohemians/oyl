@@ -729,14 +729,15 @@ static bool all_tag_chars(const char *s, size_t len) {
 }
 
 /* Does a %TAG prefix's byte need a %-escape: one that isn't a URI
- * character, and a flow indicator first */
+ * character, and first a flow indicator or '#', which would start a
+ * comment */
 static bool prefix_escaped(const char *s, size_t i) {
     uint8_t c = (uint8_t)s[i];
-    return !oyl_is_uri_char(c) || (i == 0 && oyl_is_flow(c));
+    return !oyl_is_uri_char(c) || (i == 0 && (oyl_is_flow(c) || c == '#'));
 }
 
 /* Write text as URI characters, any other byte %-escaped (a prefix: a
- * flow indicator first too); the parser decodes them */
+ * flow indicator or '#' first too); the parser decodes them */
 static oyl_status emit_uri(oyl_emitter *e, const char *s, size_t len, bool prefix) {
     oyl_status st = OYL_OK;
     for (size_t i = 0; i < len && st == OYL_OK; i++) {
@@ -1056,6 +1057,7 @@ static oyl_status emit_tag_directive(oyl_emitter *e, oyl_str handle, oyl_str pre
         return emit_fail(e, OYL_ERR_EMIT);
     int i = e->n_tag_dirs++;
     memcpy(e->tag_dirs[i].handle, handle.data, handle.len);
+    e->tag_dirs[i].handle[handle.len] = '\0';   /* emit_tag() writes it as a string */
     e->tag_dirs[i].hlen = (uint8_t)handle.len;
     memcpy(e->tag_dirs[i].prefix, prefix.data, prefix.len);
     e->tag_dirs[i].plen = (uint16_t)prefix.len;
