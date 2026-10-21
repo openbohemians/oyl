@@ -381,6 +381,8 @@ OYL_TAG_SEQ     // "tag:yaml.org,2002:seq"
 OYL_TAG_MAP     // "tag:yaml.org,2002:map"
 OYL_TAG_MERGE   // "tag:yaml.org,2002:merge"
 OYL_TAG_TIMESTAMP // "tag:yaml.org,2002:timestamp"
+OYL_TAG_VALUE   // "tag:yaml.org,2002:value"  (YAML 1.1's = key)
+OYL_TAG_BINARY  // "tag:yaml.org,2002:binary" (base64, decoded by oyl_parse_json)
 ```
 
 ### Custom Schemas
@@ -508,8 +510,13 @@ oyl_status st = oyl_parse_json(parser, oyl_schema_goyaml2(), OYL_JSON_KUBERNETES
 ```
 
 `oyl_parse_json(p, schema, flags, &json)` reads the parser's next document
-and writes it as JSON in the parser's arena, scalars typed by `schema`. At
-the end of the stream it returns `OYL_OK` with an empty `json`. Errors are
+and writes it as JSON in the parser's arena, scalars typed by `schema`.
+With `schema` NULL, the document's dialect types them (see
+[Dialects](#dialects)), and its merge order takes the place of the
+`MERGE` flags: YAML 1.2's dialect expands merges even without
+`OYL_JSON_MERGE`, go-yaml v2's in its order, and one without merges
+(`OYL_MERGE_NONE`) keeps `<<` as a key whatever the flags say. At the end
+of the stream it returns `OYL_OK` with an empty `json`. Errors are
 reported like parse errors (`oyl_parser_error`, `oyl_parser_error_mark`):
 `OYL_ERR_PARSE` for what the schema rejects or JSON can't hold,
 `OYL_ERR_LIMIT` for too much aliasing (go-yaml v2's ratio, counted as
@@ -553,8 +560,9 @@ oyl_tree_free(tree);
 The parser's settings apply (dialects, limits, warnings); leave its own
 merge and alias resolution off. Errors are reported like parse errors:
 the parser's own, `OYL_ERR_PARSE` for an alias to an unknown anchor, and
-`OYL_ERR_LIMIT` for a document over 4 GB or 4 billion nodes. The input
-must outlive the tree. A finished tree is read-only; threads may share it.
+`OYL_ERR_LIMIT` for a document over 4 GB or 4 billion nodes. The input,
+and a schema or dialect given to the parser, must outlive the tree; the
+parser need not. A finished tree is read-only; threads may share it.
 
 ### Nodes
 

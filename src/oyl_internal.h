@@ -355,6 +355,10 @@ static inline bool oyl_tag_prefix_ok(const char *s, size_t n) {
  * a NULL handle a %YAML */
 bool oyl_emitter_has_directive(const oyl_emitter *e, oyl_str handle);
 
+/* Fail the emitter with @p st, as its own errors do: the first error is
+ * kept, and every later call returns it */
+oyl_status oyl_emitter_fail(oyl_emitter *e, oyl_status st);
+
 /* ── Parser, for oyl_json.c and oyl_tree.c ──────────────────────────────── */
 
 /* Report an error found after parsing (a converter's), as parse errors

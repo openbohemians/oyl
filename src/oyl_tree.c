@@ -1650,7 +1650,8 @@ static oyl_status end_up_to(oyl_emitter *e, const oyl_tree *t, uint32_t j, uint3
 }
 
 oyl_status oyl_emit_tree(oyl_emitter *e, const oyl_tree *t) {
-    if (!e || !t) return OYL_ERR_INPUT;
+    if (!e) return OYL_ERR_INPUT;
+    if (!t) return oyl_emitter_fail(e, OYL_ERR_INPUT);
     /* the document's directives, but for those given for it already */
     oyl_status st = OYL_OK;
     if (t->has_version && !oyl_emitter_has_directive(e, OYL_STR_NULL))

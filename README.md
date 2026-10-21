@@ -518,8 +518,9 @@ costs only its pairs, however the merges nest. Keys are
 equal as YAML compares them, by tag and value: `0x50` and `80` are one
 key, `80` and `"80"` two. `oyl_node_get` takes a key's text (`"80"`
 finds the string, else `80`), `oyl_node_get_value` its value. A finished
-tree is read-only, so threads can share it. Each call reads one document;
-at the end of the stream the tree is NULL.
+tree is read-only, so threads can share it. The input, and a schema or
+dialect given to the parser, must outlive the tree; the parser need not.
+Each call reads one document; at the end of the stream the tree is NULL.
 
 `oyl_emit_tree` writes a tree back out as YAML, as emitting its
 document's events would.

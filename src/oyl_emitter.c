@@ -100,6 +100,10 @@ NOINLINE oyl_status emit_fail(oyl_emitter *e, oyl_status st) {
     return e->error;
 }
 
+oyl_status oyl_emitter_fail(oyl_emitter *e, oyl_status st) {
+    return emit_fail(e, st);
+}
+
 /* ── Buffer management ───────────────────────────────────── */
 
 #define EMIT_INIT_CAP 4096

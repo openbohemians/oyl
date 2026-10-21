@@ -155,11 +155,6 @@
   written (`!!str`) and succeeded; it gives `OYL_ERR_MEMORY`. Out of memory
   saving its first restart point (for a flow collection as a key, `[a]:
   c`), it gave a parse error; it gives `OYL_ERR_MEMORY`.
-- `oyl_parse_json`: a chain of merges in go-yaml v2's order recursed once
-  per link without counting it, so 2,000 links overflowed a 512 KB thread
-  stack; a 28 KB document merging a big mapping 1,200 times wrote 24 MB,
-  where go-yaml v2 refuses it; more than 64 `<<` in one mapping failed
-  (YAML's merge); a failed first allocation wasn't reported or kept.
 
 ## 1.1.0 (unreleased)
 
@@ -169,7 +164,8 @@
   `oyl_value`: null, bool, int, uint, float, or text. A schema is now an
   ordered list of tags bound to parsers, and the parser that types a
   scalar also gives its value. It needs no schema on the parser, so the
-  faster incremental parser can stay on.
+  faster incremental parser can stay on. A float reads the same in any
+  locale, and reading one needs no memory however long it is.
 - **Dialect flags** for the built-in int and float parsers
   (`oyl_schema_builder_add_int_flags`, `oyl_schema_builder_add_float_flags`):
   `0x`/`0o`/`0b` prefixes, leading-zero octal, underscores, range limits.
@@ -192,6 +188,8 @@
   public Kubernetes manifests, 857 convert identically and 5 fail alike;
   the other 4 are where go-yaml v2's syntax differs from YAML 1.2. About six
   times as fast. With the Core schema and `OYL_JSON_MERGE`, standard JSON.
+  Floats are written in their shortest form, the same in any locale, and
+  `!!binary` decoded (`OYL_TAG_BINARY`).
 
 - **Dialects**: a schema, syntax leniencies and a merge order, of one
   YAML version, chosen per document by its directives: a `%TAG !!` prefix
@@ -280,20 +278,10 @@
   mapping's merges are now worked out once, at its place in the document
   (as trees do), in one pass: nothing is left unmerged, a merge inside its
   own source stays an ordinary key in copies of it too, and the work is
-  bounded, with `OYL_ERR_LIMIT` past it (a chain of anchors each merging
-  the one before twice took time doubling with each one). Each item of a
-  merged sequence counts against the bound, pairs or not: 50,000
-  mappings each merging an alias to a sequence of 50,000 aliases to an
-  empty mapping took 57 s. The depth limit applies as merges nest. Found
-  by the code review.
-- In a locale whose decimal point isn't one byte (glibc's `ps_AF`), a
-  float lost its fraction: `1.5` was 1. A float is now read in the
-  locale's terms whatever its decimal point, from a copy on the stack of
-  at most 800 significant digits (and one standing for the rest), which
-  rounds as the whole literal does: reading a float, however long, needs
-  no memory. One of 64 bytes or more was copied to the heap. JSON's
-  shortest float digits no longer depend on the locale either. Found by
-  the code review.
+  bounded, with `OYL_ERR_LIMIT` past it. Each item of a merged sequence
+  counts against the bound, pairs or not: 50,000 mappings each merging
+  an alias to a sequence of 50,000 aliases to an empty mapping took 57 s.
+  The depth limit applies as merges nest. Found by the code review.
 - Case-insensitive words in a built schema (`OYL_MATCH_ICASE`) followed
   the locale's case: under a Turkish locale `Inf` didn't match `inf`. They
   ignore ASCII's case now, as documented. Found by the code review.
@@ -312,12 +300,10 @@
   change: the merge's anchor table and its set of keys already seen
   dropped what they couldn't add (a merge then failed as "undefined
   anchor", a parse error, or kept a key it should have skipped), the
-  scanner went on without the indentation it couldn't push, the merge's
-  own "out of memory" was a parse error, and `!!binary` in JSON took a
-  failed allocation for invalid base64 (and a merge's key comparison
-  took one for a key its tag rejects). `oyl_emitter_output` returns
-  NULL data only when out of memory (empty output is ""). Found by a
-  new test that fails every allocation in turn (Linux: the linker's
+  scanner went on without the indentation it couldn't push, and the
+  merge's own "out of memory" was a parse error. `oyl_emitter_output`
+  returns NULL data only when out of memory (empty output is ""). Found
+  by a new test that fails every allocation in turn (Linux: the linker's
   `--wrap`), which also shows, under ASan, that nothing leaks.
 - An error is final: every later `oyl_parse_next` returns it again,
   with the same message, as do `oyl_parse_tree` and `oyl_parse_json`,

@@ -727,8 +727,11 @@ static void test_emit(void) {
     oyl_arena *a = oyl_arena_new(4096);
     oyl_emitter *e = oyl_emitter_new(a);
     doc x = load("a");
+    ASSERT(oyl_emit_stream_start(e) == OYL_OK, "a stream");
     ASSERT(oyl_emit_tree(e, NULL) == OYL_ERR_INPUT && oyl_emit_tree(NULL, x.t) == OYL_ERR_INPUT,
            "no tree, no emitter");
+    ASSERT(oyl_emit_tree(e, x.t) == OYL_ERR_INPUT && oyl_emit_stream_end(e) == OYL_ERR_INPUT,
+           "no tree is final, as the emitter's errors are");
     unload(&x);
     oyl_emitter_free(e);
     oyl_arena_free(a);
