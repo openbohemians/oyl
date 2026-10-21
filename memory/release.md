@@ -25,9 +25,9 @@ release"): `OYL_VERSION` 1.2.0 (`just bump-version`), the changelog's
 unreleased versions folded into the features they describe), Debian and
 RPM changelog entries written out. All tests pass; `make dist` gives
 `oyl-1.2.0.tar.gz`; SONAME `liboyl.so.1`; every function and tag constant
-in v1.0.0's header still exported. The package workflow's dry run
-(`gh workflow run package.yml --ref main`) was blocked by Claude Code's
-permission check: the user can run it.
+in v1.0.0's header still exported. The package workflow's dry run (the user started it, run
+39680658321, 2026-10-21) passed: Arch, Debian and RPM built, the
+release step skipped as it should.
 **Before the tag:** several days of clean batch runs on `ace0d0e` or
 later (both sanitizers; on 2026-10-21 the directive code, `476782e` and
 its fixes, had only two runs each, on `1832b2c`), then the user's
