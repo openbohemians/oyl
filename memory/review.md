@@ -218,9 +218,16 @@ read back EF BF 80. The same match refuses such anchor names on every
 build, in the emitter (anchor_name_ok) and the parser
 (unallowed_char_at). **Fixed in `ff0c5ba`** (the user said "fix"):
 BE or BF only; tests fail with the old match on both builds. Codex on
-the directive commit `476782e` launched by the user 2026-10-20: brief
-`outtake/review-directives-brief.md`, output to
-`intake/codex-review-directives.md`.
+the directive commit `476782e` 2026-10-20 (brief
+`outtake/review-directives-brief.md`, output
+`intake/codex-review-directives.md`): 2 findings, both reproduced, the
+user said "please fix": a %TAG handle copied over a longer one from the
+document before wasn't terminated, and emit_tag() writes it as a string
+(`!e!ng!x` for `!e!x`, read back as another tag); a prefix starting
+with `#` (from `%23`) was written raw, read as a comment by Oyl and
+libyaml alike (both refuse `%TAG !e! #foo`), now `%23`. **Fixed in `1832b2c`**; the new tests and Codex's inputs (as fuzz
+seeds) fail on the old code; then sanitize clean, corpus replay
+(78,600) clean, 251,879 fuzz runs clean.
 
 **PR #5 (parser) reviewed 2026-10-19:** 7 findings, all verified. (The
 review's comment couldn't be posted: GitHub said the account "cannot
