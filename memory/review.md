@@ -1,6 +1,6 @@
 # Code review before 1.2.0
 
-*Updated 2026-10-20*
+*Updated 2026-10-21*
 
 The user asked for a thorough independent review of the C code (2026-10-18).
 Plan agreed: three layers. (1) Automated analysis and coverage, done
@@ -228,6 +228,10 @@ with `#` (from `%23`) was written raw, read as a comment by Oyl and
 libyaml alike (both refuse `%TAG !e! #foo`), now `%23`. **Fixed in `1832b2c`**; the new tests and Codex's inputs (as fuzz
 seeds) fail on the old code; then sanitize clean, corpus replay
 (78,600) clean, 251,879 fuzz runs clean.
+**Next: #7 (header and docs), by Codex:** brief
+`outtake/review-api-docs-brief.md` (2026-10-21), output to
+`intake/codex-review-api-docs.md`. Then close PRs #2-#7 and delete the
+`review/*` branches.
 
 **PR #5 (parser) reviewed 2026-10-19:** 7 findings, all verified. (The
 review's comment couldn't be posted: GitHub said the account "cannot
