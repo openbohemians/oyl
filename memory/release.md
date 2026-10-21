@@ -1,6 +1,6 @@
 # Release 1.0
 
-*Updated 2026-10-18*
+*Updated 2026-10-21*
 
 ## Status
 
@@ -17,7 +17,26 @@
   parse-path agreement; `94239d8`, verbatim tags), 2026-09-28 (`8e1d455`, flow-key lookahead
   redesign).
 
-## Next release: 1.2.0, straight from `tree`
+## 1.2.0: prepared, not tagged
+
+**Prepared 2026-10-21 in `ace0d0e`** (the user said "prepare the 1.2.0
+release"): `OYL_VERSION` 1.2.0 (`just bump-version`), the changelog's
+1.0.1, 1.1.0 and 1.2.0 sections folded into one (entries comparing two
+unreleased versions folded into the features they describe), Debian and
+RPM changelog entries written out. All tests pass; `make dist` gives
+`oyl-1.2.0.tar.gz`; SONAME `liboyl.so.1`; every function and tag constant
+in v1.0.0's header still exported. The package workflow's dry run
+(`gh workflow run package.yml --ref main`) was blocked by Claude Code's
+permission check: the user can run it.
+**Before the tag:** several days of clean batch runs on `ace0d0e` or
+later (both sanitizers; on 2026-10-21 the directive code, `476782e` and
+its fixes, had only two runs each, on `1832b2c`), then the user's
+go-ahead. At the tag, set the date in `CHANGELOG.md` ("unreleased"),
+`pkg/debian/changelog` (the `--` line) and `pkg/oyl.spec` (`%changelog`)
+to the tag date. After it: re-vendor oyl.rs (0.2.0+1.2.0, branch
+`oyl-1.2`, ask before `cargo publish`), oyl.go and oyl.cr.
+
+## Next release: 1.2.0, straight from `tree` (history)
 
 **The user decided 2026-10-17: no separate 1.0.1 or 1.1 releases** ("why
 bother with the older releases at this point"). Everything on `tree`
