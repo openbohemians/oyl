@@ -209,8 +209,18 @@ repro cases read the same in Oyl, libfyaml and PyYAML but for libyaml
 limits on valid 1.2 (bare document after `...`, empty keys, `k:}`, alias
 names ending in `:`, a literal starting with a tab).
 Not done (told the user): the emitter doesn't check that an alias names an
-anchor already written (todo.md). **Next: Codex on #6** (brief updated
-with the fixes and the known-and-decided list).
+anchor already written (todo.md).
+**Codex reviewed #6 2026-10-20** (on `96fd0ac`, output in
+`intake/codex-review-emitter.md`): 1 finding, reproduced: escaped_char()
+matched EF BF C0-FF as U+FFFE/F (`c2 >= 0xBE`). On builds without SSE2
+(macOS arm64 in CI) invalid UTF-8 EF BF C0 was written `"\uFFC0"` and
+read back EF BF 80. The same match refuses such anchor names on every
+build, in the emitter (anchor_name_ok) and the parser
+(unallowed_char_at). **Fixed in `ff0c5ba`** (the user said "fix"):
+BE or BF only; tests fail with the old match on both builds. Codex on
+the directive commit `476782e` launched by the user 2026-10-20: brief
+`outtake/review-directives-brief.md`, output to
+`intake/codex-review-directives.md`.
 
 **PR #5 (parser) reviewed 2026-10-19:** 7 findings, all verified. (The
 review's comment couldn't be posted: GitHub said the account "cannot
