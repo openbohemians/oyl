@@ -240,8 +240,9 @@ final error (now `oyl_emitter_fail()`); `OYL_TAG_VALUE` and
 since 1.0.0 (locale floats, JSON base64 and key-comparison OOM, the
 doubling merge chain from `5c12136`, `oyl_parse_json`'s merges; the last
 two found by me). **Fixed in `74a963e`**; all tests pass.
-**Next:** close PRs #2-#7 and delete the `review/*` branches (ask the
-user first).
+PRs #2-#7 closed and the 12 `review/*` branches deleted 2026-10-21
+(the user said "yes, close them and delete the branches"). Layer 2 is
+done.
 
 **PR #5 (parser) reviewed 2026-10-19:** 7 findings, all verified. (The
 review's comment couldn't be posted: GitHub said the account "cannot
