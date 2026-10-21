@@ -227,6 +227,8 @@ static void test_control_char_anchor(void) {
     char buf[256];
     oyl_mark at;
     ASSERT(!parse_error(good, strlen(good), &at, buf, sizeof buf), "NEL, U+2028 and other UTF-8 are fine");
+    const char *raw = "- &a\xEF\xBF\xC0 x\n- &b\xEF\xBF\xFF y\n- *a\xEF\xBF\xC0\n";
+    ASSERT(!parse_error(raw, strlen(raw), &at, buf, sizeof buf), "invalid UTF-8 as it is");
 }
 
 /* The first error in all of yaml's events, copied to buf, or NULL; its mark in *at */

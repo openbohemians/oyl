@@ -321,7 +321,7 @@ static size_t escaped_char(const char *s, size_t len, size_t i, uint32_t *code) 
     if (i + 2 >= len) return 0;
     uint8_t c1 = (uint8_t)s[i + 1], c2 = (uint8_t)s[i + 2];
     if ((c == 0xE2 && c1 == 0x80 && (c2 == 0xA8 || c2 == 0xA9)) ||
-        (c == 0xEF && ((c1 == 0xBB && c2 == 0xBF) || (c1 == 0xBF && c2 >= 0xBE)))) {
+        (c == 0xEF && ((c1 == 0xBB && c2 == 0xBF) || (c1 == 0xBF && (c2 == 0xBE || c2 == 0xBF))))) {
         *code = (uint32_t)(c & 0x0F) << 12 | (uint32_t)(c1 & 0x3F) << 6 | (c2 & 0x3F);
         return 3;
     }

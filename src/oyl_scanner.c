@@ -1016,7 +1016,7 @@ static bool unallowed_char_at(const char *buf, size_t len, size_t i) {
     uint8_t c = (uint8_t)buf[i];
     uint8_t c1 = i + 1 < len ? (uint8_t)buf[i + 1] : 0, c2 = i + 2 < len ? (uint8_t)buf[i + 2] : 0;
     if (c == 0xC2) return c1 >= 0x80 && c1 <= 0x9F && c1 != 0x85;
-    return c == 0xEF && ((c1 == 0xBB && c2 == 0xBF) || (c1 == 0xBF && c2 >= 0xBE));
+    return c == 0xEF && ((c1 == 0xBB && c2 == 0xBF) || (c1 == 0xBF && (c2 == 0xBE || c2 == 0xBF)));
 }
 
 static oyl_status scan_anchor_or_alias(oyl_scanner *s, oyl_token *tok) {
