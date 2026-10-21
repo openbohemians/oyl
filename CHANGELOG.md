@@ -2,6 +2,12 @@
 
 ## 1.2.0 (unreleased)
 
+Trees, scalar values, dialects, YAML to JSON, and an emitter that is
+faster, checks what it is given and keeps a document's directives.
+Programs built against 1.0.0 keep compiling and working: the API only
+grows, and the ABI is unchanged (`liboyl.so.1`). What behaves otherwise
+is under Changed, and the emitter's new errors under Fixed.
+
 ### Added
 
 - **Trees.** `oyl_parse_tree` reads a document into memory: one array of
@@ -24,173 +30,18 @@
   merges and `oyl_node_get` walks the merges, at most the size of the
   tree. Every valid YAML Test Suite case's tree replays the parser's
   events exactly, and the fuzzer checks the same.
-- `oyl_schema_value_of` gives a scalar's value from its parts (text,
-  style, tag), as `oyl_schema_value` does from an event: for bindings,
-  which shouldn't make events of their own.
 - `oyl_emit_tree` writes a tree as one document, exactly as emitting its
   events would (checked on the suite in every style, and by the fuzzer).
   From a parser with a schema, whose events tag every node, the tree
   writes only the tags in the input.
-- Documents keep their directives through the emitter. Before, a
-  document's `%YAML` and `%TAG` lines were lost, so `%YAML 1.1` with `a:
-  yes` came back as YAML 1.2, where `yes` is text. `oyl_emit_yaml_directive`
-  and `oyl_emit_tag_directive` write them for the next document (with
-  `---`, and `...` ending the one before), and its tags are written with
-  its handles (`!e!foo`), with `!` and `!!` only as it defines them.
-  `oyl_parser_tag_directive` gives a document's `%TAG` lines, as
-  `oyl_parser_yaml_version` gives its `%YAML`, to re-emit them; trees keep
-  both (`oyl_tree_yaml_version`, `oyl_tree_tag_directive`) and
-  `oyl_emit_tree` writes them. The emitter writes no `%YAML` of its own:
-  YAML 1.2 readers take a document without one as 1.2, and go-yaml v2
-  and v3 reject any but `%YAML 1.1`.
-
-### Changed
-
-- `oyl_parse_json` reads each document into a tree, and writes JSON from
-  it: the same output on 86,914 files (real Kubernetes manifests, local
-  YAML, the fuzz corpus), at the same speed. The one difference: an alias
-  to an unknown anchor is now reported before an alias inside its own
-  anchor, as go-yaml v2 reports them.
-- In YAML's merge, `oyl_parse_json` works out each mapping merged once
-  and reuses its entries, within the parser's bound on merges for events
-  (`OYL_ERR_LIMIT`, "merges too costly to expand"). Before, it worked
-  each path out again and counted that as go-yaml v2 counts aliasing, so
-  a chain of 10 anchors each merging the one before twice failed as
-  "excessive aliasing" though PyYAML reads it; now 10,000 take 11 ms.
-  go-yaml v2's merge order (`OYL_JSON_KUBERNETES`) is unchanged, as
-  go-yaml v2 refuses such documents too. Of a document's errors, a bad
-  merge may now be reported before another.
-- `oyl_parse_json` checks every node as decoding checks it, as go-yaml v2
-  and PyYAML decode even the value of a key set again later: `a: !!int
-  foo` then `a: 1` is an error, as are a collection as a key or a merge of
-  what isn't a mapping anywhere. What only JSON can't hold (a null or
-  uint64 key, inf or NaN) fails only where it would be written, as
-  `sigs.k8s.io/yaml` sees only what is left (before, a null key in a
-  mapping merged anywhere failed in YAML's merge). go-yaml v2's limit on
-  aliasing is counted as go-yaml v2 counts it, before writing (every
-  node decoded, the document node and overridden values included, a
-  merge's sequence not); in YAML's merge, a value merged through an
-  alias counts as aliased. Chained merges count as nesting.
-  `OYL_JSON_STRICT` checks every mapping, even one only merged, and fails
-  on two keys that become one string (`1` and `"1"`). A sequence of
-  mappings merged through an alias is worked out once, like a mapping:
-  30,000 mappings merging one such sequence of 30,000 empty mappings took
-  14 seconds, now 10 ms. The keys -0.0 and 0.0 are one key, as in Go,
-  written as the last one is (`{"0":"b"}` for `{-0.0: a, 0.0: b}`).
-- A `<<` tagged `!` is a merge key in any style, for events, trees and
-  JSON, as libyaml reads it (go-yaml v2, PyYAML): `!` leaves it to be
-  resolved as if plain.
-- With a schema on the parser (`oyl_parser_set_schema`), a node's event
-  marks a tag the schema gave `implicit`, so tags written can be told from
-  the schema's. Trees keep exactly the tags written: an explicit `!!int 12`
-  stays (before, a tag the schema would give anyway was dropped), and
-  `oyl_parse_json` with another schema than the parser's reads them.
-
-### Performance
-
-- Schemas index their rules by first byte, so typing a scalar tries only
-  the rules that could accept it: for text starting with `n`, go-yaml v2's
-  schema tries `null`, `n` and `no`, not all 30 rules. Building a tree is
-  about 8% faster for it.
-- The emitter is 1.5x to 7x faster, with the same output byte for byte
-  (but for the fixes below): it decides a scalar's style in one pass over it instead of up to four,
-  writes quoted scalars a chunk at a time, no longer counts output
-  columns it never used, and emits events and trees without building an
-  event per node. Writing held trees as YAML: block mappings 214 to 340
-  MB/s, the largest Kubernetes CRD 705 to 1531, multi-line plain scalars
-  334 to 2352.
-
-### Fixed
-
-- `oyl_parser_new` and `oyl_scanner_new` read NULL input of length 0 as
-  empty text; before, the scanner took offsets from the NULL pointer. NULL
-  with a length gives NULL.
-- The escapes `\L` and `\P` (U+2028 and U+2029), which YAML 1.2 has, were
-  rejected as invalid.
-- Control characters YAML forbids are rejected wherever they are: C0 but
-  tab and line breaks, in quoted and block scalars, comments and
-  directives (before, only plain scalars, tags and anchors were checked),
-  and DEL outside quotes. Quoted scalars may hold DEL, as YAML 1.2 allows
-  (libyaml refuses it). Parsing costs 1–3% more instructions on text-heavy
-  input, none measurable in time.
-- Anchor and alias names may not hold a C1 control character (but NEL),
-  U+FEFF, U+FFFE or U+FFFF, which YAML doesn't allow and a name can't
-  escape; they were read as part of the name.
-- The emitter writes what reads back as the events given it, where it
-  didn't:
-  - A document written without `---` after one that ended without `...`
-    ran into it (two trees `a: 1` and `b: 2` read back as one document,
-    `- x` and `k: v` not at all), and an empty one vanished: both now get
-    `---`. Streams re-emitted from the parser weren't affected.
-  - A single-quoted scalar asked for with control characters was written
-    with them raw, which no parser reads, and with DEL, which YAML output
-    may not hold raw: it is double-quoted, and they are escaped.
-  - C1 control characters, U+FEFF inside text, U+FFFE and U+FFFF were
-    written raw, even in double quotes; NEL, U+2028 and U+2029 were
-    written raw, which YAML 1.1 readers take as line breaks. All are
-    written escaped in double quotes (`\x9B`, `\uFEFF`, `\N`, `\L`, `\P`).
-  - A mapping key longer than 1024 characters was written implicit,
-    which YAML forbids: it is written explicit (`? key`).
-  - Plain text starting with `?` or `:` in a flow collection (`[:x]`),
-    valid YAML 1.2 that libyaml and libfyaml read as a mapping, is quoted.
-- The emitter checks the order of events: two roots, a mapping ended
-  after a key, an end that doesn't match its start, a node outside a
-  document, and anchor or alias names YAML can't hold (`a b`, `c,d`, an
-  empty alias) were written as broken YAML; they are `OYL_ERR_EMIT`. The
-  first error is final, as the parser's are (before, a call after a
-  failed one could succeed and write on from a broken state).
-- An implicit key longer than 1024 characters is an error, as YAML
-  requires (block mapping keys and pairs in flow sequences; a flow
-  mapping's keys and explicit `?` keys are unlimited). It counts
-  characters, the key's anchor and tag and the blanks before its `:`
-  included.
-- A `%TAG` prefix must be URI characters and %-escapes, not starting
-  with a flow indicator, as YAML has it; anything was accepted. Its
-  escapes are decoded, as libyaml does and as Oyl already did in a tag's
-  suffix and in verbatim tags: `%TAG !e! tag:a%2Cb:` makes `!e!x`
-  `tag:a,b:x` (it was `tag:a%2Cb:x`).
-- A lone `!` is the non-specific tag even when `%TAG` gives the `!`
-  handle a prefix; it was read as that prefix.
-- The parser running out of memory while expanding a tag gave the tag as
-  written (`!!str`) and succeeded; it gives `OYL_ERR_MEMORY`. Out of memory
-  saving its first restart point (for a flow collection as a key, `[a]:
-  c`), it gave a parse error; it gives `OYL_ERR_MEMORY`.
-
-## 1.1.0 (unreleased)
-
-### Added
-
 - **Scalar values.** `oyl_schema_value` gives a scalar event's value as an
   `oyl_value`: null, bool, int, uint, float, or text. A schema is now an
   ordered list of tags bound to parsers, and the parser that types a
   scalar also gives its value. It needs no schema on the parser, so the
   faster incremental parser can stay on. A float reads the same in any
   locale, and reading one needs no memory however long it is.
-- **Dialect flags** for the built-in int and float parsers
-  (`oyl_schema_builder_add_int_flags`, `oyl_schema_builder_add_float_flags`):
-  `0x`/`0o`/`0b` prefixes, leading-zero octal, underscores, range limits.
-- **Custom types:** `oyl_schema_builder_add_type` binds a tag to your own
-  parser. Binding a built-in tag such as `!!int` redefines it.
-- **`oyl_schema_goyaml2()`**, go-yaml v2's types as Kubernetes reads YAML:
-  `yes`/`no`/`on`/`off`/`y`/`n` booleans, `0777` octal, `0b` binary,
-  underscores, timestamps, and an int beyond 64 bits as a float. Checked
-  against go-yaml v2 itself on about 1.5 million generated and 55,000
-  real-world scalars, with no difference in tag or value. An explicit
-  `!!float` reads its scalar as go-yaml v2 does, as if untagged, taking an
-  int as a float (`!!float 017` is 15, `!!float 0x10` 16), and a sign may
-  follow `0b` (`0b-101` is -5, `OYL_INT_BIN_SIGN`): no difference from
-  go-yaml v2 on 240,084 explicitly tagged scalars either.
-- `OYL_TAG_TIMESTAMP`.
-- **`oyl_parse_json`**: YAML documents as JSON. With the go-yaml v2 schema
-  and `OYL_JSON_KUBERNETES`, byte for byte `sigs.k8s.io/yaml`'s
-  `YAMLToJSON`, as Kubernetes reads manifests: go-yaml v2's merge order,
-  sorted keys, Go's number and string formatting. Of 866 documents from
-  public Kubernetes manifests, 857 convert identically and 5 fail alike;
-  the other 4 are where go-yaml v2's syntax differs from YAML 1.2. About six
-  times as fast. With the Core schema and `OYL_JSON_MERGE`, standard JSON.
-  Floats are written in their shortest form, the same in any locale, and
-  `!!binary` decoded (`OYL_TAG_BINARY`).
-
+  `oyl_schema_value_of` gives a scalar's value from its parts (text,
+  style, tag): for bindings, which shouldn't make events of their own.
 - **Dialects**: a schema, syntax leniencies and a merge order, of one
   YAML version, chosen per document by its directives: a `%TAG !!` prefix
   the program registered, else for its `%YAML` version the program's
@@ -217,8 +68,55 @@
   tagged scalars: the same tag and value, but for what PyYAML itself
   can't read (`0b_`) and base 60 floats of more than 14 parts, whose last
   bits may differ.
+- **`oyl_schema_goyaml2()`**, go-yaml v2's types as Kubernetes reads YAML:
+  `yes`/`no`/`on`/`off`/`y`/`n` booleans, `0777` octal, `0b` binary,
+  underscores, timestamps, and an int beyond 64 bits as a float. Checked
+  against go-yaml v2 itself on about 1.5 million generated and 55,000
+  real-world scalars, with no difference in tag or value. An explicit
+  `!!float` reads its scalar as go-yaml v2 does, as if untagged, taking an
+  int as a float (`!!float 017` is 15, `!!float 0x10` 16), and a sign may
+  follow `0b` (`0b-101` is -5, `OYL_INT_BIN_SIGN`): no difference from
+  go-yaml v2 on 240,084 explicitly tagged scalars either.
+- **Dialect flags** for the built-in int and float parsers
+  (`oyl_schema_builder_add_int_flags`, `oyl_schema_builder_add_float_flags`):
+  `0x`/`0o`/`0b` prefixes, leading-zero octal, underscores, range limits.
+- **Custom types:** `oyl_schema_builder_add_type` binds a tag to your own
+  parser. Binding a built-in tag such as `!!int` redefines it.
+- **`oyl_parse_json`**: YAML documents as JSON. With the go-yaml v2 schema
+  and `OYL_JSON_KUBERNETES`, byte for byte `sigs.k8s.io/yaml`'s
+  `YAMLToJSON`, as Kubernetes reads manifests: go-yaml v2's merge order,
+  sorted keys, Go's number and string formatting. Of 866 documents from
+  public Kubernetes manifests, 857 convert identically with the schema
+  alone and 5 fail alike, and with the go-yaml v2 dialect's syntax all
+  866 convert identically. About six times as fast. With the Core schema
+  and `OYL_JSON_MERGE`, standard JSON; with no schema, the document's
+  dialect types the scalars, and its merge order takes the place of the
+  merge flags. Every node is checked as decoding checks it, since go-yaml
+  v2 and PyYAML decode even the value of a key set again later (`a: !!int
+  foo` then `a: 1` is an error); what only JSON can't hold (a null or
+  uint64 key, inf or NaN) fails only where it would be written. Aliases
+  are expanded within go-yaml v2's limit on aliasing, counted as go-yaml
+  v2 counts it; in YAML's merge, each mapping merged is worked out once,
+  within the parser's bound on merges (`OYL_ERR_LIMIT`).
+  `OYL_JSON_STRICT` checks every mapping, even one only merged, and fails
+  on two keys that become one string (`1` and `"1"`). Floats are written
+  in their shortest form, the same in any locale, `!!binary` is decoded
+  (`OYL_TAG_BINARY`), and -0.0 and 0.0 are one key, as in Go.
+- Documents keep their directives through the emitter. Before, a
+  document's `%YAML` and `%TAG` lines were lost, so `%YAML 1.1` with `a:
+  yes` came back as YAML 1.2, where `yes` is text. `oyl_emit_yaml_directive`
+  and `oyl_emit_tag_directive` write them for the next document (with
+  `---`, and `...` ending the one before), and its tags are written with
+  its handles (`!e!foo`), with `!` and `!!` only as it defines them.
+  `oyl_parser_tag_directive` gives a document's `%TAG` lines, as
+  `oyl_parser_yaml_version` gives its `%YAML`, to re-emit them; trees keep
+  both (`oyl_tree_yaml_version`, `oyl_tree_tag_directive`) and
+  `oyl_emit_tree` writes them. The emitter writes no `%YAML` of its own:
+  YAML 1.2 readers take a document without one as 1.2, and go-yaml v2
+  and v3 reject any but `%YAML 1.1`.
 - **Warnings**, to a callback (`oyl_parser_set_warn`).
-- `oyl_parser_document_dialect`, `oyl_parser_yaml_version`, `OYL_TAG_VALUE`.
+- `oyl_parser_document_dialect`, `oyl_parser_yaml_version`,
+  `OYL_TAG_TIMESTAMP`, `OYL_TAG_VALUE`, `OYL_TAG_BINARY`.
 
 ### Changed
 
@@ -229,16 +127,33 @@
 - Of two `<<` merge keys in one mapping, the later wins, as in PyYAML and
   go-yaml v2; `oyl_parser_set_merge` let the earlier win. Keys written in
   the mapping still win over both.
+- A `<<` tagged `!` is a merge key in any style, for events, trees and
+  JSON, as libyaml reads it (go-yaml v2, PyYAML): `!` leaves it to be
+  resolved as if plain.
+- With a schema on the parser (`oyl_parser_set_schema`), a node's event
+  marks a tag the schema gave `implicit`, so tags written can be told from
+  the schema's. Trees keep exactly the tags written.
 
 ### Performance
 
-- Tag resolution is about 40% faster with the Core schema: a word rule
-  checks the length before anything else.
-
-## 1.0.1 (unreleased)
+- Typing a scalar with a schema tries only the rules that could accept
+  it, indexed by first byte (for text starting with `n`, go-yaml v2's
+  schema tries `null`, `n` and `no`, not all 30 rules), and a word rule
+  checks the length before anything else, which alone made tag
+  resolution with the Core schema about 40% faster.
+- The emitter is 1.5x to 7x faster, with the same output byte for byte
+  (but for the fixes below): it decides a scalar's style in one pass
+  over it instead of up to four, writes quoted scalars a chunk at a time,
+  no longer counts output columns it never used, and emits events and
+  trees without building an event per node. Writing held trees as YAML: block mappings 214 to 340
+  MB/s, the largest Kubernetes CRD 705 to 1531, multi-line plain scalars
+  334 to 2352.
 
 ### Fixed
 
+- `oyl_parser_new` and `oyl_scanner_new` read NULL input of length 0 as
+  empty text; before, the scanner took offsets from the NULL pointer. NULL
+  with a length gives NULL.
 - The Core schema resolves `.Inf`, `.INF`, `.NaN` and `.NAN` to `!!float`,
   as YAML 1.2 specifies; only the lowercase spellings did. The JSON preset,
   which shares Core's number rules, does too.
@@ -246,8 +161,33 @@
   raw byte, which is not UTF-8. It is the code point U+0080 to U+00FF and
   now gives its UTF-8 encoding: `"\xB5"` is `µ`. Found by comparing with
   go-yaml.
+- The escapes `\L` and `\P` (U+2028 and U+2029), which YAML 1.2 has, were
+  rejected as invalid.
+- Control characters YAML forbids are rejected wherever they are: C0 but
+  tab and line breaks, in quoted and block scalars, comments and
+  directives (before, only plain scalars, tags and anchors were checked),
+  and DEL outside quotes. Quoted scalars may hold DEL, as YAML 1.2 allows
+  (libyaml refuses it). Parsing costs 1–3% more instructions on text-heavy
+  input, none measurable in time.
+- Anchor and alias names may not hold a C1 control character (but NEL),
+  U+FEFF, U+FFFE or U+FFFF, which YAML doesn't allow and a name can't
+  escape; they were read as part of the name.
+- An implicit key longer than 1024 characters is an error, as YAML
+  requires (block mapping keys and pairs in flow sequences; a flow
+  mapping's keys and explicit `?` keys are unlimited). It counts
+  characters, the key's anchor and tag and the blanks before its `:`
+  included.
 - `%YAML 2.0` and other versions not 1.x are rejected, as the spec asks
   (for 0.x, as libyaml does). Any 1.x version is still accepted.
+- A second `%TAG` directive for the same handle in one document is an
+  error, as the spec says; the last one won. Found by the code review.
+- A `%TAG` prefix must be URI characters and %-escapes, not starting
+  with a flow indicator, as YAML has it; anything was accepted. Its
+  escapes are decoded, as libyaml does and as Oyl already did in a tag's
+  suffix and in verbatim tags: `%TAG !e! tag:a%2Cb:` makes `!e!x`
+  `tag:a,b:x` (it was `tag:a%2Cb:x`).
+- A lone `!` is the non-specific tag even when `%TAG` gives the `!`
+  handle a prefix; it was read as that prefix.
 - A flow collection used as a key, with a quoted key inside it followed by
   blanks before its `:` and a quoted value ending in a comma
   (`['' :',']: v`), was a key to the eager parser and a value to the
@@ -257,14 +197,6 @@
   the input for comment, so a flow collection used as a key after it
   (`[a #x\r, [b]: c]`) was an error; the eager parser read it correctly.
   Found by fuzzing.
-- `oyl_parser_set_merge`: a merge's source that had merges of its own
-  took part without them when it was one of a sequence, so a later item
-  could win over what an earlier one merged (`<<: [*b, *c]`, with `b`
-  merging `x` and `c` writing it, gave `c`'s `x`). An alias to a sequence
-  of mappings (`<<: *list`) is merged as the sequence, as YAML's merge
-  type has it; it was an error. A `<<` tagged `!!merge` merges even when
-  quoted, and one tagged `!!str` doesn't, under a schema that gives `<<`
-  the merge tag (YAML 1.1's). Found by comparing with PyYAML.
 - Columns and indentation were ints in the scanner and parser, narrowed
   from the `size_t` positions in marks, so a line longer than 2 GB gave
   wrong positions and a block scalar's count of leading spaces
@@ -273,6 +205,21 @@
   -1 is the top level) and as wide as offsets, so a line can be as long
   as the input. The same instructions run as before. Found by stricter
   compiler warnings.
+- An error is final: every later `oyl_parse_next` returns it again,
+  with the same message, as do `oyl_parse_tree` and `oyl_parse_json`,
+  whose own errors count too. Calling again after an error went on
+  parsing: the eager parser closed the open collections and took the
+  rest as it came, dropping content (`&x a:\n  b: c\n  d\n---\ne` lost
+  `d`), and the incremental one gave a second document start. Found by
+  the code review.
+- `oyl_parser_set_merge`: a merge's source that had merges of its own
+  took part without them when it was one of a sequence, so a later item
+  could win over what an earlier one merged (`<<: [*b, *c]`, with `b`
+  merging `x` and `c` writing it, gave `c`'s `x`). An alias to a sequence
+  of mappings (`<<: *list`) is merged as the sequence, as YAML's merge
+  type has it; it was an error. A `<<` tagged `!!merge` merges even when
+  quoted, and one tagged `!!str` doesn't, under a schema that gives `<<`
+  the merge tag (YAML 1.1's). Found by comparing with PyYAML.
 - `oyl_parser_set_merge` worked merges out in up to 32 passes, so merges
   nested deeper were left as ordinary `<<` keys, without an error. Each
   mapping's merges are now worked out once, at its place in the document
@@ -282,11 +229,11 @@
   counts against the bound, pairs or not: 50,000 mappings each merging
   an alias to a sequence of 50,000 aliases to an empty mapping took 57 s.
   The depth limit applies as merges nest. Found by the code review.
-- Case-insensitive words in a built schema (`OYL_MATCH_ICASE`) followed
-  the locale's case: under a Turkish locale `Inf` didn't match `inf`. They
-  ignore ASCII's case now, as documented. Found by the code review.
-- A second `%TAG` directive for the same handle in one document is an
-  error, as the spec says; the last one won. Found by the code review.
+- `oyl_parser_set_merge` compared keys by their text. A merged key equal
+  to one already set but written otherwise (`0x1` for `1`, or `yes` for
+  `on` in YAML 1.1) was added again, and one written the same but of
+  another type (`1` for `"1"`) was left out. Keys are compared by tag and
+  value, in the document's schema, as YAML compares them.
 - With merges or alias resolution on, the parser's table of anchors
   hashed their names with FNV-1a, whose collisions are cheap to make, so
   65,536 anchors named to collide took 3.2 s instead of 0.02 s. Its
@@ -296,6 +243,9 @@
   one, so no document can be made whose anchors, keys or merged mappings
   collide. Results never depend on the key: the tables only find things.
   Found by the code review.
+- Case-insensitive words in a built schema (`OYL_MATCH_ICASE`) followed
+  the locale's case: under a Turkish locale `Inf` didn't match `inf`. They
+  ignore ASCII's case now, as documented. Found by the code review.
 - Running out of memory is always `OYL_ERR_MEMORY`, never a quiet
   change: the merge's anchor table and its set of keys already seen
   dropped what they couldn't add (a merge then failed as "undefined
@@ -305,18 +255,33 @@
   returns NULL data only when out of memory (empty output is ""). Found
   by a new test that fails every allocation in turn (Linux: the linker's
   `--wrap`), which also shows, under ASan, that nothing leaks.
-- An error is final: every later `oyl_parse_next` returns it again,
-  with the same message, as do `oyl_parse_tree` and `oyl_parse_json`,
-  whose own errors count too. Calling again after an error went on
-  parsing: the eager parser closed the open collections and took the
-  rest as it came, dropping content (`&x a:\n  b: c\n  d\n---\ne` lost
-  `d`), and the incremental one gave a second document start. Found by
-  the code review.
-- `oyl_parser_set_merge` compared keys by their text. A merged key equal
-  to one already set but written otherwise (`0x1` for `1`, or `yes` for
-  `on` in YAML 1.1) was added again, and one written the same but of
-  another type (`1` for `"1"`) was left out. Keys are compared by tag and
-  value, in the document's schema, as YAML compares them.
+- The parser running out of memory while expanding a tag gave the tag as
+  written (`!!str`) and succeeded; it gives `OYL_ERR_MEMORY`. Out of memory
+  saving its first restart point (for a flow collection as a key, `[a]:
+  c`), it gave a parse error; it gives `OYL_ERR_MEMORY`.
+- The emitter writes what reads back as the events given it, where it
+  didn't:
+  - A document written without `---` after one that ended without `...`
+    ran into it (`a: 1` and `b: 2` read back as one document,
+    `- x` and `k: v` not at all), and an empty one vanished: both now get
+    `---`. Streams re-emitted from the parser weren't affected.
+  - A single-quoted scalar asked for with control characters was written
+    with them raw, which no parser reads, and with DEL, which YAML output
+    may not hold raw: it is double-quoted, and they are escaped.
+  - C1 control characters, U+FEFF inside text, U+FFFE and U+FFFF were
+    written raw, even in double quotes; NEL, U+2028 and U+2029 were
+    written raw, which YAML 1.1 readers take as line breaks. All are
+    written escaped in double quotes (`\x9B`, `\uFEFF`, `\N`, `\L`, `\P`).
+  - A mapping key longer than 1024 characters was written implicit,
+    which YAML forbids: it is written explicit (`? key`).
+  - Plain text starting with `?` or `:` in a flow collection (`[:x]`),
+    valid YAML 1.2 that libyaml and libfyaml read as a mapping, is quoted.
+- The emitter checks the order of events: two roots, a mapping ended
+  after a key, an end that doesn't match its start, a node outside a
+  document, and anchor or alias names YAML can't hold (`a b`, `c,d`, an
+  empty alias) were written as broken YAML; they are `OYL_ERR_EMIT`. The
+  first error is final, as the parser's are (before, a call after a
+  failed one could succeed and write on from a broken state).
 
 ### Documentation
 

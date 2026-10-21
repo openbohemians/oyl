@@ -1,5 +1,5 @@
 Name:           oyl
-Version:        1.0.0
+Version:        1.2.0
 Release:        1%{?dist}
 Summary:        Fast, minimal, zero-copy YAML 1.2 parser and emitter library in C11
 
@@ -57,6 +57,22 @@ make test test-schema test-emitter test-merge test-resolve test-errors \
 %{_libdir}/pkgconfig/oyl.pc
 
 %changelog
+* Wed Oct 21 2026 Thomas Sawyer <transfire@gmail.com> - 1.2.0-1
+- Trees: oyl_parse_tree reads a document into one flat array of nodes,
+  whose lookups follow aliases and apply merges, with keys compared as
+  YAML compares them; oyl_emit_tree writes one back.
+- Scalar values (oyl_schema_value) and dialects, chosen per document by
+  its directives: YAML 1.2, YAML 1.1 as PyYAML reads it, go-yaml v2 as
+  Kubernetes reads it, and dialects a program builds.
+- oyl_parse_json: YAML to JSON, byte for byte as sigs.k8s.io/yaml with the
+  go-yaml v2 dialect.
+- Emitter: 1.5-7x faster; checks the order of events; writes only what
+  reads back; keeps documents' %YAML and %TAG directives.
+- Parser fixes found by fuzzing and code review; hash tables keyed against
+  collision floods; running out of memory always reported.
+- API and ABI compatible with 1.0: the runtime library is still
+  liboyl.so.1.
+
 * Sat Oct 10 2026 Thomas Sawyer <transfire@gmail.com> - 1.0.0-1
 - Renamed from yam to oyl: the oyl_/OYL_ API prefix, <oyl/oyl.h>,
   liboyl, and the oyl package.
