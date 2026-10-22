@@ -576,20 +576,15 @@ static oyl_status scan_plain_scalar(oyl_scanner *s, oyl_token *tok) {
                 break;
             }
 
-            /* check for indicators that end the scalar */
+            /* check for indicators that end the scalar. Only ": ", "#" and
+             * a document marker do: a line indented enough to continue the
+             * scalar may start with any other indicator (YAML 1.2, 7.3.3:
+             * only a plain scalar's first character is restricted). So
+             * "a\n- b", "a\n&b" and "[a\n? b]" are "a - b", "a &b" and
+             * ["a ? b"]. A line at or below a block collection's indent,
+             * where "- " or "&" could start a node, failed the indentation
+             * check above */
             uint8_t nc = PEEK(s);
-            /* - and ? only start block entries at indent levels where
-             * a new block collection could begin (at or below current indent).
-             * On deeper continuation lines, they're just content.
-             * At top level (indent < 0), always terminate. */
-            if ((nc == '-' || nc == '?') &&
-                (s->indent < 0 || next_indent <= s->indent)) {
-                uint8_t after = PEEK_AT(s, 1);
-                if (oyl_is_blank_or_break(after) || after == 0) {
-                    s->pos = save; s->line = save_line; s->col = save_col;
-                    break;
-                }
-            }
             /* : followed by whitespace always ends (it introduces a mapping value) */
             if (nc == ':') {
                 uint8_t after = PEEK_AT(s, 1);
@@ -599,15 +594,6 @@ static oyl_status scan_plain_scalar(oyl_scanner *s, oyl_token *tok) {
                 }
             }
             if (nc == '#') {
-                s->pos = save; s->line = save_line; s->col = save_col;
-                break;
-            }
-            /* & and * could be anchors/aliases — they terminate the
-             * scalar only at indent levels where a new node could start
-             * (at or below current indent). On deeper continuation lines
-             * they're just plain text. At top level, terminate at col 0. */
-            if ((nc == '&' || nc == '*') &&
-                next_indent <= s->indent + (s->indent < 0 ? 1 : 0)) {
                 s->pos = save; s->line = save_line; s->col = save_col;
                 break;
             }

@@ -617,6 +617,14 @@ static void test_continuation_indent(void) {
     check("k: \"a\nb\"", "{ k ERR");
     check("k: 'a\nb'", "{ k ERR");
     check("- [\n\tfoo\n ]", "[ [ ERR");               /* tab isn't indentation */
+    /* a line continuing a plain scalar may start with an indicator but
+     * ": " and "#", at top level too: each is one scalar ("a &b") */
+    check("[a\n&b]", "[ a &b ]");
+    check("[a\n- b]", "[ a - b ]");
+    check("{a: b\n? c}", "{ a b ? c }");
+    check("a\n*b", "a *b");
+    check("a\n  - b", "a - b");
+    check("[a\n#b\n]", "[ a ]");
 }
 
 /* Properties on separate lines: in block context the earlier line's

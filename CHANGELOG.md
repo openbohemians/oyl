@@ -227,6 +227,14 @@ is under Changed, and the emitter's new errors under Fixed.
   `k: [a\nb]`, the scalar `a`, which could have been a key. The eager
   parser had them right; the two differed on one scan error in twenty in
   the fuzz corpus. Found by comparing them there.
+- A line that continues a plain scalar may start with any indicator but
+  `: ` and `#`, as YAML 1.2 has it: only a scalar's first character is
+  restricted. At top level, in block or flow context, a scalar ended at
+  a line starting with `- ` or `? `, or with `&` or `*` in column 1, so
+  `a\n- b`, `[a\n&b]` and `[a\n? b]` were errors; they are `"a - b"`,
+  `["a &b"]` and `["a ? b"]`, as libyaml reads them. Inside a block
+  collection such lines already continued the scalar. No input that
+  parsed reads differently.
 - `oyl_parser_set_merge`: a merge's source that had merges of its own
   took part without them when it was one of a sequence, so a later item
   could win over what an earlier one merged (`<<: [*b, *c]`, with `b`

@@ -262,12 +262,12 @@ static void test_tag(void) {
 static void test_anchor_alias(void) {
     TEST("anchor and alias");
     oyl_token toks[16];
-    int n = scan_all("&ref hello\n*ref", toks, 16);
+    int n = scan_all("- &ref hello\n- *ref", toks, 16);
 
-    bool ok = n >= 4
-        && toks[1].type == OYL_TOK_ANCHOR
-        && memcmp(toks[1].value.data, "ref", 3) == 0
-        && toks[2].type == OYL_TOK_SCALAR;
+    bool ok = n >= 6
+        && toks[2].type == OYL_TOK_ANCHOR
+        && memcmp(toks[2].value.data, "ref", 3) == 0
+        && toks[3].type == OYL_TOK_SCALAR;
 
     /* find the alias */
     bool found_alias = false;
@@ -278,6 +278,38 @@ static void test_anchor_alias(void) {
     }
 
     if (ok && found_alias) PASS(); else FAIL("expected ANCHOR and ALIAS");
+}
+
+/* only a plain scalar's first character can't be an indicator: a line
+ * that continues it may start with one, at top level and in flow */
+static void test_continued_by_indicator(void) {
+    TEST("continuation line starting with an indicator");
+    static const struct { const char *in, *value; int at; } cases[] = {
+        { "&ref hello\n*ref", "hello *ref", 2 },
+        { "a\n- b",          "a - b",      1 },
+        { "a\n? b",          "a ? b",      1 },
+        { "[a\n&b]",         "a &b",       2 },
+        { "[a\n*b]",         "a *b",       2 },
+        { "[a\n- b]",        "a - b",      2 },
+        { "[a\n  ? b]",      "a ? b",      2 },
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        oyl_token toks[8];
+        int n = scan_all(cases[i].in, toks, 8);
+        int at = cases[i].at;
+        size_t len = strlen(cases[i].value);
+        if (!(n > at + 1 && toks[at].type == OYL_TOK_SCALAR
+              && toks[at].value.len == len
+              && memcmp(toks[at].value.data, cases[i].value, len) == 0
+              && toks[at + 1].type != OYL_TOK_SCALAR
+              && toks[n - 1].type == OYL_TOK_STREAM_END)) {
+            char msg[64];
+            snprintf(msg, sizeof msg, "case %zu: expected one scalar", i);
+            FAIL(msg);
+            return;
+        }
+    }
+    PASS();
 }
 
 static void test_colon_in_scalar(void) {
@@ -486,6 +518,7 @@ int main(void) {
     test_doc_indicators();
     test_tag();
     test_anchor_alias();
+    test_continued_by_indicator();
     test_colon_in_scalar();
     test_comment();
     test_yaml12_bool();
