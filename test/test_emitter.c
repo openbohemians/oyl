@@ -717,6 +717,52 @@ static void test_escaped_characters(void) {
         }
     }
     ASSERT(all, "escapes across chunk boundaries read back");
+
+    /* and at every place in text read 16 bytes at a time (from 32 bytes,
+     * in blocks with two bytes after them), in each style asked for */
+    static const char *specials[] = {
+        "\xEF\xBB\xBF", "\xC2\x85", "\xC2\x9B", "\xE2\x80\xA9", "\xEF\xBF\xBE", "\x01", "\x7F",
+        "\"", "\\", "'", "\n", "\t", ":", "#", ",", "{",
+        "\xC2\xA0", "\xE2\x80\x99", "\xEF\xBF\xBD", "\xC3\xA9",   /* stay as they are */
+    };
+    static const oyl_scalar_style styles[] = {
+        OYL_SCALAR_PLAIN, OYL_SCALAR_SINGLE_QUOTED, OYL_SCALAR_DOUBLE_QUOTED, OYL_SCALAR_LITERAL,
+    };
+    static const size_t lens[] = { 20, 31, 32, 33, 47, 64 };
+    size_t bad = 0;
+    for (size_t c = 0; all && c < sizeof specials / sizeof specials[0]; c++) {
+        size_t cl = strlen(specials[c]);
+        for (size_t l = 0; l < sizeof lens / sizeof lens[0]; l++) {
+            for (size_t at = 0; at + cl <= lens[l]; at++) {
+                memset(text, 'a', lens[l]);
+                memcpy(text + at, specials[c], cl);
+                oyl_str v = { text, lens[l] };
+                for (size_t s = 0; s < sizeof styles / sizeof styles[0]; s++) {
+                    oyl_emitter *e = oyl_emitter_new(a);
+                    oyl_emit_stream_start(e);
+                    oyl_emit_document_start(e, true);
+                    oyl_emit_scalar(e, v, styles[s], N, N);
+                    oyl_emit_document_end(e, true);
+                    oyl_emit_stream_end(e);
+                    oyl_str out = oyl_emitter_output(e);
+                    oyl_parser *p = oyl_parser_new(out.data, out.len, a);
+                    const oyl_event *ev;
+                    bool same = false;
+                    while (oyl_parse_next(p, &ev) == OYL_OK && ev->type != OYL_EVT_STREAM_END)
+                        if (ev->type == OYL_EVT_SCALAR)
+                            same = ev->value.len == v.len && memcmp(ev->value.data, v.data, v.len) == 0;
+                    /* the first seven are written escaped, never as they are */
+                    if (c < 7 && str_contains(out, specials[c])) same = false;
+                    if (!same && bad++ < 3)
+                        printf("    special %zu at %zu of %zu, style %d: %.*s", c, at, lens[l],
+                               (int)styles[s], (int)out.len, out.data);
+                    oyl_parser_free(p);
+                    oyl_emitter_free(e);
+                }
+            }
+        }
+    }
+    ASSERT(bad == 0, "special characters anywhere in 16-byte blocks read back");
     free(text);
     free(back);
     oyl_arena_free(a);
