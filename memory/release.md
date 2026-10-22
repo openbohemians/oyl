@@ -1,6 +1,6 @@
 # Release 1.0
 
-*Updated 2026-10-21*
+*Updated 2026-10-22*
 
 ## Status
 
@@ -28,13 +28,16 @@ RPM changelog entries written out. All tests pass; `make dist` gives
 in v1.0.0's header still exported. The package workflow's dry run (the user started it, run
 39680658321, 2026-10-21) passed: Arch, Debian and RPM built, the
 release step skipped as it should.
-**Before the tag:** several days of clean batch runs on `affab0b` or
+**Before the tag:** several days of clean batch runs on `511cf20` or
 later (both sanitizers; on 2026-10-21 the directive code, `476782e` and
 its fixes, had only two runs each, on `1832b2c`), then the user's
 go-ahead. `affab0b` (2026-10-21, after the version bump; the user said
 "fix the C we can still update and retag") makes scanner errors final
 and has the incremental parser keep the first one: it changes which
-events come before a scan error, so it needs the batch runs too. At the tag, set the date in `CHANGELOG.md` ("unreleased"),
+events come before a scan error, so it needs the batch runs too. `511cf20`
+(2026-10-22, the user said "yes" to fixing it before 1.2.0) lets a
+line continuing a plain scalar start with `- `, `? `, `&` or `*` at
+top level, which the scanner took for the end of the scalar. At the tag, set the date in `CHANGELOG.md` ("unreleased"),
 `pkg/debian/changelog` (the `--` line) and `pkg/oyl.spec` (`%changelog`)
 to the tag date. After it: re-vendor oyl.rs (0.2.0+1.2.0, branch
 `oyl-1.2`, ask before `cargo publish`), oyl.go and oyl.cr.

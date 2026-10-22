@@ -1,6 +1,6 @@
 # TODO
 
-*Updated 2026-10-21*
+*Updated 2026-10-22*
 
 Small deferred tasks: each is agreed or obvious, but none is planned yet.
 Larger features go in ideas.md, and the order of work in roadmap.md.
@@ -55,13 +55,15 @@ Larger features go in ideas.md, and the order of work in roadmap.md.
   parse errors on the stale token) on 1362 of the fuzz corpus's 27648
   scan errors, and delivered events read from that token. It keeps the
   first scan error now, and agrees with the eager parser on all of them.
-- **Flow plain scalars: a continuation line starting `&` or `*` at
-  column 1** (**Open**, found 2026-10-21 testing `affab0b`; ask before
-  changing). `[a\n&b]` is an error ("expected ',' or ']'" at 2:1), but
-  `[a\n  &b]` and `[a\n!b]` read as `a &b` and `a !b`. YAML 1.2 reads
-  `[a\n&b]` as `["a &b"]`: in a top-level flow collection a continuation
-  line may start at column 1, and only a plain scalar's first character
-  can't be an indicator. Not yet compared with libyaml or go-yaml.
+- **Plain scalars: a continuation line starting with an indicator**
+  (**Fixed in `511cf20`**, 2026-10-22; the user said "yes" to fixing it
+  before 1.2.0). At top level, block or flow, the scanner ended a plain
+  scalar at a line starting with `- ` or `? `, or `&` or `*` in column
+  1: `a\n- b` and `[a\n&b]` were errors. YAML 1.2, libyaml and PyYAML
+  read them as `"a - b"` and `["a &b"]`. The two checks could only fire
+  at top level (deeper, the indentation check ends the scalar first), so
+  they're gone. 605 corpus inputs changed, all from an error to a parse
+  or a later error.
 - **`oyl_scan_token`'s speed depends on code layout** (**Open**, found
   2026-10-21). One line added to its stream-start branch, which runs
   once per stream, made the scanner 20% slower and the parser 10-15%:
