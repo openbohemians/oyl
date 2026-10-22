@@ -220,22 +220,22 @@ value, mark, span, raw_nodes; Send + Sync; `Emitter::tree`), `Value`,
 (`kubernetes()`), and `examples/tree.rs`. Tests: 15 tree, 15 API, 4 doc
 (one compile_fail for the dialect lifetime). Writing it found a C bug,
 fixed in `8b2a7e2`: a tree's dialect pointed into the parser when only a
-schema was set. **To publish:** after Oyl 1.2.0 is tagged, re-vendor the
-tag (oyl-sys becomes 0.2.0+1.2.0), merge `oyl-1.2` into main, and ask
-the user before `cargo publish --workspace`. **At the re-vendor, since
-`08d17c4`:** `oyl_dialect_new` takes a version (second argument; fix the
-oyl-sys declaration, add `oyl_dialect_version`), and the docs of
-`Dialect` and `Parser::dialect` (oyl/src/lib.rs, "unless it starts with
-`%YAML 1.1`") must say the new rule: `%YAML 1.1` keeps a default of 1.1
-(go-yaml v2), `%YAML 1.2` a schema set alone. **Also since `4ca3737`:**
-`Node::entries` (and serde's maps) can now fail with `ErrorKind::Limit`
-for a mapping that merges when the document's merges were too costly to
-work out; say so in its docs, and test it (a chain of 5,000 anchors each
-merging the one before and adding a key). **Also since `87db8a8`:** a
-new C source, `src/oyl_hash.c` (the hash tables' secret key): add it to
-oyl-sys's build list (oyl.go: a wrapper `.c` for it; oyl.cr likewise).
-It uses `rand_s` on Windows (`_CRT_RAND_S`), untested: Oyl's CI has no
-Windows, so the oyl.rs CI (if it builds on Windows) is the first check.
+schema was set. **To publish:** after Oyl 1.2.0 is tagged, re-vendor the tag
+(`scripts/sync-oyl.sh ~/Projects/oyl v1.2.0`), merge `oyl-1.2` into main,
+and ask the user before `cargo publish --workspace`. **Brought up to
+1.2.0 on 2026-10-21 (`f8c36ff`, vendors `ace0d0e`; the user said "let's
+get Rust up to snuff first")**: oyl-sys mirrors the whole header again
+(`oyl_dialect_new`'s version, `oyl_dialect_version`, the directive
+functions, `OYL_INT_BIN_SIGN`; all 101 constants checked against C;
+`oyl_hash.c` builds with the rest, `rand_s` on Windows still untested:
+oyl.rs has no CI). `oyl` gains `Directives`, `Parser::directives` (owned
+copies: the parser reuses its strings), `Tree::directives`,
+`Emitter::directives`/`yaml_directive`/`tag_directive`, `Emitter::reemit`
+(events with each document's directives), `Dialect::version`; docs for
+the emitter's final errors, the `%YAML` dialect rule and
+`Node::entries`'s `Limit`. Tests: 19 API, 20 tree, 12 serde, 6 doc;
+clippy and rustdoc clean. Not bound (not asked): warnings,
+`oyl_parser_add_dialect`, `oyl_dialect_new`, `oyl_parser_document_dialect`.
 **Step 3 done 2026-10-18
 (`e433cfa`):** the `serde` feature: `from_str`/`from_slice`/`from_reader`
 (YAML 1.2), `from_str_with`/`from_slice_with` (a dialect), `from_node`;

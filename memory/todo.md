@@ -1,6 +1,6 @@
 # TODO
 
-*Updated 2026-10-20*
+*Updated 2026-10-21*
 
 Small deferred tasks: each is agreed or obvious, but none is planned yet.
 Larger features go in ideas.md, and the order of work in roadmap.md.
@@ -41,16 +41,10 @@ Larger features go in ideas.md, and the order of work in roadmap.md.
   anchor already written in the document, which YAML requires. It would
   need the names kept per document (copied: the caller's strings may not
   last). Not asked for; offer it.
-- **oyl.rs at 1.2.0: the emitter checks order now** (**Open**, for the
-  re-vendor). Since the #6 fixes, emitter calls out of order are
-  `OYL_ERR_EMIT` and the first error is final; a document started
-  implicit may still get `---`; implicit keys over 1024 characters are a
-  parse error. Check the Rust `Emitter` wrapper and its tests and docs
-  (stream start before documents, errors after a failure).
-  Also bind the directive functions (`oyl_emit_yaml_directive`,
-  `oyl_emit_tag_directive`, `oyl_parser_tag_directive`,
-  `oyl_tree_yaml_version`, `oyl_tree_tag_directive`), and have the Rust
-  re-emit path pass a document's directives.
+- **oyl.rs at 1.2.0: the emitter checks order now** (**Done in oyl.rs
+  `f8c36ff`**, 2026-10-21): directives bound, `Emitter::reemit` passes
+  each document's, emitter docs and tests cover final errors. Publishing
+  waits for the 1.2.0 tag (release.md).
 - **Emitter: no trailing space after `- `** (**Open**). A block sequence
   inside a block sequence is written `- ` + newline. That's valid YAML,
   but it leaves trailing whitespace. Seen 2026-10-12 while testing
