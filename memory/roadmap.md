@@ -1,6 +1,6 @@
 # Roadmap after 1.0
 
-*Updated 2026-10-11*
+*Updated 2026-10-22*
 
 The order the user agreed on 2026-10-11 (revised from 2026-10-10, when the
 tree came first; YAMLToJSON needs no tree, so it moved ahead):
@@ -43,6 +43,27 @@ tree came first; YAMLToJSON needs no tree, so it moved ahead):
 
 Outreach (outreach.md) waits on YAMLToJSON with its Go wrapper and the
 tree with the full Go library, not on parallel parsing.
+
+## Speed plan (agreed 2026-10-22)
+
+Re-measuring for 1.2.0 (`a351721`) showed rapidyaml's event parser level
+with Oyl on appveyor.yml (both about 430 MB/s; v1.0.0 measures the same,
+rapidyaml measured 395 on 2026-10-03) and still ahead 1.3-1.8x on the
+generated short-token inputs. The user ("We are no longer the fastest.
+That is bad.") agreed this order:
+
+1. **Before 1.2.0: fix the emitter's regression** from `1aa0d8e`, 5-14%
+   on non-ASCII text (todo.md). It restarts the batch-fuzzing wait.
+2. **Steady `oyl_scan_token`'s hot loop** against code layout (todo.md:
+   one line moved it 20%).
+3. **The main goal of the next release: cut the cost per token**, where
+   rapidyaml leads: the flow/JSON fast path and the structural index
+   (performance.md, post-1.0 items 5 and 4). Not parallel parsing: the
+   user agreed to hold a multi-threaded benchmark section until it is in
+   the library.
+
+Where this falls against the Go and Crystal binding work (release.md)
+isn't decided.
 
 ## oyl.go
 
