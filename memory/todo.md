@@ -45,14 +45,32 @@ Larger features go in ideas.md, and the order of work in roadmap.md.
   `f8c36ff`**, 2026-10-21): directives bound, `Emitter::reemit` passes
   each document's, emitter docs and tests cover final errors. Publishing
   waits for the 1.2.0 tag (release.md).
-- **Scanner: an invalid escape reported as unterminated, errors not
-  final** (**Open**, found 2026-10-21 writing oyl.rs's `Scanner`). The
-  standalone scanner (`oyl_scan_next`) reports `a: "\q"` as
-  "unterminated double-quoted scalar" at 2:1, where the parser says
-  "invalid escape sequence" at 1:7. And after `a: "x` (unterminated) the
-  next `oyl_scan_next` returns `OYL_OK`; the parser's errors are final,
-  the scanner's aren't, and the header doesn't say. oyl.rs stops after
-  the first error itself. Ask before changing.
+- **Scanner errors not final** (**Fixed in `affab0b`**, 2026-10-21, the
+  user said "fix the C"). The "unterminated" message for `a: "\q"` was
+  the second call's: the first gave "invalid escape sequence" at 1:7, and
+  the next went on from inside the bad token. `oyl_scan_next` now returns
+  its first error again. The same flaw hit the incremental parser, which
+  called the scanner again after a failed peek and let states go on from
+  the stale token: it reported the wrong error (later scanner errors, or
+  parse errors on the stale token) on 1362 of the fuzz corpus's 27648
+  scan errors, and delivered events read from that token. It keeps the
+  first scan error now, and agrees with the eager parser on all of them.
+- **Flow plain scalars: a continuation line starting `&` or `*` at
+  column 1** (**Open**, found 2026-10-21 testing `affab0b`; ask before
+  changing). `[a\n&b]` is an error ("expected ',' or ']'" at 2:1), but
+  `[a\n  &b]` and `[a\n!b]` read as `a &b` and `a !b`. YAML 1.2 reads
+  `[a\n&b]` as `["a &b"]`: in a top-level flow collection a continuation
+  line may start at column 1, and only a plain scalar's first character
+  can't be an indicator. Not yet compared with libyaml or go-yaml.
+- **`oyl_scan_token`'s speed depends on code layout** (**Open**, found
+  2026-10-21). One line added to its stream-start branch, which runs
+  once per stream, made the scanner 20% slower and the parser 10-15%:
+  the same instructions (fewer, even), but a hot loop fell out of the
+  micro-op cache (77M uops from the legacy decoder against 1.3M). So any
+  change to that 16 KB function, plain-scalar loop inlined, can gain or
+  lose this much, and so can other compilers. `affab0b` kept its check
+  out of it. Worth finding the loop and making its placement stable
+  (its own function, or aligned).
 - **Emitter: no trailing space after `- `** (**Open**). A block sequence
   inside a block sequence is written `- ` + newline. That's valid YAML,
   but it leaves trailing whitespace. Seen 2026-10-12 while testing
