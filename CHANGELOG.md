@@ -150,10 +150,13 @@ is under Changed, and the emitter's new errors under Fixed.
   node. Writing held trees as YAML: block mappings 214 to 323 MB/s, the
   largest Kubernetes CRD 705 to 1482, multi-line plain scalars 334 to
   2281, double-quoted 375 to 2791.
-- Parsing runs at 1.0.0's speed on block YAML, and 2% to 5% slower on
-  JSON, with all the checks added under Fixed. Those had cost up to 12%
-  until keeping a scanner error became a call from the parser's hundred
-  token reads instead of code inlined into each.
+- Parsing runs within 3% of 1.0.0's speed on block YAML and about 3%
+  faster on JSON, with all the checks added under Fixed. Those had cost up
+  to 12% until keeping a scanner error became a call from the parser's
+  hundred token reads instead of code inlined into each. The scanner now
+  writes each token field by field: built whole and assigned, GCC could
+  copy it with a slow string instruction after any unrelated change,
+  which made block YAML up to 16% slower.
 
 ### Fixed
 
