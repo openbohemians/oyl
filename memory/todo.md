@@ -45,6 +45,14 @@ Larger features go in ideas.md, and the order of work in roadmap.md.
   `f8c36ff`**, 2026-10-21): directives bound, `Emitter::reemit` passes
   each document's, emitter docs and tests cover final errors. Publishing
   waits for the 1.2.0 tag (release.md).
+- **Scanner: an invalid escape reported as unterminated, errors not
+  final** (**Open**, found 2026-10-21 writing oyl.rs's `Scanner`). The
+  standalone scanner (`oyl_scan_next`) reports `a: "\q"` as
+  "unterminated double-quoted scalar" at 2:1, where the parser says
+  "invalid escape sequence" at 1:7. And after `a: "x` (unterminated) the
+  next `oyl_scan_next` returns `OYL_OK`; the parser's errors are final,
+  the scanner's aren't, and the header doesn't say. oyl.rs stops after
+  the first error itself. Ask before changing.
 - **Emitter: no trailing space after `- `** (**Open**). A block sequence
   inside a block sequence is written `- ` + newline. That's valid YAML,
   but it leaves trailing whitespace. Seen 2026-10-12 while testing

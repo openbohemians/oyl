@@ -250,8 +250,11 @@ built when that happens. Tests: 14 custom more; every test clean under
 ASan+LSan (C built with `-fsanitize=address`, Rust linked with
 `-Clinker-features=-lld -Clink-arg=-fsanitize=address -Clink-arg=-lasan`,
 binaries run with `LD_PRELOAD=$(gcc -print-file-name=libasan.so)`, or
-LSan sees nothing). Still unbound: the token scanner (`oyl_scanner_*`)
-and raw `oyl_tree_props`/`oyl_tree_pool` (offered to the user).
+LSan sees nothing). **Then `f185617` (the user said "yes"):** `Scanner`/
+`Token`/`TokenKind`, `Tree::raw_props`/`raw_pool`, and `oyl-sys`
+re-exported as `oyl::sys`. Every C function now has a Rust counterpart
+or is internal. Tests: 22 API, 14 custom, 21 tree, 12 serde, 13 doc;
+clippy, rustdoc, ASan+LSan clean.
 **Step 3 done 2026-10-18
 (`e433cfa`):** the `serde` feature: `from_str`/`from_slice`/`from_reader`
 (YAML 1.2), `from_str_with`/`from_slice_with` (a dialect), `from_node`;
