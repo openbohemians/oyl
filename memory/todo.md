@@ -63,7 +63,9 @@ Larger features go in ideas.md, and the order of work in roadmap.md.
   read them as `"a - b"` and `["a &b"]`. The two checks could only fire
   at top level (deeper, the indentation check ends the scalar first), so
   they're gone. 605 corpus inputs changed, all from an error to a parse
-  or a later error.
+  or a later error. The top-level block half (`a\n- b`) went beyond
+  what was asked; the user chose to keep it and follow the spec
+  (2026-10-22). Don't reopen.
 - **`oyl_scan_token`'s speed depends on code layout** (**Open**, found
   2026-10-21). One line added to its stream-start branch, which runs
   once per stream, made the scanner 20% slower and the parser 10-15%:
