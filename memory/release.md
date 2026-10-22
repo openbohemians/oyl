@@ -305,6 +305,18 @@ spec has it** ("Easy, YAML 1.2 spec. done."). Change it when oyl.cr is
 moved onto C trees (the plan agreed 2026-10-21: Rust re-vendor, then Go
 trees and `Unmarshal`, then Crystal on C trees with dialects and JSON).
 
+**Wanted by Jargon** (@projects, 2026-10-22,
+`mail/received/20261022-180226Z-@projects--yaml-dates-*`): Jargon reads
+YAML configs as JSON through Crystal's YAML, so a plain `2026-10-22`
+becomes a timestamp and fails its `format: date` check. It asked for
+oyl.cr's JSON path or a dialect choice; answered that it comes with the
+move onto C trees (every Oyl dialect keeps dates as strings), and that
+`YAML::Nodes.parse` / `Oyl::Nodes.parse` give raw scalars meanwhile. Also:
+a planned Rust port, jargon.rs, would depend on oyl.rs (optional feature,
+on by default) from 1.2. Their test of `next_json`: yaml11 matches
+Crystal's typing except `0o17` (YAML 1.1 has no `0o`) and dates. They
+floated a Crystal-compatible dialect; not planned, the user's call.
+
 ## After the tag
 
 See [roadmap.md](roadmap.md). The checklist above holds for later releases
