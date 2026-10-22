@@ -111,12 +111,9 @@ static void check_values(const oyl_event *e) {
     }
 }
 
-static unsigned warnings_seen;
-
-static void count_warning(void *user, oyl_warning code, oyl_mark mark, const char *message) {
+static void check_warning(void *user, oyl_warning code, oyl_mark mark, const char *message) {
     (void)user; (void)mark;
     if (!message || code < OYL_WARN_YAML_VERSION) __builtin_trap();
-    warnings_seen++;
 }
 
 /* Emit `evt`, read from `p`: a document's start with its directives */
@@ -149,7 +146,7 @@ static bool parse_canon(const char *yaml, size_t len, uint8_t flags, oyl_emitter
     if ((flags & 4) && !(flags & 32)) oyl_parser_set_schema(p, oyl_schema_core());
     if (flags & 32) {
         oyl_parser_set_dialect(p, oyl_dialect_goyaml2());
-        oyl_parser_set_warn(p, count_warning, NULL);
+        oyl_parser_set_warn(p, check_warning, NULL);
     }
 
     size_t cap = 0;
@@ -225,7 +222,7 @@ static bool to_json(const char *yaml, size_t len, const oyl_schema *schema, unsi
     oyl_parser_set_max_events(p, MAX_EVENTS);
     if (!schema) {   /* as Kubernetes reads YAML, by its dialect */
         oyl_parser_set_dialect(p, oyl_dialect_goyaml2());
-        oyl_parser_set_warn(p, count_warning, NULL);
+        oyl_parser_set_warn(p, check_warning, NULL);
     }
     *st = oyl_parse_json(p, schema, flags, json);
     oyl_parser_free(p);
