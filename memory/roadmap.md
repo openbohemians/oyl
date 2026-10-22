@@ -57,7 +57,9 @@ That is bad.") agreed this order:
    faster than before on long text (2x double-quoted, +50% block
    scalars); the batch-fuzzing wait restarts from it.
 2. **Steady `oyl_scan_token`'s hot loop** against code layout (todo.md:
-   one line moved it 20%).
+   one line moved it 20%). **Done in `dc46992`** (2026-10-22): the
+   cause was a microcoded token copy, not placement; tokens are now
+   written field by field.
 3. **The main goal of the next release: cut the cost per token**, where
    rapidyaml leads: the flow/JSON fast path and the structural index
    (performance.md, post-1.0 items 5 and 4). Not parallel parsing: the

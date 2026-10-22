@@ -28,7 +28,7 @@ RPM changelog entries written out. All tests pass; `make dist` gives
 in v1.0.0's header still exported. The package workflow's dry run (the user started it, run
 39680658321, 2026-10-21) passed: Arch, Debian and RPM built, the
 release step skipped as it should.
-**Before the tag:** several days of clean batch runs on `6608603` or
+**Before the tag:** several days of clean batch runs on `dc46992` or
 later (both sanitizers; on 2026-10-21 the directive code, `476782e` and
 its fixes, had only two runs each, on `1832b2c`), then the user's
 go-ahead. `affab0b` (2026-10-21, after the version bump; the user said
@@ -39,7 +39,9 @@ events come before a scan error, so it needs the batch runs too. `511cf20`
 line continuing a plain scalar start with `- `, `? `, `&` or `*` at
 top level, which the scanner took for the end of the scalar. `6608603`
 (2026-10-22) moved the emitter's scalar paths to SSE2, the speed plan's
-first step (roadmap.md): new code, so the wait starts over from it. At the tag, set the date in `CHANGELOG.md` ("unreleased"),
+first step (roadmap.md): new code, so the wait starts over from it.
+`dc46992` (2026-10-22, step 2) writes the scanner's tokens field by
+field: the same values, but the wait counts from it too. At the tag, set the date in `CHANGELOG.md` ("unreleased"),
 `pkg/debian/changelog` (the `--` line) and `pkg/oyl.spec` (`%changelog`)
 to the tag date. After it: re-vendor oyl.rs (0.2.0+1.2.0, branch
 `oyl-1.2`, ask before `cargo publish`), oyl.go and oyl.cr.

@@ -78,15 +78,21 @@ Larger features go in ideas.md, and the order of work in roadmap.md.
   (README, `5c9c811`). Lesson: count instructions and IPC (pcount) per
   variant; a SIMD loop of ~50 vector ops per 16 bytes was no faster than
   the byte loop.
-- **`oyl_scan_token`'s speed depends on code layout** (**Open**, found
-  2026-10-21). One line added to its stream-start branch, which runs
-  once per stream, made the scanner 20% slower and the parser 10-15%:
-  the same instructions (fewer, even), but a hot loop fell out of the
-  micro-op cache (77M uops from the legacy decoder against 1.3M). So any
-  change to that 16 KB function, plain-scalar loop inlined, can gain or
-  lose this much, and so can other compilers. `affab0b` kept its check
-  out of it. Worth finding the loop and making its placement stable
-  (its own function, or aligned).
+- **`oyl_scan_token`'s speed depends on code layout** (**Fixed in `dc46992`**,
+  2026-10-22; found 2026-10-21). One line added to its
+  stream-start branch made the scanner 20% slower and the parser 10-15%,
+  with the legacy decoder busy. Not placement, it turned out: sampling
+  the legacy decoder's micro-ops put 70% of them on one `rep movsl`, GCC
+  copying an 80-byte token from a stack temporary to `*tok` (microcoded)
+  on the `:` path, where `*tok = tok_simple(...)` sites shared a tail.
+  Shifting the whole function by 0-60 bytes moves speed only 2-7% (the
+  noise floor). On HEAD, 4 of 6 such one-line edits brought the copy
+  back (block 12-16% slower). The fix writes tokens field by field
+  through the pointer (`tok_set`): none of the 6 edits copy, and across
+  16 placements each it is level or faster (JSON 6%, compile_commands
+  7.5%, block 1%), with half the store-forward stalls. Check a build:
+  `objdump -d oyl_scanner.o | grep -c 'rep movsl'` is 0 (the `rep movsb`
+  copies are cold error messages). See performance.md, "Measuring".
 - **Emitter: no trailing space after `- `** (**Open**). A block sequence
   inside a block sequence is written `- ` + newline. That's valid YAML,
   but it leaves trailing whitespace. Seen 2026-10-12 while testing

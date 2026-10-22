@@ -14,6 +14,20 @@
 - GCC -O2 is sensitive to how events are built. Copying the ~112-byte
   `oyl_event` by value caused store-forwarding stalls and 10–18% swings
   from unrelated edits. Build events in place and pass them by pointer.
+  The same for tokens (`dc46992`): `*tok = tok_simple(...)` let GCC
+  stage the 80-byte token on the stack and copy it with `rep movsl`
+  (microcoded) after unrelated edits, 10-16% on block YAML. Write
+  structs field by field through the pointer, and check that
+  `objdump -d` finds no `rep movsl` in the scanner or parser.
+- To find what a slowdown runs, sample instruction pointers with
+  `perf_event_open` (allowed for your own child at paranoid 2): on cycles,
+  or on `IDQ.MITE_UOPS` (raw 0x0479, PMU type 4) for code that misses
+  the micro-op cache. Link the benchmark `-no-pie` and map the addresses
+  with `addr2line -f`. One run found the token copy above.
+- To tell layout noise from a real change: build 16 placements of each
+  side (a `jmp` over `.skip N`, N = 0..60, at the function's entry, which
+  moves the whole body) and compare medians. On the scanner that spread
+  is 2-7% per input, so a single A/B build pair can't settle 2%.
 - `just sanitize` leaves instrumented objects in `build/`, and the Makefile
   doesn't track CFLAGS: run `make clean` before benchmarking afterwards.
 - Compare formats by ns per event, not MB/s, when the inputs differ in
