@@ -275,8 +275,11 @@ which redirects; local folder `~/Projects/oyl.cr`), shard `oyl`, module
 submodules: the old submodule setup never installed. After any library
 change, run `make -C ext sync OYL=~/Projects/oyl`, then `make -C ext &&
 crystal spec`, and commit. Vendors v1.0.0 (`e78a6a6` in oyl.cr).
-Open: `Oyl.parse` resolves scalars like Crystal's YAML module (YAML 1.1
-yes/no/on/off booleans), not YAML 1.2's core schema; the user may decide.
+`Oyl.parse` resolves scalars like Crystal's YAML module (YAML 1.1
+yes/no/on/off booleans): **the user decided 2026-10-21: YAML 1.2, as the
+spec has it** ("Easy, YAML 1.2 spec. done."). Change it when oyl.cr is
+moved onto C trees (the plan agreed 2026-10-21: Rust re-vendor, then Go
+trees and `Unmarshal`, then Crystal on C trees with dialects and JSON).
 
 ## After the tag
 
