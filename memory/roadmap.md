@@ -53,7 +53,9 @@ generated short-token inputs. The user ("We are no longer the fastest.
 That is bad.") agreed this order:
 
 1. **Before 1.2.0: fix the emitter's regression** from `1aa0d8e`, 5-14%
-   on non-ASCII text (todo.md). It restarts the batch-fuzzing wait.
+   on non-ASCII text (todo.md). **Done in `6608603`** (2026-10-22), and
+   faster than before on long text (2x double-quoted, +50% block
+   scalars); the batch-fuzzing wait restarts from it.
 2. **Steady `oyl_scan_token`'s hot loop** against code layout (todo.md:
    one line moved it 20%).
 3. **The main goal of the next release: cut the cost per token**, where
