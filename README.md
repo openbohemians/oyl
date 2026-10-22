@@ -668,39 +668,38 @@ glibc's heap (`mallinfo2`) with the trees of the whole input kept.
 
 Throughput in MB/s of input writing each library's trees, built
 beforehand, back out as YAML, measured with `make bench-compare-emit` the
-same way (passes agree within 7%):
+same way (passes agree within 8%):
 
 | Input | Oyl | libyaml 0.2.5 | libfyaml 0.9.6 | rapidyaml 0.16 |
 |---|---:|---:|---:|---:|
 | **Generated, 10 MB** | | | | |
-| block mappings and sequences | 332 | 68 | 92 | 376 |
-| mixed block, flow and quoted | 406 | 84 | 115 | 362 |
-| JSON | 382 | 68 | 89 | 357 |
-| config files (comments, block scalars, anchors) | 580 | 138 | 124 | 560 |
+| block mappings and sequences | 323 | 68 | 93 | 373 |
+| mixed block, flow and quoted | 399 | 85 | 114 | 354 |
+| JSON | 389 | 66 | 87 | 356 |
+| config files (comments, block scalars, anchors) | 608 | 137 | 124 | 550 |
 | **Real files, repeated to ~10 MB** | | | | |
-| travis.yml | 1084 | 203 | 357 | 884 |
-| appveyor.yml | 702 | 180 | 203 | 733 |
-| compile_commands.json | 1290 | 253 | 629 | 711 |
+| travis.yml | 1118 | 206 | 351 | 881 |
+| appveyor.yml | 716 | 182 | 204 | 740 |
+| compile_commands.json | 3061 | 247 | 646 | 740 |
 | **Kubernetes** | | | | |
-| 854 manifests in one stream, 7.3 MB | 1233 | fails¹ | 180 | fails² |
-| the largest CRD, 1.4 MB | 1424 | 320 | 525 | 1781 |
+| 854 manifests in one stream, 7.3 MB | 1373 | fails¹ | 179 | fails² |
+| the largest CRD, 1.4 MB | 1482 | 317 | 511 | 1687 |
 | **Scalar-heavy text** | | | | |
-| literal block scalars (`\|`) | 1318 | 270 | 95 | 1358 |
-| folded block scalars (`>`) | 1487 | 250 | 250 | 1709 |
-| multi-line double-quoted | 1325 | 250 | 89 | 601 |
-| multi-line single-quoted | 1467 | 248 | 94 | 1308 |
-| multi-line plain | 2083 | 250 | 97 | 2024 |
+| literal block scalars (`\|`) | 1994 | 270 | 96 | 1371 |
+| folded block scalars (`>`) | 2378 | 250 | 249 | 1706 |
+| multi-line double-quoted | 2791 | 249 | 89 | 593 |
+| multi-line single-quoted | 2305 | 245 | 94 | 1303 |
+| multi-line plain | 2281 | 249 | 96 | 1948 |
 
 Each library writes in its default style: `oyl_emit_tree`, libyaml's
 `yaml_emitter_dump` (which consumes its documents, so they're loaded again
 before each run, untimed), libfyaml's `fy_emit_document_to_string`, and
 rapidyaml's `emitrs_yaml`. ¹ ² As above: the trees can't be built.
 
-Oyl writes YAML 3.9–8.3× faster than libyaml and 2–21× faster than
-libfyaml. Against rapidyaml it's faster on 8 of the 13 inputs both can
-read (up to 2.2×, on double-quoted text), about even on literal block
-scalars, and slower on 4, by 4–20%: block mappings, appveyor.yml, folded
-block scalars and the CRD.
+Oyl writes YAML 3.9–12× faster than libyaml and 3–31× faster than
+libfyaml. Against rapidyaml it's faster on 10 of the 13 inputs both can
+read (up to 4.7×, on double-quoted text), and slower on 3: block
+mappings by 13%, the CRD by 12% and appveyor.yml by 3%.
 
 Run `make bench` to measure Oyl alone. `make bench-compare` runs the event
 table above with whichever libraries are installed,

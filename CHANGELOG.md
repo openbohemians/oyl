@@ -141,13 +141,15 @@ is under Changed, and the emitter's new errors under Fixed.
   schema tries `null`, `n` and `no`, not all 30 rules), and a word rule
   checks the length before anything else, which alone made tag
   resolution with the Core schema about 40% faster.
-- The emitter is 1.5x to 6x faster, with the same output byte for byte
+- The emitter is 1.5x to 7x faster, with the same output byte for byte
   (but for the fixes below): it decides a scalar's style in one pass
-  over it instead of up to four, writes quoted scalars a chunk at a time,
-  no longer counts output columns it never used, and emits events and
-  trees without building an event per node. Writing held trees as
-  YAML: block mappings 214 to 332 MB/s, the largest Kubernetes CRD 705
-  to 1424, multi-line plain scalars 334 to 2083.
+  over it instead of up to four (long text 16 bytes at a time, with
+  SSE2), writes double-quoted text 16 bytes at a time and other quoted
+  and block scalars a run at a time, no longer counts output columns it
+  never used, and emits events and trees without building an event per
+  node. Writing held trees as YAML: block mappings 214 to 323 MB/s, the
+  largest Kubernetes CRD 705 to 1482, multi-line plain scalars 334 to
+  2281, double-quoted 375 to 2791.
 - Parsing runs at 1.0.0's speed on block YAML, and 2% to 5% slower on
   JSON, with all the checks added under Fixed. Those had cost up to 12%
   until keeping a scanner error became a call from the parser's hundred
