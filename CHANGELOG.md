@@ -148,6 +148,9 @@ is under Changed, and the emitter's new errors under Fixed.
   trees without building an event per node. Writing held trees as YAML: block mappings 214 to 340
   MB/s, the largest Kubernetes CRD 705 to 1531, multi-line plain scalars
   334 to 2352.
+- Keeping a scanner error is a call from the parser's hundred token
+  reads instead of code inlined into each: the parser runs 4% fewer
+  instructions and parses 3% to 14% faster (block YAML 140 to 160 MB/s).
 
 ### Fixed
 
@@ -212,6 +215,18 @@ is under Changed, and the emitter's new errors under Fixed.
   rest as it came, dropping content (`&x a:\n  b: c\n  d\n---\ne` lost
   `d`), and the incremental one gave a second document start. Found by
   the code review.
+- `oyl_scan_next`'s errors are final too: called again, it went on from
+  inside the bad token, so `a: "\q"` gave "invalid escape sequence" and
+  then "unterminated double-quoted scalar" on line 2, for the closing
+  quote. It costs a check per token, about 3% on the scanner's benchmark.
+- The incremental parser could report another error than the scanner's
+  first: a state going on from the token before it failed on that token
+  (`[1,-}` gave "unexpected ','" at 1:3, not "block sequence entry not
+  allowed in flow context" at 1:4), or the scanner, called again, failed
+  further on. It could also deliver an event read from that token: in
+  `k: [a\nb]`, the scalar `a`, which could have been a key. The eager
+  parser had them right; the two differed on one scan error in twenty in
+  the fuzz corpus. Found by comparing them there.
 - `oyl_parser_set_merge`: a merge's source that had merges of its own
   took part without them when it was one of a sequence, so a later item
   could win over what an earlier one merged (`<<: [*b, *c]`, with `b`

@@ -679,7 +679,7 @@ Low-level tokenizer. Most users should use the parser instead.
 | Function | Description |
 |----------|-------------|
 | `oyl_scanner *oyl_scanner_new(input, len, arena)` | Create scanner. |
-| `oyl_status oyl_scan_next(s, const oyl_token **tok)` | Get next token (owned by the scanner, valid until the next call; NULL on error). |
+| `oyl_status oyl_scan_next(s, const oyl_token **tok)` | Get next token (owned by the scanner, valid until the next call; NULL on error). An error is final: later calls return it again. |
 | `const char *oyl_scanner_error(s)` | Error message, or NULL. |
 | `oyl_mark oyl_scanner_error_mark(s)` | Error location. |
 | `void oyl_scanner_free(s)` | Free scanner. |

@@ -46,6 +46,7 @@ struct oyl_scanner {
 
     /* state */
     int          flow_level;
+    oyl_status   failed;    /* the first error, for oyl_scan_next() */
     ptrdiff_t    indent;
     indent_stack indents;
     bool         stream_started;
@@ -1122,7 +1123,11 @@ oyl_scanner *oyl_scanner_new(const char *input, size_t len, oyl_arena *a) {
 
 
 oyl_status oyl_scan_next(oyl_scanner *s, const oyl_token **tok) {
-    oyl_status st = oyl_scan_token(s, &s->out_tok);
+    /* an error is final: going on from where it stopped would read the
+     * rest of a bad token as new ones (the parser, which calls
+     * oyl_scan_token, keeps the first error itself) */
+    oyl_status st = s->failed ? s->failed : oyl_scan_token(s, &s->out_tok);
+    if (st != OYL_OK) s->failed = st;
     *tok = st == OYL_OK ? &s->out_tok : NULL;
     return st;
 }

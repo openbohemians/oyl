@@ -613,7 +613,7 @@ static void test_continuation_indent(void) {
     check("[\na,\nb\n]", "[ a b ]");                  /* top level: any indent */
     check("k: \"a\n  b\n\"", "{ k a b  }");
     check("k: [a,\nb]", "{ k [ a ERR");
-    check("k: [a\nb]", "{ k [ a ERR");
+    check("k: [a\nb]", "{ k [ ERR");     /* a could be a key: the error comes first */
     check("k: \"a\nb\"", "{ k ERR");
     check("k: 'a\nb'", "{ k ERR");
     check("- [\n\tfoo\n ]", "[ [ ERR");               /* tab isn't indentation */

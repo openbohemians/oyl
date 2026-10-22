@@ -523,6 +523,40 @@ static void test_scanner_error_through_parser(void) {
 
     oyl_parser_free(p);
     oyl_arena_free(a);
+
+    /* the scanner's first error stands, as the eager parser has it: states
+     * going on from the token before it failed on that token instead
+     * ("unexpected ','" at 1:3), or read on past it (found by comparing
+     * the fuzz corpus's errors, 2026-10-21) */
+    struct { const char *yaml, *msg; size_t line, col; int events; } cases[] = {
+        { "[1,-}",              "block sequence entry not allowed", 1, 4, 4 },
+        { "[;,\"",              "unterminated double-quoted",       1, 5, 4 },
+        { "[\"a\" & \x01]",     "empty anchor",                     1, 7, 3 },
+        { "[a, \"b\" *\x7f]",   "control character in anchor",      1, 10, 4 },
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        for (int eager = 0; eager < 2; eager++) {
+            yaml = cases[i].yaml;
+            a = oyl_arena_new(4096);
+            p = oyl_parser_new(yaml, strlen(yaml), a);
+            if (eager) oyl_parser_set_merge(p, true);
+            int events = 0;
+            while ((st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_STREAM_END)
+                events++;
+            msg = oyl_parser_error(p);
+            m = oyl_parser_error_mark(p);
+            char what[96];
+            snprintf(what, sizeof what, "%s: %s", eager ? "eager" : "incremental", cases[i].msg);
+            ASSERT(st == OYL_ERR_SCAN && msg && strstr(msg, cases[i].msg) &&
+                   m.line == cases[i].line && m.col == cases[i].col, what);
+            /* and no events read from a stale token: the scalar before the
+             * error could have been a key */
+            if (!eager)
+                ASSERT(events == cases[i].events, "only the events before the error");
+            oyl_parser_free(p);
+            oyl_arena_free(a);
+        }
+    }
 }
 
 /* ── No-error tests ─────────────────────────────────────────── */
@@ -830,6 +864,22 @@ static void test_errors_final(void) {
     ASSERT(oyl_parse_json(p, NULL, 0, &json) == st && json.data == NULL, "JSON's error again");
     ASSERT(oyl_parser_error(p) && strstr(oyl_parser_error(p), "null"), "its message stands");
     oyl_parser_free(p);
+
+    /* the scanner's: going on read the closing quote of a bad scalar as an
+     * unterminated one, and the line after it as tokens */
+    yaml = "a: \"\\q\"\nb: c\n";
+    oyl_scanner *s = oyl_scanner_new(yaml, strlen(yaml), a);
+    const oyl_token *tok;
+    for (int i = 0; i < 3; i++) oyl_scan_next(s, &tok);    /* to the ':' */
+    ASSERT(oyl_scan_next(s, &tok) == OYL_ERR_SCAN && tok == NULL, "an invalid escape");
+    oyl_mark m = oyl_scanner_error_mark(s);
+    ASSERT(m.line == 1 && m.col == 7, "where the escape is");
+    for (int i = 0; i < 3; i++)
+        ASSERT(oyl_scan_next(s, &tok) == OYL_ERR_SCAN && tok == NULL, "the scanner's error again");
+    m = oyl_scanner_error_mark(s);
+    ASSERT(oyl_scanner_error(s) && strstr(oyl_scanner_error(s), "invalid escape") &&
+           m.line == 1 && m.col == 7, "its message and place stand");
+    oyl_scanner_free(s);
     oyl_arena_free(a);
 }
 
