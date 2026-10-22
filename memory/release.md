@@ -171,17 +171,14 @@ tagging or publishing a release.**
    126); libyaml (Crystal) and PyYAML both reject it. Not yet
    investigated; the user decides.
 
-## Benchmark claims to update (held by the user, 2026-10-07)
+## Benchmark claims (refreshed in `a351721`, 2026-10-22)
 
-`66eab45` raised the generated config input (an anchor in each of 14,598
-documents) from about 205 to 320 MB/s; the other inputs moved within ±3%.
-The published claims came partly from that row and are now stale:
-"1.7–13× faster than libyaml and libfyaml" (README line 19, CHANGELOG,
-the `docs/index.html` stat) would be about 2–13×; "1.7–3.4× on
-structure-heavy input" (README) about 2.4–3.4×; plus the README table's
-config row and the website's chart data and note. The user asked to hold
-off: when they say so, re-run `make bench-compare` (all libraries, the
-table's protocol) and update all of them from that run.
+The user said to refresh them before 1.2.0. All three README tables, the
+headline (now 2-13x), the website's stat, chart and notes, and the
+changelog's figures were re-measured as published (3 passes each; inputs
+in the session scratchpad, rebuildable per tree-design.md "Step 4").
+YAMLToJSON: 7.3x `sigs.k8s.io/yaml` on 855 manifests. The website's
+"970 tests" (from 2026-10-03) is stale, not yet changed.
 
 ## Checklist at tag time
 

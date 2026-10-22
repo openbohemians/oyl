@@ -66,6 +66,18 @@ Larger features go in ideas.md, and the order of work in roadmap.md.
   or a later error. The top-level block half (`a\n- b`) went beyond
   what was asked; the user chose to keep it and follow the spec
   (2026-10-22). Don't reopen.
+- **Emitter: the read-back checks cost 5-14% on non-ASCII text**
+  (**Open**, found 2026-10-22 refreshing the benchmarks; reported to the
+  user). `1aa0d8e` (escape C1, U+FEFF, U+FFFE/F, NEL, U+2028/9) made
+  writing held trees slower: multi-line plain 2400 to 2100 MB/s,
+  double-quoted 1480 to 1340, folded -9%, config -6% (no non-ASCII
+  there: the key-length or document-start checks), block even; nothing
+  after it moved them. Any scalar with a byte >= 0x80 gets a full
+  `next_escaped_char` pass in `choose_style` (`has_escaped_char`), and
+  double-quoted ones a second in `emit_double_quoted`. Ideas: flag the
+  lead bytes C2/E2/EF in `scalar_classes`' table so text with only other
+  UTF-8 (é is C3) skips the scan; pass the first hit from `choose_style`
+  to the writer. Measure with the A/B in performance.md.
 - **`oyl_scan_token`'s speed depends on code layout** (**Open**, found
   2026-10-21). One line added to its stream-start branch, which runs
   once per stream, made the scanner 20% slower and the parser 10-15%:

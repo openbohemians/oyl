@@ -1,6 +1,6 @@
 # Performance
 
-*Updated 2026-10-11*
+*Updated 2026-10-22*
 
 ## Measuring
 
@@ -47,6 +47,18 @@ event parser, built from source.
   so.
 - Tried and dropped: a 96-byte event (no gain), `-march=native` (no gain),
   lazy line/column (YAML needs them for indentation).
+
+## Re-measured for 1.2.0 (2026-10-22, `a351721`)
+
+- v1.0.0 and HEAD in the same harness, interleaved (cmp_oyl, 5 rounds):
+  block, mixed, travis within 1%; JSON 3-4% and compile_commands about
+  5% slower; multi-line plain 2% faster. `bench_parser`: block and config
+  even, JSON 2% slower. So the published 1.0 numbers (block 175) were
+  the machine then: v1.0.0 itself measures 162 today, rapidyaml 3% more.
+- To A/B two commits: `git archive <rev> Makefile src include | tar -x
+  -C dir`, `make -C dir CFLAGS=-O2 OBJDIR=dir/obj dir/obj/liboyl.a`, link
+  `bench/compare/cmp_oyl*.c` against each, alternate runs pinned.
+- Emitter regression from `1aa0d8e`: see todo.md.
 
 ## Post-1.0 plan (agreed 2026-10-03; nothing before the tag)
 
