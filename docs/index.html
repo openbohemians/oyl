@@ -762,7 +762,7 @@
         <div class="stat"><strong>308/308</strong><span>Valid suite cases</span></div>
         <div class="stat"><strong>94/94</strong><span>Invalid rejected</span></div>
         <div class="stat"><strong>970</strong><span>Tests</span></div>
-        <div class="stat"><strong>1.7&ndash;13&times;</strong><span><a href="#benchmarks" class="stat-link">Faster than libyaml</a></span></div>
+        <div class="stat"><strong>2&ndash;13&times;</strong><span><a href="#benchmarks" class="stat-link">Faster than libyaml</a></span></div>
       </div>
     </header>
 
@@ -955,82 +955,82 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
       "groups": [
         {
           "title": "Real files, repeated to ~10 MB",
-          "note": "Test files from rapidyaml’s own benchmark suite, measured here. Oyl is fastest on all three, 1.1–1.8× ahead of rapidyaml.",
+          "note": "Test files from rapidyaml’s own benchmark suite, measured here. Oyl leads rapidyaml on travis.yml and compile_commands.json, by 1.1× and 1.7×, and ties on appveyor.yml.",
           "inputs": [
             {
               "name": "travis.yml",
               "detail": "Travis CI configuration",
               "mbps": {
-                "oyl": 479,
-                "rapidyaml": 411,
-                "libfyaml": 174,
-                "libyaml": 141
+                "oyl": 464,
+                "rapidyaml": 433,
+                "libfyaml": 178,
+                "libyaml": 145
               }
             },
             {
               "name": "appveyor.yml",
               "detail": "AppVeyor CI configuration",
               "mbps": {
-                "oyl": 434,
-                "rapidyaml": 395,
-                "libfyaml": 145,
-                "libyaml": 126
+                "oyl": 426,
+                "rapidyaml": 425,
+                "libfyaml": 147,
+                "libyaml": 129
               }
             },
             {
               "name": "compile_commands.json",
               "detail": "a compilation database",
               "mbps": {
-                "oyl": 2132,
-                "rapidyaml": 1183,
-                "libfyaml": 291,
-                "libyaml": 214
+                "oyl": 2039,
+                "rapidyaml": 1215,
+                "libfyaml": 294,
+                "libyaml": 219
               }
             }
           ]
         },
         {
           "title": "Generated input, 10 MB each",
-          "note": "Mostly short keys and values, where the cost per token dominates. rapidyaml leads here; Oyl is 1.7–3.2× faster than libyaml and libfyaml.",
+          "note": "Mostly short keys and values, where the cost per token dominates. rapidyaml leads here; Oyl is 2.2–3.2× faster than libyaml and libfyaml.",
           "inputs": [
             {
               "name": "Block YAML",
               "detail": "mappings and sequences",
               "mbps": {
-                "oyl": 175,
-                "rapidyaml": 236,
+                "oyl": 162,
+                "rapidyaml": 243,
                 "libfyaml": 61,
-                "libyaml": 73
+                "libyaml": 74
               }
             },
             {
               "name": "Mixed YAML",
               "detail": "block, flow and quoted",
               "mbps": {
-                "oyl": 214,
-                "rapidyaml": 268,
-                "libfyaml": 73,
-                "libyaml": 84
+                "oyl": 201,
+                "rapidyaml": 286,
+                "libfyaml": 74,
+                "libyaml": 85
               }
             },
             {
               "name": "JSON",
               "detail": "an array of objects",
               "mbps": {
-                "oyl": 187,
-                "rapidyaml": 322,
-                "libfyaml": 59,
-                "libyaml": 69
+                "oyl": 183,
+                "rapidyaml": 323,
+                "libfyaml": 58,
+                "libyaml": 70
               }
             },
             {
               "name": "Config files",
               "detail": "comments, block scalars, anchors",
               "mbps": {
-                "oyl": 200,
-                "rapidyaml": 349,
-                "libfyaml": 102,
-                "libyaml": 120
+                "oyl": 306,
+                "rapidyaml": 386,
+                "libfyaml": 103,
+                "libyaml": 122
               }
             }
           ]
@@ -1043,50 +1043,50 @@ while (oyl_parse_next(parser, &evt) == OYL_OK) {
               "name": "Literal block scalars",
               "detail": "literal style (|)",
               "mbps": {
-                "oyl": 2967,
-                "rapidyaml": 962,
-                "libfyaml": 278,
-                "libyaml": 274
+                "oyl": 2891,
+                "rapidyaml": 969,
+                "libfyaml": 282,
+                "libyaml": 276
               }
             },
             {
               "name": "Folded block scalars",
               "detail": "folded style (>)",
               "mbps": {
-                "oyl": 2006,
-                "rapidyaml": 872,
-                "libfyaml": 278,
-                "libyaml": 276
+                "oyl": 1944,
+                "rapidyaml": 880,
+                "libfyaml": 281,
+                "libyaml": 283
               }
             },
             {
               "name": "Double-quoted",
               "detail": "with escapes and line breaks",
               "mbps": {
-                "oyl": 2817,
-                "rapidyaml": 340,
-                "libfyaml": 323,
-                "libyaml": 210
+                "oyl": 2837,
+                "rapidyaml": 353,
+                "libfyaml": 330,
+                "libyaml": 216
               }
             },
             {
               "name": "Single-quoted",
               "detail": "with line breaks",
               "mbps": {
-                "oyl": 2669,
-                "rapidyaml": 355,
-                "libfyaml": 324,
-                "libyaml": 212
+                "oyl": 2529,
+                "rapidyaml": 368,
+                "libfyaml": 329,
+                "libyaml": 219
               }
             },
             {
               "name": "Plain",
               "detail": "multi-line, unquoted",
               "mbps": {
-                "oyl": 840,
-                "rapidyaml": 295,
-                "libfyaml": 417,
-                "libyaml": 196
+                "oyl": 866,
+                "rapidyaml": 301,
+                "libfyaml": 425,
+                "libyaml": 199
               }
             }
           ]

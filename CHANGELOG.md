@@ -88,7 +88,7 @@ is under Changed, and the emitter's new errors under Fixed.
   sorted keys, Go's number and string formatting. Of 866 documents from
   public Kubernetes manifests, 857 convert identically with the schema
   alone and 5 fail alike, and with the go-yaml v2 dialect's syntax all
-  866 convert identically. About six times as fast. With the Core schema
+  866 convert identically. About seven times as fast. With the Core schema
   and `OYL_JSON_MERGE`, standard JSON; with no schema, the document's
   dialect types the scalars, and its merge order takes the place of the
   merge flags. Every node is checked as decoding checks it, since go-yaml
@@ -141,16 +141,17 @@ is under Changed, and the emitter's new errors under Fixed.
   schema tries `null`, `n` and `no`, not all 30 rules), and a word rule
   checks the length before anything else, which alone made tag
   resolution with the Core schema about 40% faster.
-- The emitter is 1.5x to 7x faster, with the same output byte for byte
+- The emitter is 1.5x to 6x faster, with the same output byte for byte
   (but for the fixes below): it decides a scalar's style in one pass
   over it instead of up to four, writes quoted scalars a chunk at a time,
   no longer counts output columns it never used, and emits events and
-  trees without building an event per node. Writing held trees as YAML: block mappings 214 to 340
-  MB/s, the largest Kubernetes CRD 705 to 1531, multi-line plain scalars
-  334 to 2352.
-- Keeping a scanner error is a call from the parser's hundred token
-  reads instead of code inlined into each: the parser runs 4% fewer
-  instructions and parses 3% to 14% faster (block YAML 140 to 160 MB/s).
+  trees without building an event per node. Writing held trees as
+  YAML: block mappings 214 to 332 MB/s, the largest Kubernetes CRD 705
+  to 1424, multi-line plain scalars 334 to 2083.
+- Parsing runs at 1.0.0's speed on block YAML, and 2% to 5% slower on
+  JSON, with all the checks added under Fixed. Those had cost up to 12%
+  until keeping a scanner error became a call from the parser's hundred
+  token reads instead of code inlined into each.
 
 ### Fixed
 
