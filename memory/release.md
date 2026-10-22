@@ -234,8 +234,24 @@ copies: the parser reuses its strings), `Tree::directives`,
 (events with each document's directives), `Dialect::version`; docs for
 the emitter's final errors, the `%YAML` dialect rule and
 `Node::entries`'s `Limit`. Tests: 19 API, 20 tree, 12 serde, 6 doc;
-clippy and rustdoc clean. Not bound (not asked): warnings,
-`oyl_parser_add_dialect`, `oyl_dialect_new`, `oyl_parser_document_dialect`.
+clippy and rustdoc clean. **Then `862ecfd` (2026-10-21; the user:
+"finish Rust first", asking whether dialects mattered):**
+`SchemaBuilder` → `CustomSchema` (nulls, bools, words, `IntFlags`/
+`FloatFlags` number parsers, custom types as closures
+`for<'t> Fn(&'t [u8]) -> Option<Value<'t>>`), `CustomDialect::new(version,
+schema, Syntax, MergeOrder)`, `Parser::dialect_for_version`/
+`dialect_for_tag_prefix`/`document_dialect`/`on_warning`,
+`Dialect::syntax`. `Schema` gained a lifetime (`Schema<'static>` presets;
+`JsonOptions<'a>`), and `Parser<'i>`'s `'i` now covers schemas and
+dialects given to it (compile_fail examples). Callback panics are caught
+in the C callback and resumed after the C call (thread-local slot, only
+checked once a callback exists); `next_tree`/`entries` free what they
+built when that happens. Tests: 14 custom more; every test clean under
+ASan+LSan (C built with `-fsanitize=address`, Rust linked with
+`-Clinker-features=-lld -Clink-arg=-fsanitize=address -Clink-arg=-lasan`,
+binaries run with `LD_PRELOAD=$(gcc -print-file-name=libasan.so)`, or
+LSan sees nothing). Still unbound: the token scanner (`oyl_scanner_*`)
+and raw `oyl_tree_props`/`oyl_tree_pool` (offered to the user).
 **Step 3 done 2026-10-18
 (`e433cfa`):** the `serde` feature: `from_str`/`from_slice`/`from_reader`
 (YAML 1.2), `from_str_with`/`from_slice_with` (a dialect), `from_node`;
