@@ -559,10 +559,11 @@ static void test_event_limit_documents(void) {
 }
 
 /* Documents before an error are delivered by the eager parser too, also
- * after a fallback to it (the anchor): it parses a document at a time. */
+ * after a fallback to it (the flow collection as a key): it parses a
+ * document at a time. */
 static void test_documents_before_error(void) {
     printf("test_documents_before_error:\n");
-    const char *yaml = "--- &a x\n--- b\n--- [c\n";
+    const char *yaml = "[a]: x\n--- b\n--- [c\n";
     for (int eager = 0; eager <= 1; eager++) {
         oyl_arena  *a = oyl_arena_new(4096);
         oyl_parser *p = oyl_parser_new(yaml, strlen(yaml), a);
@@ -573,7 +574,7 @@ static void test_documents_before_error(void) {
         while ((st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_NONE &&
                evt->type != OYL_EVT_STREAM_END)
             if (evt->type == OYL_EVT_SCALAR) scalars++;
-        ASSERT(st == OYL_ERR_PARSE && scalars == 2,
+        ASSERT(st == OYL_ERR_PARSE && scalars == 3,
                "the documents before an error are delivered");
         oyl_parser_free(p);
         oyl_arena_free(a);

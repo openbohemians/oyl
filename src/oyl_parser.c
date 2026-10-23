@@ -3510,7 +3510,7 @@ static inline oyl_event *inc_next(oyl_parser *p) {
 }
 
 /* Emit the event built at inc_next(). */
-static inline void inc_commit(oyl_parser *p) {
+ALWAYS_INLINE void inc_commit(oyl_parser *p) {
     if (p->max_events > 0 && p->events_delivered + p->out_len >= p->max_events) {
         hit_limit(p, "event limit exceeded");
         return;
@@ -4166,6 +4166,103 @@ static oyl_status parser_step_flow(oyl_parser *p) {
     return OYL_ERR_PARSE;
 }
 
+/* A block node with properties, in the common cases, read as the eager
+ * parser reads them (parse_block_node): an anchor and a tag at most, on
+ * one line, and then on that line a scalar that isn't a key, or a flow
+ * collection that isn't one; or, on a later line indented past the
+ * enclosing collection, a block sequence, or a scalar (a mapping's first
+ * key, when the mapping takes the properties). False, with nothing
+ * emitted, sends the document to the eager parser. */
+NOINLINE bool inc_block_props(oyl_parser *p) {
+    size_t line = p->current.start.line;
+    p->props_line = line;
+    p->props_col = tok_col(p);
+    p->props_start = p->current.start;
+    for (;;) {
+        if (tok_type(p) == OYL_TOK_ANCHOR && !p->has_anchor) {
+            p->pending_anchor = p->current.value;
+            p->has_anchor = true;
+        } else if (tok_type(p) == OYL_TOK_TAG && !p->has_tag) {
+            if (!tag_handle_declared(p, p->current.value)) return false;
+            p->pending_tag = expand_tag(p, p->current.value);
+            if (p->oom) return false;
+            p->has_tag = true;
+        } else {
+            break;
+        }
+        consume_token(p);
+        if (peek_token(p) != OYL_OK) return true;   /* next_event reports it */
+        if (p->current.start.line != line) break;
+    }
+    oyl_token_type tt = tok_type(p);
+    ptrdiff_t col = tok_col(p);
+    state_frame *top = inc_top_frame(p);
+
+    if (p->current.start.line == line) {
+        if (tt == OYL_TOK_SCALAR) {
+            if (top && top->type == CTX_BLOCK_MAP && col <= top->indent) return false;
+            oyl_event *e = inc_next(p);
+            fill_scalar(e, &p->current);
+            size_t scalar_line = p->current.start.line;
+            consume_token(p);
+            if (peek_token(p) != OYL_OK) return true;
+            if (tok_type(p) == OYL_TOK_BLOCK_MAP_VALUE && p->current.start.line == scalar_line)
+                return false;   /* a key */
+            attach_props(p, e);
+            inc_commit(p);
+            p->state = p->node_return;
+            return true;
+        }
+        if (tt == OYL_TOK_FLOW_SEQ_START || tt == OYL_TOK_FLOW_MAP_START) {
+            /* as at ST_BLOCK_NODE; ST_FLOW_NODE attaches the properties */
+            bool keyless = p->node_return == ST_BLOCK_MAP_LOOP &&
+                           p->current.start.line == p->value_colon_line &&
+                           !starts_line(p, p->value_colon_offset);
+            if (!keyless && flow_is_block_key(p, p->current.start.offset)) return false;
+            p->state = ST_FLOW_NODE;
+            return true;
+        }
+        return false;
+    }
+
+    if (top && (col < top->indent ||
+                (col == top->indent && !(tt == OYL_TOK_BLOCK_SEQ_ENTRY && top->type == CTX_BLOCK_MAP))))
+        return false;   /* the properties' node is empty */
+    if (tt == OYL_TOK_SCALAR) {
+        oyl_str value = p->current.value;
+        oyl_scalar_style style = p->current.scalar_style;
+        oyl_mark start = p->current.start, end = p->current.end;
+        consume_token(p);
+        if (peek_token(p) != OYL_OK) return true;
+        bool key = tok_type(p) == OYL_TOK_BLOCK_MAP_VALUE && p->current.start.line == start.line;
+        if (key) {
+            /* a mapping, with the properties, from them to its first key */
+            attach_props(p, inc_build(p, OYL_EVT_MAPPING_START, start, start, false));
+            inc_commit(p);
+        }
+        oyl_event *e = inc_build(p, OYL_EVT_SCALAR, start, end, false);
+        e->value = value;
+        e->scalar_style = style;
+        if (!key) attach_props(p, e);
+        inc_commit(p);
+        if (key) {
+            inc_push_frame(p, CTX_BLOCK_MAP, col, p->node_return);
+            p->state = ST_BLOCK_MAP_VALUE;
+        } else {
+            p->state = p->node_return;
+        }
+        return true;
+    }
+    if (tt == OYL_TOK_BLOCK_SEQ_ENTRY) {
+        attach_props(p, inc_build(p, OYL_EVT_SEQUENCE_START, p->current.start, p->current.end, false));
+        inc_commit(p);
+        inc_push_frame(p, CTX_BLOCK_SEQ, col, p->node_return);
+        p->state = ST_BLOCK_SEQ_LOOP;
+        return true;
+    }
+    return false;
+}
+
 /* Go on to state `st` in this step, as next_event's loop would in its next
  * round: only before the step has emitted an event (an error there is then
  * reported as it would be), and not after a scanner error or a stop. */
@@ -4333,10 +4430,9 @@ ALWAYS_INLINE oyl_status parser_step(oyl_parser *p) {
 
         /* Consume anchor/tag properties */
         if (tt == OYL_TOK_TAG || tt == OYL_TOK_ANCHOR) {
-            /* Fall back to eager for nodes with properties — the double-props
-             * logic is complex and interacts with collection start detection.
-             * We'll handle the simple (no props) cases incrementally first. */
-            p->state = ST_EAGER_DRAIN;
+            /* the common cases; the rest (two sets of properties, ...)
+             * by the eager parser */
+            if (!inc_block_props(p)) p->state = ST_EAGER_DRAIN;
             return OYL_OK;
         }
 

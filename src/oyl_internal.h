@@ -467,6 +467,15 @@ static inline oyl_str oyl_tree_text(const oyl_tree *t, const oyl_node *n) {
 #  define ALWAYS_INLINE static inline
 #endif
 
+/* For the hot entry points, whose speed shouldn't depend on where they
+ * happen to land: on oyl_scan_flow_fast, code added elsewhere in its file
+ * moved it off a 64-byte boundary and cost JSON 10%. */
+#if defined(__GNUC__) || defined(__clang__)
+#  define HOT_ALIGNED __attribute__((aligned(64)))
+#else
+#  define HOT_ALIGNED
+#endif
+
 /* For cold paths that would otherwise be inlined into a hot caller. */
 #if defined(__GNUC__) || defined(__clang__)
 #  define NOINLINE static __attribute__((noinline))

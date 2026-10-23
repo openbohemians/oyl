@@ -1795,7 +1795,7 @@ static inline bool ff_plain(uint8_t c) {
  * events are those the parser's flow states make from the tokens; a
  * scalar's end is where its token ends, past a plain scalar's trailing
  * blanks. */
-int oyl_scan_flow_fast(const oyl_scanner *s, const oyl_token *open, oyl_event *out, int cap,
+HOT_ALIGNED int oyl_scan_flow_fast(const oyl_scanner *s, const oyl_token *open, oyl_event *out, int cap,
                        oyl_flow_fast *ff) {
     /* a '?' entry awaiting its ':' changes what ',' and a close do */
     if (s->explicit_key || s->flows_len == 0 || cap < 2) return -1;
