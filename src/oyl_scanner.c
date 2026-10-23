@@ -1102,6 +1102,19 @@ oyl_status oyl_scan_next(oyl_scanner *s, const oyl_token **tok) {
      * rest of a bad token as new ones (the parser, which calls
      * oyl_scan_token, keeps the first error itself) */
     oyl_status st = s->failed ? s->failed : oyl_scan_token(s, &s->out_tok);
+    /* In a flow collection, a ':' right before '[' or '{', not after a
+     * quoted key, is neither a value indicator nor part of a plain scalar
+     * ("{a:[1]}"): oyl_scan_token gives an empty scalar there without
+     * moving on, which the parser reports as an error. Here it is one, or
+     * the tokens would repeat it forever. */
+    if (st == OYL_OK && s->out_tok.type == OYL_TOK_SCALAR && s->out_tok.value.len == 0 &&
+        s->out_tok.scalar_style == OYL_SCALAR_PLAIN &&
+        s->out_tok.end.offset == s->out_tok.start.offset) {
+        snprintf(s->error_msg, sizeof(s->error_msg), "%s",
+                 "':' must be followed by a space before a flow collection");
+        s->error_mark = s->out_tok.start;
+        st = OYL_ERR_SCAN;
+    }
     if (st != OYL_OK) s->failed = st;
     *tok = st == OYL_OK ? &s->out_tok : NULL;
     return st;

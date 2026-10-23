@@ -305,6 +305,10 @@ is under Changed, and the emitter's new errors under Fixed.
     which YAML forbids: it is written explicit (`? key`).
   - Plain text starting with `?` or `:` in a flow collection (`[:x]`),
     valid YAML 1.2 that libyaml and libfyaml read as a mapping, is quoted.
+- `oyl_scan_next` returned the same empty scalar forever at a `:` right
+  before `[` or `{` in a flow collection (`{a:[1]}`, invalid YAML 1.2,
+  where a plain key's `:` needs a space after it). It reports an error
+  there, as the parser does. 1.0.0 has the bug too.
 - The emitter checks the order of events: two roots, a mapping ended
   after a key, an end that doesn't match its start, a node outside a
   document, and anchor or alias names YAML can't hold (`a b`, `c,d`, an

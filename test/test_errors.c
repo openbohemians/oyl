@@ -151,6 +151,35 @@ static void test_unterminated_double_quote(void) {
     oyl_arena_free(a);
 }
 
+static void test_colon_before_flow_collection(void) {
+    printf("test_colon_before_flow_collection:\n");
+
+    /* the tokens stop with an error; they used to repeat an empty scalar */
+    const char *yaml = "{a:[1]}";
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_scanner *s = oyl_scanner_new(yaml, strlen(yaml), a);
+    const oyl_token *tok;
+    oyl_status st = OYL_OK;
+    int n = 0;
+    while (n < 100 && (st = oyl_scan_next(s, &tok)) == OYL_OK && tok->type != OYL_TOK_STREAM_END) n++;
+    ASSERT(st == OYL_ERR_SCAN, "the token stream ends with an error");
+    ASSERT(n == 3, "after stream start, '{' and the key");
+    const char *msg = oyl_scanner_error(s);
+    ASSERT(msg && strstr(msg, "followed by a space"), "message says what is missing");
+    ASSERT(oyl_scanner_error_mark(s).offset == 2, "error marks the ':'");
+    ASSERT(oyl_scan_next(s, &tok) == OYL_ERR_SCAN, "the error is final");
+    oyl_scanner_free(s);
+
+    /* the parser reports its own error there, as before */
+    oyl_parser *p = oyl_parser_new(yaml, strlen(yaml), a);
+    const oyl_event *evt;
+    while ((st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_STREAM_END) {}
+    ASSERT(st == OYL_ERR_PARSE, "the parser fails");
+    ASSERT(oyl_parser_error_mark(p).offset == 2, "at the ':'");
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+}
+
 static void test_invalid_escape(void) {
     printf("test_invalid_escape:\n");
 
@@ -892,6 +921,7 @@ int main(void) {
     /* scanner errors */
     test_unterminated_single_quote();
     test_unterminated_double_quote();
+    test_colon_before_flow_collection();
     test_invalid_escape();
     test_empty_anchor();
     test_control_char_anchor();
