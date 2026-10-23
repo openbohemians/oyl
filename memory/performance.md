@@ -112,7 +112,7 @@ slices; every field, incremental and eager paths, token stream):
   out only where asked; a plain scalar's look past a line break reused by
   the next token's skip
 
-- **the flow fast path** (`f24b54b`, the user left the choice to me,
+- **the flow fast path** (`08c95c7`, the user left the choice to me,
   2026-10-23): a flow collection on one line, of plain words and numbers,
   escape-free double-quoted text and nested collections, as a flow
   sequence's entry or a block node, is read whole from its bytes into
@@ -126,7 +126,7 @@ slices; every field, incremental and eager paths, token stream):
 
 Instructions per event 418635d → now: block 619/469, mixed 610/442,
 travis 640/495, config 641/539, JSON 612/212, compile_commands 771/653.
-MB/s at `f24b54b` (5 alternating rounds, against 418635d): block 160 →
+MB/s at `08c95c7` (5 alternating rounds, against 418635d): block 160 →
 227, mixed 204 → 311, config 308 → 356, JSON 197 → 538, appveyor 425 →
 620, travis 474 → 652, compile_commands 2154 → 2616; rapidyaml 250, 285,
 380, 334, 425, 431, 1203. Left behind it: block 1.10x, config 1.07x.

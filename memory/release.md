@@ -324,13 +324,12 @@ jargon.rs leaves YAML out (a program converts it, or registers a config
 format, oyl.rs among the choices), so it won't depend on oyl.rs. jargon.cr
 may let programs register a config format later; nothing decided.
 
-**Waiting on the user: `scan-next-hang`** (local branch off main,
-`11e90b6`, 2026-10-23): `oyl_scan_next` handed out the same empty scalar
-forever at a `:` right before `[`/`{` in a flow collection (`{a:[1]}`,
-invalid YAML 1.2); now an error. The parser was never affected (it errors
-there). 1.0.0 has the bug. Found by the step-3 mutation diff. Merging it
-into main restarts the fuzzing wait only if the user counts it so: it
-touches only the token API, which the fuzzers don't call.
+**Fixed in `11e90b6`** (merged and pushed to main, the user: "Yes merge",
+2026-10-23): `oyl_scan_next` handed out the same empty scalar forever at a
+`:` right before `[`/`{` in a flow collection (`{a:[1]}`, invalid YAML
+1.2); now an error. The parser was never affected (it errors there). 1.0.0
+has the bug. Found by the step-3 mutation diff; CI green on it. It touches only the token
+API, which the fuzzers don't call; `per-token` is rebased onto it.
 
 ## After the tag
 
