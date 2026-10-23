@@ -85,6 +85,13 @@ struct oyl_scanner {
     size_t       props_start;      /* and its offset */
     size_t       indicator_end;    /* offset just past the last block - ? : */
 
+    /* where a plain scalar ending at a line break looked ahead to, past the
+     * break(s) and blanks after it: the next token's skip starts at
+     * ahead_from, and can go straight there (skip_blanks_and_comments) */
+    size_t       ahead_from;       /* the break, or SIZE_MAX */
+    size_t       ahead_pos, ahead_line, ahead_col;
+    size_t       ahead_line_start; /* start of the line ahead_pos is on */
+
     /* the document's syntax leniencies (OYL_SYNTAX_), and where to warn
      * when one changes the result */
     unsigned        syntax;
@@ -187,9 +194,20 @@ ALWAYS_INLINE size_t skip_blanks_here(const oyl_scanner *s) {
  *    spaces before it must already exceed the current block indent. */
 ALWAYS_INLINE const char *skip_blanks_and_comments(oyl_scanner *s) {
     size_t line_start = (s->col == 1) ? s->pos : SIZE_MAX;
-    /* skip spaces and tabs: here those after a token, below a line's
-     * indentation (two inline copies, which branch prediction tells apart) */
-    advance_cols(s, skip_blanks_here(s));
+    if (s->pos == s->ahead_from) {
+        /* a plain scalar ending here looked past the breaks and blanks
+         * that follow (only those): go on from where it got to */
+        s->pos = s->ahead_pos;
+        s->line = s->ahead_line;
+        s->col = s->ahead_col;
+        line_start = s->ahead_line_start;
+        s->ahead_from = SIZE_MAX;
+    } else {
+        /* skip spaces and tabs: here those after a token, below a line's
+         * indentation (two inline copies, which branch prediction tells
+         * apart) */
+        advance_cols(s, skip_blanks_here(s));
+    }
     for (;;) {
         /* comment? skip to end of line */
         if (PEEK(s) == '#') {
@@ -561,10 +579,23 @@ ALWAYS_INLINE oyl_status scan_plain_scalar(oyl_scanner *s, oyl_token *tok) {
             size_t save = s->pos;
             size_t save_line = s->line;
             size_t save_col = s->col;
+            size_t ahead_line_start = 0;
+
+            /* the scalar ends at the break: back to it, noting how far the
+             * look ahead got for the next token's skip */
+            #define END_AT_BREAK() do { \
+                s->ahead_from = save; \
+                s->ahead_pos = s->pos; \
+                s->ahead_line = s->line; \
+                s->ahead_col = s->col; \
+                s->ahead_line_start = ahead_line_start; \
+                s->pos = save; s->line = save_line; s->col = save_col; \
+            } while (0)
 
             int break_count = 0;
             while (!AT_END(s) && oyl_is_break(PEEK(s))) {
                 skip_break(s);
+                ahead_line_start = s->pos;
                 break_count++;
                 size_t blanks = skip_blanks_here(s);
                 s->pos += blanks;
@@ -582,7 +613,7 @@ ALWAYS_INLINE oyl_status scan_plain_scalar(oyl_scanner *s, oyl_token *tok) {
             if (min_indent < 0) min_indent = 0;
 
             if (next_indent < min_indent) {
-                s->pos = save; s->line = save_line; s->col = save_col;
+                END_AT_BREAK();
                 break;
             }
 
@@ -599,19 +630,19 @@ ALWAYS_INLINE oyl_status scan_plain_scalar(oyl_scanner *s, oyl_token *tok) {
             if (nc == ':') {
                 uint8_t after = PEEK_AT(s, 1);
                 if (oyl_is_blank_or_break(after) || after == 0) {
-                    s->pos = save; s->line = save_line; s->col = save_col;
+                    END_AT_BREAK();
                     break;
                 }
             }
             if (nc == '#') {
-                s->pos = save; s->line = save_line; s->col = save_col;
+                END_AT_BREAK();
                 break;
             }
             if (s->col == 1 && REMAINING(s) >= 3) {
                 if ((nc == '-' && PEEK_AT(s,1) == '-' && PEEK_AT(s,2) == '-') ||
                     (nc == '.' && PEEK_AT(s,1) == '.' && PEEK_AT(s,2) == '.')) {
                     if (REMAINING(s) == 3 || oyl_is_blank_or_break(PEEK_AT(s,3))) {
-                        s->pos = save; s->line = save_line; s->col = save_col;
+                        END_AT_BREAK();
                         break;
                     }
                 }
@@ -663,6 +694,7 @@ ALWAYS_INLINE oyl_status scan_plain_scalar(oyl_scanner *s, oyl_token *tok) {
     #undef APPEND_CHAR
     #undef SWITCH_TO_BUF
     #undef TRIM_TRAILING
+    #undef END_AT_BREAK
 }
 
 static oyl_status scan_single_quoted_slow(oyl_scanner *s, oyl_token *tok, oyl_mark start);
@@ -1415,6 +1447,7 @@ oyl_scanner *oyl_scanner_new(const char *input, size_t len, oyl_arena *a) {
         .node_end             = SIZE_MAX, /* no node seen yet */
         .indicator_end        = SIZE_MAX,
         .props_end            = SIZE_MAX,
+        .ahead_from           = SIZE_MAX,
         .arena = a,
     };
 
