@@ -1,6 +1,6 @@
 # Performance
 
-*Updated 2026-10-22*
+*Updated 2026-10-23*
 
 ## Measuring
 
@@ -28,6 +28,22 @@
   side (a `jmp` over `.skip N`, N = 0..60, at the function's entry, which
   moves the whole body) and compare medians. On the scanner that spread
   is 2-7% per input, so a single A/B build pair can't settle 2%.
+- Count instructions per event first: Oyl runs at 4+ instructions per
+  cycle with almost no branch misses, so instructions track time, and they
+  don't move with code layout; cycles vary 2-4% between builds and runs.
+  Precise sampling (`precise_ip = 2`, PEBS) works on your own child at
+  paranoid 2, for instructions and for branch misses.
+- `-fstack-protector-strong` is on by default in common GCC builds (Arch,
+  Debian, Ubuntu): a function with a local whose address is taken gets a
+  canary check on every call. That includes a struct over 16 bytes
+  returned by an out-of-line function (`oyl_mark`, through a hidden
+  pointer) and a local event passed to `inc_emit`. `oyl_scan_token` and
+  `oyl_parse_next` had one; check with `objdump -d ... | grep fs:0x28`.
+- GCC's inlining budget for a big function is shared: an added call site
+  or a grown callee can push another hot callee out of line (the dispatch
+  table once outlined `scan_plain_scalar`). Check which functions are out
+  of line (`nm` lists them as `t`), and use ALWAYS_INLINE on one-caller
+  hot paths, keeping cold slow paths NOINLINE.
 - `just sanitize` leaves instrumented objects in `build/`, and the Makefile
   doesn't track CFLAGS: run `make clean` before benchmarking afterwards.
 - Compare formats by ns per event, not MB/s, when the inputs differ in
@@ -73,6 +89,49 @@ event parser, built from source.
   -C dir`, `make -C dir CFLAGS=-O2 OBJDIR=dir/obj dir/obj/liboyl.a`, link
   `bench/compare/cmp_oyl*.c` against each, alternate runs pinned.
 - Emitter regression from `1aa0d8e`: see todo.md.
+
+## Step 3 so far (2026-10-23, branch `per-token`)
+
+Profiling 418635d with PEBS: on block YAML 619 instructions per event (60%
+scanner, 37% parser), against rapidyaml's 393, both near 4.3 per cycle.
+No line over 4%: the cost was the machinery around every token. Done, each
+change checked by instructions per event, the test suite and an event
+diff over 81,436 inputs (fuzz corpus, Kubernetes documents, benchmark
+slices; every field, incremental and eager paths, token stream):
+
+- events built in place in `out_buf` and handed out by pointer (copying
+  them stalled on store forwarding, as tokens did in `dc46992`)
+- a block key/value pair in two state-machine steps instead of five
+  (CHAIN: only up to a step's first event, so errors fall as before)
+- blank runs of 0-1 bytes skipped inline (`oyl_skip_blanks` was two calls,
+  one indirect, about twice per token); a first-byte table sends letters
+  and digits straight to the plain scanner, a switch the indicators
+- the quoted scanners' escape-free paths inline, the rest NOINLINE; the
+  block scalar code out of line
+- no stack canaries on the hot paths; a value ':' starting its line worked
+  out only where asked; a plain scalar's look past a line break reused by
+  the next token's skip
+
+Instructions per event 418635d → now: block 619/468, mixed 610/479,
+travis 640/495, config 641/539, JSON 612/499, compile_commands 771/630.
+MB/s at `b57f624` (5 alternating rounds, against 418635d): block 159 →
+222, mixed 199 → 277, config 307 → 344, JSON 195 → 242, appveyor 421 →
+594, travis 477 → 629, compile_commands 2173 → 2743; rapidyaml 249, 280,
+379, 327, 425, 432, 1240. Left behind it: block 1.12x, config 1.10x, JSON
+1.35x; mixed even.
+
+Tried and dropped: an 8-byte inline blank loop and an inline SSE2 skip
+(more instructions); batching events per refill (the call overhead was
+small, and JSON gained a mispredicted loop exit); a flow-key scan window
+over many lines (no gain on JSON, where each stop costs ~45 instructions,
+~15 per byte; worse on multi-line JSON, where the old scan stops at each
+object's first line break).
+
+Open: a branch at the token-start blank check mispredicts 0.1 per event on
+block.yaml since the dispatch table (whether a blank follows ':', i.e.
+`nested:` lines); config.yaml goes eager for every document (an anchor);
+JSON's flow-key scan is 16% of its instructions; the parser fills each
+event's marks from the token (a quarter of its instructions on block).
 
 ## Post-1.0 plan (agreed 2026-10-03; nothing before the tag)
 

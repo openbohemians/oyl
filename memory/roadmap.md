@@ -1,6 +1,6 @@
 # Roadmap after 1.0
 
-*Updated 2026-10-22*
+*Updated 2026-10-23*
 
 The order the user agreed on 2026-10-11 (revised from 2026-10-10, when the
 tree came first; YAMLToJSON needs no tree, so it moved ahead):
@@ -64,10 +64,14 @@ That is bad.") agreed this order:
    rapidyaml leads: the flow/JSON fast path and the structural index
    (performance.md, post-1.0 items 5 and 4). Not parallel parsing: the
    user agreed to hold a multi-threaded benchmark section until it is in
-   the library.
+   the library. **Started 2026-10-23** (the user: "start on that"), before
+   the bindings. **In progress on the local branch `per-token`** (not
+   pushed; main stays as 1.2.0 will be tagged): the per-token machinery
+   trimmed first, since a profile showed Oyl at 4+ instructions per cycle
+   with no branch misses, so the cost was instructions, spread thinly
+   (performance.md, "Step 3 so far").
 
-Where this falls against the Go and Crystal binding work (release.md)
-isn't decided.
+Where the bindings fall after step 3 isn't decided.
 
 ## oyl.go
 
