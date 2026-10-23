@@ -48,7 +48,7 @@ typedef enum {
     ST_STREAM_START, ST_STREAM_DOC_LOOP, ST_STREAM_END,
     ST_DOC_DIRECTIVES, ST_DOC_START_EXPLICIT, ST_DOC_START_IMPLICIT,
     ST_DOC_END_EXPLICIT, ST_DOC_CONTENT,
-    ST_BLOCK_NODE, ST_BLOCK_NODE_SCALAR, ST_BLOCK_NODE_SCALAR_KEY,
+    ST_BLOCK_NODE, ST_BLOCK_NODE_SCALAR,
     ST_BLOCK_NODE_ALIAS, ST_BLOCK_NODE_ALIAS_KEY,
     ST_BLOCK_NODE_SEQ, ST_BLOCK_NODE_EXPLICIT_KEY, ST_BLOCK_NODE_BARE_VALUE,
     ST_BLOCK_MAP_LOOP, ST_BLOCK_MAP_EXPLICIT_KEY, ST_BLOCK_MAP_SIMPLE_KEY,
@@ -176,6 +176,7 @@ struct oyl_parser {
     int          out_len;
     int          out_cursor;
     oyl_event    saved_node;    /* saved scalar/alias for : lookahead */
+    oyl_event    spare_evt;     /* inc_next's slot when out_buf is full */
     ptrdiff_t    saved_node_col;
     bool         have_saved_node;
 #if 0   /* dead, to be deleted: ST_UNROLL's */
@@ -191,7 +192,7 @@ struct oyl_parser {
     size_t       value_colon_line; /* line of the last block map value ':' */
     bool         value_colon_starts_line; /* and whether it starts that line */
 
-    /* event handed out by the public oyl_parse_next() */
+    /* the NONE event oyl_parse_next() hands out at the end */
     oyl_event out_evt;
 
     /* original anchor names by binding serial (see bind_anchors) */
@@ -300,9 +301,9 @@ static bool insert_event(oyl_parser *p, int idx, const oyl_event *evt) {
     return true;
 }
 
-static inline bool dequeue(oyl_parser *p, oyl_event *evt) {
+static inline bool dequeue(oyl_parser *p, const oyl_event **evt) {
     if (p->evt_cursor >= p->evt_len) return false;
-    *evt = p->events[p->evt_cursor++];
+    *evt = &p->events[p->evt_cursor++];
     return true;
 }
 
@@ -3412,13 +3413,75 @@ static bool flow_is_block_key(oyl_parser *p, size_t offset) {
 
 /* ── Incremental state machine ───────────────────────────── */
 
-static inline void inc_emit(oyl_parser *p, const oyl_event *evt) {
+/* Out of line: inlined, GCC may copy the event with `rep movs`. */
+NOINLINE void inc_emit(oyl_parser *p, const oyl_event *evt) {
     if (p->max_events > 0 && p->events_delivered + p->out_len >= p->max_events) {
         hit_limit(p, "event limit exceeded");
         return;
     }
     if (p->out_len < 8)
         p->out_buf[p->out_len++] = *evt;
+}
+
+/* The slot in out_buf for the next event, or NULL if none is emitted (the
+ * event limit stopped parsing, or the buffer is full). Events are built in
+ * place there, field by field: built in a local and copied over, they stall
+ * on store forwarding. */
+ALWAYS_INLINE oyl_event *inc_slot(oyl_parser *p) {
+    if (p->max_events > 0 && p->events_delivered + p->out_len >= p->max_events) {
+        hit_limit(p, "event limit exceeded");
+        return NULL;
+    }
+    return p->out_len < 8 ? &p->out_buf[p->out_len++] : NULL;
+}
+
+/* Emit an event with no value and no properties. */
+ALWAYS_INLINE void inc_emit_ev(oyl_parser *p, oyl_event_type type, oyl_mark start, oyl_mark end,
+                               bool implicit, bool flow) {
+    oyl_event *e = inc_slot(p);
+    if (!e) return;
+    e->type = type;
+    e->value = OYL_STR_NULL;
+    e->anchor = OYL_STR_NULL;
+    e->tag = OYL_STR_NULL;
+    e->scalar_style = OYL_SCALAR_PLAIN;
+    e->implicit = implicit;
+    e->flow = flow;
+    e->start = start;
+    e->end = end;
+}
+
+ALWAYS_INLINE void inc_emit_at(oyl_parser *p, oyl_event_type type, oyl_mark start, oyl_mark end) {
+    inc_emit_ev(p, type, start, end, false, false);
+}
+
+/* The slot the next event takes, to build it there before knowing it will
+ * be emitted (inc_commit emits it); a spare when the buffer is full, as
+ * inc_emit then drops the event. */
+static inline oyl_event *inc_next(oyl_parser *p) {
+    return p->out_len < 8 ? &p->out_buf[p->out_len] : &p->spare_evt;
+}
+
+/* Emit the event built at inc_next(). */
+static inline void inc_commit(oyl_parser *p) {
+    if (p->max_events > 0 && p->events_delivered + p->out_len >= p->max_events) {
+        hit_limit(p, "event limit exceeded");
+        return;
+    }
+    if (p->out_len < 8) p->out_len++;
+}
+
+/* Build a scalar event from a SCALAR token, without properties. */
+static inline void fill_scalar(oyl_event *e, const oyl_token *t) {
+    e->type = OYL_EVT_SCALAR;
+    e->value = t->value;
+    e->anchor = OYL_STR_NULL;
+    e->tag = OYL_STR_NULL;
+    e->scalar_style = t->scalar_style;
+    e->implicit = false;
+    e->flow = false;
+    e->start = t->start;
+    e->end = t->end;
 }
 
 static inline void inc_push_frame(oyl_parser *p, ctx_type type, ptrdiff_t indent,
@@ -3707,10 +3770,7 @@ static oyl_status parser_step_flow(oyl_parser *p) {
                 tt == OYL_TOK_FLOW_ENTRY ||
                 tt == OYL_TOK_FLOW_MAP_END) {
                 /* empty key */
-                evt = evt_simple(OYL_EVT_SCALAR);
-                evt.start = p->current.start;
-                evt.end = p->current.start;
-                inc_emit(p, &evt);
+                inc_emit_at(p, OYL_EVT_SCALAR, p->current.start, p->current.start);
                 p->state = ST_FLOW_MAP_VALUE;
             } else {
                 p->node_return = ST_FLOW_MAP_VALUE;
@@ -3746,10 +3806,7 @@ static oyl_status parser_step_flow(oyl_parser *p) {
             return inc_flow_map_value(p);
         } else {
             /* no ':', emit empty value */
-            evt = evt_simple(OYL_EVT_SCALAR);
-            evt.start = p->current.start;
-            evt.end = p->current.start;
-            inc_emit(p, &evt);
+            inc_emit_at(p, OYL_EVT_SCALAR, p->current.start, p->current.start);
             p->state = ST_FLOW_MAP_SEP;
         }
         return OYL_OK;
@@ -3775,10 +3832,7 @@ static oyl_status parser_step_flow(oyl_parser *p) {
         oyl_mark close = p->current.start;
         oyl_mark close_end = p->current.end;
         consume_token(p); /* consume } */
-        evt = evt_simple(OYL_EVT_MAPPING_END);
-        evt.start = close;
-        evt.end = close_end;
-        inc_emit(p, &evt);
+        inc_emit_at(p, OYL_EVT_MAPPING_END, close, close_end);
         state_frame frame = inc_pop_frame(p);
         p->state = frame.return_state;
         if (p->state == ST_FLOW_SEQ_SEP) return inc_flow_sep(p, true);
@@ -3836,11 +3890,7 @@ static oyl_status parser_step_flow(oyl_parser *p) {
             key.end = p->current.start;
             attach_props(p, &key);
 
-            evt = evt_simple(OYL_EVT_MAPPING_START);
-            evt.flow = true;
-            evt.start = key.start;
-            evt.end = key.start;
-            inc_emit(p, &evt);
+            inc_emit_ev(p, OYL_EVT_MAPPING_START, key.start, key.start, false, true);
             inc_emit(p, &key);
 
             consume_token(p); /* consume : */
@@ -3850,10 +3900,7 @@ static oyl_status parser_step_flow(oyl_parser *p) {
             tt = tok_type(p);
             if (tt == OYL_TOK_FLOW_ENTRY ||
                 tt == OYL_TOK_FLOW_SEQ_END) {
-                evt = evt_simple(OYL_EVT_SCALAR);
-                evt.start = p->current.start;
-                evt.end = p->current.start;
-                inc_emit(p, &evt);
+                inc_emit_at(p, OYL_EVT_SCALAR, p->current.start, p->current.start);
                 p->state = ST_FLOW_SEQ_IMPLICIT_END;
             } else {
                 p->node_return = ST_FLOW_SEQ_IMPLICIT_END;
@@ -3930,11 +3977,7 @@ static oyl_status parser_step_flow(oyl_parser *p) {
 
     case ST_FLOW_SEQ_ENTRY_KEY: {
         /* Implicit pair detected: emit MAPPING_START + saved key */
-        evt = evt_simple(OYL_EVT_MAPPING_START);
-        evt.flow = true;
-        evt.start = p->saved_node.start;
-        evt.end = p->saved_node.start;
-        inc_emit(p, &evt);
+        inc_emit_ev(p, OYL_EVT_MAPPING_START, p->saved_node.start, p->saved_node.start, false, true);
         inc_emit(p, &p->saved_node);
         p->have_saved_node = false;
 
@@ -3945,10 +3988,7 @@ static oyl_status parser_step_flow(oyl_parser *p) {
         peek_token(p);
         tt = tok_type(p);
         if (tt == OYL_TOK_FLOW_ENTRY || tt == OYL_TOK_FLOW_SEQ_END) {
-            evt = evt_simple(OYL_EVT_SCALAR);
-            evt.start = p->current.start;
-            evt.end = p->current.start;
-            inc_emit(p, &evt);
+            inc_emit_at(p, OYL_EVT_SCALAR, p->current.start, p->current.start);
             p->state = ST_FLOW_SEQ_IMPLICIT_END;
         } else {
             p->node_return = ST_FLOW_SEQ_IMPLICIT_END;
@@ -3958,22 +3998,15 @@ static oyl_status parser_step_flow(oyl_parser *p) {
     }
 
     case ST_FLOW_SEQ_IMPLICIT_END: {
-        evt = evt_simple(OYL_EVT_MAPPING_END);
         peek_token(p);
-        evt.start = p->current.start;
-        evt.end = p->current.start;
-        inc_emit(p, &evt);
+        inc_emit_at(p, OYL_EVT_MAPPING_END, p->current.start, p->current.start);
         p->state = ST_FLOW_SEQ_SEP;
         return OYL_OK;
     }
 
     case ST_FLOW_SEQ_EXPLICIT_KEY: {
         /* ? key : value pair in flow sequence */
-        evt = evt_simple(OYL_EVT_MAPPING_START);
-        evt.flow = true;
-        evt.start = p->current.start;
-        evt.end = p->current.end;
-        inc_emit(p, &evt);
+        inc_emit_ev(p, OYL_EVT_MAPPING_START, p->current.start, p->current.end, false, true);
 
         consume_token(p); /* consume ? */
 
@@ -3983,10 +4016,7 @@ static oyl_status parser_step_flow(oyl_parser *p) {
             tt == OYL_TOK_FLOW_ENTRY ||
             tt == OYL_TOK_FLOW_SEQ_END) {
             /* empty key */
-            evt = evt_simple(OYL_EVT_SCALAR);
-            evt.start = p->current.start;
-            evt.end = p->current.start;
-            inc_emit(p, &evt);
+            inc_emit_at(p, OYL_EVT_SCALAR, p->current.start, p->current.start);
             p->state = ST_FLOW_SEQ_EXPLICIT_VALUE;
         } else {
             p->node_return = ST_FLOW_SEQ_EXPLICIT_VALUE;
@@ -4004,10 +4034,7 @@ static oyl_status parser_step_flow(oyl_parser *p) {
             tt = tok_type(p);
             if (tt == OYL_TOK_FLOW_ENTRY ||
                 tt == OYL_TOK_FLOW_SEQ_END) {
-                evt = evt_simple(OYL_EVT_SCALAR);
-                evt.start = p->current.start;
-                evt.end = p->current.start;
-                inc_emit(p, &evt);
+                inc_emit_at(p, OYL_EVT_SCALAR, p->current.start, p->current.start);
             } else {
                 p->node_return = ST_FLOW_SEQ_EXPLICIT_END;
                 p->state = ST_FLOW_NODE;
@@ -4015,21 +4042,15 @@ static oyl_status parser_step_flow(oyl_parser *p) {
             }
         } else {
             /* no value indicator, emit empty */
-            evt = evt_simple(OYL_EVT_SCALAR);
-            evt.start = p->current.start;
-            evt.end = p->current.start;
-            inc_emit(p, &evt);
+            inc_emit_at(p, OYL_EVT_SCALAR, p->current.start, p->current.start);
         }
         p->state = ST_FLOW_SEQ_EXPLICIT_END;
         return OYL_OK;
     }
 
     case ST_FLOW_SEQ_EXPLICIT_END: {
-        evt = evt_simple(OYL_EVT_MAPPING_END);
         peek_token(p);
-        evt.start = p->current.start;
-        evt.end = p->current.start;
-        inc_emit(p, &evt);
+        inc_emit_at(p, OYL_EVT_MAPPING_END, p->current.start, p->current.start);
         p->state = ST_FLOW_SEQ_SEP;
         return OYL_OK;
     }
@@ -4068,10 +4089,7 @@ static oyl_status parser_step_flow(oyl_parser *p) {
         oyl_mark close = p->current.start;
         oyl_mark close_end = p->current.end;
         consume_token(p); /* consume ] */
-        evt = evt_simple(OYL_EVT_SEQUENCE_END);
-        evt.start = close;
-        evt.end = close_end;
-        inc_emit(p, &evt);
+        inc_emit_at(p, OYL_EVT_SEQUENCE_END, close, close_end);
         state_frame frame = inc_pop_frame(p);
         p->state = frame.return_state;
         if (p->state == ST_FLOW_SEQ_SEP) return inc_flow_sep(p, true);
@@ -4086,7 +4104,17 @@ static oyl_status parser_step_flow(oyl_parser *p) {
     return OYL_ERR_PARSE;
 }
 
-static oyl_status parser_step(oyl_parser *p) {
+/* Go on to state `st` in this step, as next_event's loop would in its next
+ * round: only before the step has emitted an event (an error there is then
+ * reported as it would be), and not after a scanner error or a stop. */
+#define CHAIN(st, label) do { \
+    p->state = (st); \
+    if (p->scan_error || p->oom) return OYL_OK; \
+    goto label; \
+} while (0)
+
+/* Inlined into its one caller, next_event, which runs it for every event */
+ALWAYS_INLINE oyl_status parser_step(oyl_parser *p) {
     oyl_token_type tt;
     ptrdiff_t col;
     oyl_mark mark;
@@ -4180,11 +4208,7 @@ static oyl_status parser_step(oyl_parser *p) {
         oyl_mark marker_end = p->current.end;            /* the "---" */
         p->doc_start_line = mark.line;
         consume_token(p);
-        evt = evt_simple(OYL_EVT_DOC_START);
-        evt.implicit = false;
-        evt.start = mark;
-        evt.end = marker_end;
-        inc_emit(p, &evt);
+        inc_emit_at(p, OYL_EVT_DOC_START, mark, marker_end);
         p->doc_open = true;
         p->state = ST_DOC_CONTENT;
         return OYL_OK;
@@ -4210,11 +4234,7 @@ static oyl_status parser_step(oyl_parser *p) {
 #endif
         peek_token(p);
         p->doc_start_line = 0;
-        evt = evt_simple(OYL_EVT_DOC_START);
-        evt.implicit = true;
-        evt.start = p->current.start;
-        evt.end = p->current.start;
-        inc_emit(p, &evt);
+        inc_emit_ev(p, OYL_EVT_DOC_START, p->current.start, p->current.start, true, false);
         p->doc_open = true;
         p->state = ST_DOC_CONTENT;
         return OYL_OK;
@@ -4225,39 +4245,22 @@ static oyl_status parser_step(oyl_parser *p) {
         tt = tok_type(p);
         if (tt == OYL_TOK_DOC_END) {
             /* empty document body */
-            evt = evt_simple(OYL_EVT_SCALAR);
-            evt.start = p->current.start;
-            evt.end = p->current.start;
-            inc_emit(p, &evt);
+            inc_emit_at(p, OYL_EVT_SCALAR, p->current.start, p->current.start);
             p->state = ST_DOC_END_EXPLICIT;
             return OYL_OK;
         }
         if (tt == OYL_TOK_DOC_START) {
             /* empty document body, new doc follows */
-            evt = evt_simple(OYL_EVT_SCALAR);
-            evt.start = p->current.start;
-            evt.end = p->current.start;
-            inc_emit(p, &evt);
+            inc_emit_at(p, OYL_EVT_SCALAR, p->current.start, p->current.start);
             /* close this doc implicitly */
-            evt = evt_simple(OYL_EVT_DOC_END);
-            evt.implicit = true;
-            evt.start = p->current.start;
-            evt.end = p->current.start;
-            inc_emit(p, &evt);
+            inc_emit_ev(p, OYL_EVT_DOC_END, p->current.start, p->current.start, true, false);
             p->doc_open = false;
             p->state = ST_STREAM_DOC_LOOP;
             return OYL_OK;
         }
         if (tt == OYL_TOK_STREAM_END) {
-            evt = evt_simple(OYL_EVT_SCALAR);
-            evt.start = p->current.start;
-            evt.end = p->current.start;
-            inc_emit(p, &evt);
-            evt = evt_simple(OYL_EVT_DOC_END);
-            evt.implicit = true;
-            evt.start = p->current.start;
-            evt.end = p->current.start;
-            inc_emit(p, &evt);
+            inc_emit_at(p, OYL_EVT_SCALAR, p->current.start, p->current.start);
+            inc_emit_ev(p, OYL_EVT_DOC_END, p->current.start, p->current.start, true, false);
             p->doc_open = false;
             p->state = ST_STREAM_END;
             return OYL_OK;
@@ -4268,6 +4271,7 @@ static oyl_status parser_step(oyl_parser *p) {
         return OYL_OK;
 
     case ST_BLOCK_NODE:
+    block_node:
         /* Consume properties (anchor, tag) */
         peek_token(p);
         tt = tok_type(p);
@@ -4286,10 +4290,8 @@ static oyl_status parser_step(oyl_parser *p) {
             return OYL_OK;
         }
 
-        if (tt == OYL_TOK_BLOCK_SEQ_ENTRY) {
-            p->state = ST_BLOCK_NODE_SEQ;
-            return OYL_OK;
-        }
+        if (tt == OYL_TOK_BLOCK_SEQ_ENTRY)
+            CHAIN(ST_BLOCK_NODE_SEQ, node_seq);
 
         if (tt == OYL_TOK_BLOCK_MAP_KEY) {
             p->state = ST_BLOCK_NODE_EXPLICIT_KEY;
@@ -4319,10 +4321,8 @@ static oyl_status parser_step(oyl_parser *p) {
             return OYL_OK;
         }
 
-        if (tt == OYL_TOK_SCALAR) {
-            p->state = ST_BLOCK_NODE_SCALAR;
-            return OYL_OK;
-        }
+        if (tt == OYL_TOK_SCALAR)
+            CHAIN(ST_BLOCK_NODE_SCALAR, node_scalar);
 
         if (tt == OYL_TOK_FLOW_SEQ_END || tt == OYL_TOK_FLOW_MAP_END ||
             tt == OYL_TOK_FLOW_ENTRY)
@@ -4342,16 +4342,12 @@ static oyl_status parser_step(oyl_parser *p) {
         p->state = ST_EAGER_DRAIN;
         return OYL_OK;
 
-    case ST_BLOCK_NODE_SCALAR: {
+    case ST_BLOCK_NODE_SCALAR:
+    node_scalar: {
         peek_token(p);
         col = tok_col(p);
-        evt = (oyl_event){
-            .type = OYL_EVT_SCALAR,
-            .value = p->current.value,
-            .scalar_style = p->current.scalar_style,
-            .start = p->current.start,
-            .end = p->current.end,
-        };
+        oyl_event *e = inc_next(p);
+        fill_scalar(e, &p->current);
         consume_token(p);
 
         /* peek for ':' → this scalar is a mapping key. The ':' must be on
@@ -4359,38 +4355,37 @@ static oyl_status parser_step(oyl_parser *p) {
          * whose token ends on the next line, never is one) */
         peek_token(p);
         tt = tok_type(p);
-        if (tt == OYL_TOK_BLOCK_MAP_VALUE && p->current.start.line == evt.start.line) {
-            p->saved_node = evt;
-            p->saved_node_col = col;
-            p->have_saved_node = true;
-            p->state = ST_BLOCK_NODE_SCALAR_KEY;
+        if (tt == OYL_TOK_BLOCK_MAP_VALUE && p->current.start.line == e->start.line) {
+            /* a key: emit MAPPING_START + the key, push the block map
+             * (returning to the caller's node_return after it ends), and
+             * consume ':' and parse the value. The key moves up a slot
+             * field by field, as the MAPPING_START overwrites it */
+            oyl_str value = e->value;
+            oyl_scalar_style style = e->scalar_style;
+            oyl_mark start = e->start, end = e->end;
+            inc_emit_at(p, OYL_EVT_MAPPING_START, start, start);
+            oyl_event *k = inc_slot(p);
+            if (k) {
+                k->type = OYL_EVT_SCALAR;
+                k->value = value;
+                k->anchor = OYL_STR_NULL;
+                k->tag = OYL_STR_NULL;
+                k->scalar_style = style;
+                k->implicit = false;
+                k->flow = false;
+                k->start = start;
+                k->end = end;
+            }
+            inc_push_frame(p, CTX_BLOCK_MAP, col, p->node_return);
+            p->state = ST_BLOCK_MAP_VALUE;
             return OYL_OK;
         }
 
         /* plain scalar value */
-        inc_emit(p, &evt);
+        inc_commit(p);
 
         /* return to parent context */
         p->state = p->node_return;
-        return OYL_OK;
-    }
-
-    case ST_BLOCK_NODE_SCALAR_KEY: {
-        /* We have a saved scalar that's a key → emit MAPPING_START + key scalar */
-        evt = evt_simple(OYL_EVT_MAPPING_START);
-        evt.start = p->saved_node.start;
-        evt.end = p->saved_node.start;
-        inc_emit(p, &evt);
-
-        /* emit the key scalar */
-        inc_emit(p, &p->saved_node);
-        p->have_saved_node = false;
-
-        /* push block map context — return to caller's node_return after map ends */
-        inc_push_frame(p, CTX_BLOCK_MAP, p->saved_node_col, p->node_return);
-
-        /* consume ':' and parse value */
-        p->state = ST_BLOCK_MAP_VALUE;
         return OYL_OK;
     }
 
@@ -4425,10 +4420,7 @@ static oyl_status parser_step(oyl_parser *p) {
     }
 
     case ST_BLOCK_NODE_ALIAS_KEY: {
-        evt = evt_simple(OYL_EVT_MAPPING_START);
-        evt.start = p->saved_node.start;
-        evt.end = p->saved_node.start;
-        inc_emit(p, &evt);
+        inc_emit_at(p, OYL_EVT_MAPPING_START, p->saved_node.start, p->saved_node.start);
         inc_emit(p, &p->saved_node);
         p->have_saved_node = false;
         inc_push_frame(p, CTX_BLOCK_MAP, p->saved_node_col, p->node_return);
@@ -4436,14 +4428,11 @@ static oyl_status parser_step(oyl_parser *p) {
         return OYL_OK;
     }
 
-    case ST_BLOCK_NODE_SEQ: {
+    case ST_BLOCK_NODE_SEQ:
+    node_seq: {
         peek_token(p);
         ptrdiff_t seq_indent = tok_col(p);
-        evt = evt_simple(OYL_EVT_SEQUENCE_START);
-        evt.start = p->current.start;
-        evt.end = p->current.end;                         /* the "-" */
-
-        inc_emit(p, &evt);
+        inc_emit_at(p, OYL_EVT_SEQUENCE_START, p->current.start, p->current.end);   /* the "-" */
         inc_push_frame(p, CTX_BLOCK_SEQ, seq_indent, p->node_return);
         p->state = ST_BLOCK_SEQ_LOOP;
         return OYL_OK;
@@ -4453,11 +4442,7 @@ static oyl_status parser_step(oyl_parser *p) {
         /* ? key: starts a mapping */
         peek_token(p);
         ptrdiff_t map_indent = tok_col(p);
-        evt = evt_simple(OYL_EVT_MAPPING_START);
-        evt.start = p->current.start;
-        evt.end = p->current.end;                         /* the "?" */
-
-        inc_emit(p, &evt);
+        inc_emit_at(p, OYL_EVT_MAPPING_START, p->current.start, p->current.end);   /* the "?" */
         inc_push_frame(p, CTX_BLOCK_MAP, map_indent, p->node_return);
         p->state = ST_BLOCK_MAP_LOOP;
         return OYL_OK;
@@ -4467,18 +4452,11 @@ static oyl_status parser_step(oyl_parser *p) {
         /* : at start → mapping with empty key */
         peek_token(p);
         ptrdiff_t map_indent = tok_col(p);
-        evt = evt_simple(OYL_EVT_MAPPING_START);
-        evt.start = p->current.start;
-        evt.end = p->current.end;                         /* the ":" */
-
-        inc_emit(p, &evt);
+        inc_emit_at(p, OYL_EVT_MAPPING_START, p->current.start, p->current.end);   /* the ":" */
         inc_push_frame(p, CTX_BLOCK_MAP, map_indent, p->node_return);
 
         /* emit empty key */
-        evt = evt_simple(OYL_EVT_SCALAR);
-        evt.start = p->current.start;
-        evt.end = p->current.start;
-        inc_emit(p, &evt);
+        inc_emit_at(p, OYL_EVT_SCALAR, p->current.start, p->current.start);
 
         p->state = ST_BLOCK_MAP_VALUE;
         return OYL_OK;
@@ -4513,19 +4491,14 @@ static oyl_status parser_step(oyl_parser *p) {
 
         if (tt == OYL_TOK_SCALAR || tt == OYL_TOK_ALIAS) {
             /* Simple key: must be at map indent and followed by ':' */
-            if (col == map_indent) {
-                p->state = ST_BLOCK_MAP_SIMPLE_KEY;
-                return OYL_OK;
-            }
+            if (col == map_indent)
+                CHAIN(ST_BLOCK_MAP_SIMPLE_KEY, simple_key);
         }
 
         if (tt == OYL_TOK_BLOCK_MAP_VALUE && col == map_indent) {
             /* empty key, value */
-            evt = evt_simple(OYL_EVT_SCALAR);
             peek_token(p);
-            evt.start = p->current.start;
-            evt.end = p->current.start;
-            inc_emit(p, &evt);
+            inc_emit_at(p, OYL_EVT_SCALAR, p->current.start, p->current.start);
             p->state = ST_BLOCK_MAP_VALUE;
             return OYL_OK;
         }
@@ -4543,8 +4516,7 @@ static oyl_status parser_step(oyl_parser *p) {
         }
 
         /* end of this mapping */
-        p->state = ST_BLOCK_MAP_END;
-        return OYL_OK;
+        CHAIN(ST_BLOCK_MAP_END, map_end);
     }
 
     case ST_BLOCK_MAP_EXPLICIT_KEY: {
@@ -4564,10 +4536,7 @@ static oyl_status parser_step(oyl_parser *p) {
             /* nothing indented past the '?' (a block sequence may sit at
              * the mapping's indentation): empty key; the ':' is checked
              * as after any key */
-            evt = evt_simple(OYL_EVT_SCALAR);
-            evt.start = p->current.start;
-            evt.end = p->current.start;
-            inc_emit(p, &evt);
+            inc_emit_at(p, OYL_EVT_SCALAR, p->current.start, p->current.start);
             p->state = ST_BLOCK_MAP_POST_KEY;
         } else {
             /* The key is a block node */
@@ -4577,24 +4546,19 @@ static oyl_status parser_step(oyl_parser *p) {
         return OYL_OK;
     }
 
-    case ST_BLOCK_MAP_SIMPLE_KEY: {
+    case ST_BLOCK_MAP_SIMPLE_KEY:
+    simple_key: {
         peek_token(p);
         tt = tok_type(p);
 
         if (tt == OYL_TOK_SCALAR) {
-            evt = (oyl_event){
-                .type = OYL_EVT_SCALAR,
-                .value = p->current.value,
-                .scalar_style = p->current.scalar_style,
-                .start = p->current.start,
-                .end = p->current.end,
-            };
+            fill_scalar(inc_next(p), &p->current);
             consume_token(p);
 
             /* must be followed by ':' */
             peek_token(p);
             if (tok_type(p) == OYL_TOK_BLOCK_MAP_VALUE) {
-                inc_emit(p, &evt);
+                inc_commit(p);
                 p->state = ST_BLOCK_MAP_VALUE;
             } else {
                 /* Not a key — fall back to eager since this shouldn't happen
@@ -4637,10 +4601,7 @@ static oyl_status parser_step(oyl_parser *p) {
         } else {
             /* missing value (a ':' further left belongs to an enclosing
              * mapping) → emit empty value, continue loop */
-            evt = evt_simple(OYL_EVT_SCALAR);
-            evt.start = p->current.start;
-            evt.end = p->current.start;
-            inc_emit(p, &evt);
+            inc_emit_at(p, OYL_EVT_SCALAR, p->current.start, p->current.start);
             p->state = ST_BLOCK_MAP_LOOP;
         }
         return OYL_OK;
@@ -4651,10 +4612,7 @@ static oyl_status parser_step(oyl_parser *p) {
         peek_token(p);
         if (tok_type(p) != OYL_TOK_BLOCK_MAP_VALUE) {
             /* missing value — emit empty */
-            evt = evt_simple(OYL_EVT_SCALAR);
-            evt.start = p->current.start;
-            evt.end = p->current.start;
-            inc_emit(p, &evt);
+            inc_emit_at(p, OYL_EVT_SCALAR, p->current.start, p->current.start);
             p->state = ST_BLOCK_MAP_LOOP;
             return OYL_OK;
         }
@@ -4675,46 +4633,33 @@ static oyl_status parser_step(oyl_parser *p) {
         /* empty value: next token at same/less indent, or is doc/stream marker */
         if (tt == OYL_TOK_DOC_START || tt == OYL_TOK_DOC_END ||
             tt == OYL_TOK_STREAM_END) {
-            evt = evt_simple(OYL_EVT_SCALAR);
-            evt.start = p->current.start;
-            evt.end = p->current.start;
-            inc_emit(p, &evt);
+            inc_emit_at(p, OYL_EVT_SCALAR, p->current.start, p->current.start);
             p->state = ST_BLOCK_MAP_LOOP;
             return OYL_OK;
         }
         /* anything else at the map's indentation is the next entry (only a
          * block sequence may sit there as the value) → empty value */
         if (col == map_indent && tt != OYL_TOK_BLOCK_SEQ_ENTRY) {
-            evt = evt_simple(OYL_EVT_SCALAR);
-            evt.start = p->current.start;
-            evt.end = p->current.start;
-            inc_emit(p, &evt);
+            inc_emit_at(p, OYL_EVT_SCALAR, p->current.start, p->current.start);
             p->state = ST_BLOCK_MAP_LOOP;
             return OYL_OK;
         }
         /* any token at lesser indent than map → empty value
          * (seq entries at same indent are valid values per YAML spec) */
         if (col < map_indent && tt != OYL_TOK_BLOCK_SEQ_ENTRY) {
-            evt = evt_simple(OYL_EVT_SCALAR);
-            evt.start = p->current.start;
-            evt.end = p->current.start;
-            inc_emit(p, &evt);
+            inc_emit_at(p, OYL_EVT_SCALAR, p->current.start, p->current.start);
             p->state = ST_BLOCK_MAP_LOOP;
             return OYL_OK;
         }
         if (tt == OYL_TOK_BLOCK_SEQ_ENTRY && col < map_indent) {
-            evt = evt_simple(OYL_EVT_SCALAR);
-            evt.start = p->current.start;
-            evt.end = p->current.start;
-            inc_emit(p, &evt);
+            inc_emit_at(p, OYL_EVT_SCALAR, p->current.start, p->current.start);
             p->state = ST_BLOCK_MAP_LOOP;
             return OYL_OK;
         }
 
         /* the value is a block node — set return to map loop */
         p->node_return = ST_BLOCK_MAP_LOOP;
-        p->state = ST_BLOCK_NODE;
-        return OYL_OK;
+        CHAIN(ST_BLOCK_NODE, block_node);
     }
 
 #if 0   /* dead, to be deleted (see the enum) */
@@ -4724,13 +4669,11 @@ static oyl_status parser_step(oyl_parser *p) {
         return OYL_OK;
 #endif
 
-    case ST_BLOCK_MAP_END: {
+    case ST_BLOCK_MAP_END:
+    map_end: {
         state_frame frame = inc_pop_frame(p);
-        evt = evt_simple(OYL_EVT_MAPPING_END);
         peek_token(p);
-        evt.start = p->current.start;
-        evt.end = p->current.start;
-        inc_emit(p, &evt);
+        inc_emit_at(p, OYL_EVT_MAPPING_END, p->current.start, p->current.start);
 
         /* handle doc close for top-level mapping */
         p->state = frame.return_state;
@@ -4745,17 +4688,15 @@ static oyl_status parser_step(oyl_parser *p) {
         top = inc_top_frame(p);
         ptrdiff_t seq_indent = top ? top->indent : 0;
 
-        if (tt == OYL_TOK_BLOCK_SEQ_ENTRY && col == seq_indent) {
-            p->state = ST_BLOCK_SEQ_ENTRY;
-            return OYL_OK;
-        }
+        if (tt == OYL_TOK_BLOCK_SEQ_ENTRY && col == seq_indent)
+            CHAIN(ST_BLOCK_SEQ_ENTRY, seq_entry);
 
         /* end of sequence */
-        p->state = ST_BLOCK_SEQ_END;
-        return OYL_OK;
+        CHAIN(ST_BLOCK_SEQ_END, seq_end);
     }
 
-    case ST_BLOCK_SEQ_ENTRY: {
+    case ST_BLOCK_SEQ_ENTRY:
+    seq_entry: {
         /* consume '-' */
         peek_token(p);
         consume_token(p);
@@ -4771,27 +4712,20 @@ static oyl_status parser_step(oyl_parser *p) {
          * anything at or left of it (the next '-', an enclosing ':', ...)
          * comes after the entry */
         if (col <= seq_indent && tt != OYL_TOK_STREAM_END) {
-            evt = evt_simple(OYL_EVT_SCALAR);
-            evt.start = p->current.start;
-            evt.end = p->current.start;
-            inc_emit(p, &evt);
+            inc_emit_at(p, OYL_EVT_SCALAR, p->current.start, p->current.start);
             p->state = ST_BLOCK_SEQ_LOOP;
             return OYL_OK;
         }
         if (tt == OYL_TOK_DOC_START || tt == OYL_TOK_DOC_END ||
             tt == OYL_TOK_STREAM_END) {
-            evt = evt_simple(OYL_EVT_SCALAR);
-            evt.start = p->current.start;
-            evt.end = p->current.start;
-            inc_emit(p, &evt);
+            inc_emit_at(p, OYL_EVT_SCALAR, p->current.start, p->current.start);
             p->state = ST_BLOCK_SEQ_LOOP;
             return OYL_OK;
         }
 
         /* entry has a value node */
         p->node_return = ST_BLOCK_SEQ_LOOP;
-        p->state = ST_BLOCK_NODE;
-        return OYL_OK;
+        CHAIN(ST_BLOCK_NODE, block_node);
     }
 
 #if 0   /* dead, to be deleted (see the enum) */
@@ -4800,13 +4734,11 @@ static oyl_status parser_step(oyl_parser *p) {
         return OYL_OK;
 #endif
 
-    case ST_BLOCK_SEQ_END: {
+    case ST_BLOCK_SEQ_END:
+    seq_end: {
         state_frame frame = inc_pop_frame(p);
-        evt = evt_simple(OYL_EVT_SEQUENCE_END);
         peek_token(p);
-        evt.start = p->current.start;
-        evt.end = p->current.start;
-        inc_emit(p, &evt);
+        inc_emit_at(p, OYL_EVT_SEQUENCE_END, p->current.start, p->current.start);
 
         p->state = frame.return_state;
         if (p->state == ST_DOC_END_EXPLICIT) return inc_end_document(p);
@@ -4958,11 +4890,12 @@ static uint64_t pow31(int n) {
 /* ── Eager path (merge/alias enabled, or fell back from incremental):
  * one document's events at a time. Kept out of next_event, which runs
  * for every event. ── */
-NOINLINE oyl_status eager_next_event(oyl_parser *p, oyl_event *evt) {
+NOINLINE oyl_status eager_next_event(oyl_parser *p, const oyl_event **evt) {
     for (;;) {
         if (dequeue(p, evt)) return OYL_OK;
         if (p->stream_ended) {
-            *evt = evt_simple(OYL_EVT_NONE);
+            p->out_evt = evt_simple(OYL_EVT_NONE);
+            *evt = &p->out_evt;
             return OYL_OK;
         }
         p->evt_base += p->evt_len;
@@ -4993,24 +4926,27 @@ NOINLINE oyl_status eager_next_event(oyl_parser *p, oyl_event *evt) {
     }
 }
 
-static oyl_status next_event(oyl_parser *p, oyl_event *evt) {
+/* Events are handed out where they are: in out_buf, or the eager path's
+ * list, both left alone until the next call. */
+static oyl_status next_event(oyl_parser *p, const oyl_event **evt) {
     if (!p->incremental) return eager_next_event(p, evt);
 
     /* ── Incremental path (state machine) ── */
 
     /* drain buffered incremental events */
     if (p->out_cursor < p->out_len) {
-        *evt = p->out_buf[p->out_cursor++];
+        *evt = &p->out_buf[p->out_cursor++];
         if (p->out_cursor >= p->out_len) {
             p->out_len = 0;
             p->out_cursor = 0;
         }
-        inc_delivered(p, evt);
+        inc_delivered(p, *evt);
         return OYL_OK;
     }
 
     if (p->state == ST_DONE) {
-        *evt = evt_simple(OYL_EVT_NONE);
+        p->out_evt = evt_simple(OYL_EVT_NONE);
+        *evt = &p->out_evt;
         return OYL_OK;
     }
 
@@ -5082,27 +5018,29 @@ static oyl_status next_event(oyl_parser *p, oyl_event *evt) {
         }
 
         if (p->state == ST_DONE && p->out_len == 0) {
-            *evt = evt_simple(OYL_EVT_NONE);
+            p->out_evt = evt_simple(OYL_EVT_NONE);
+            *evt = &p->out_evt;
             return OYL_OK;
         }
     }
 
-    *evt = p->out_buf[0];
+    *evt = &p->out_buf[0];
     p->out_cursor = 1;
     if (p->out_cursor >= p->out_len) {
         p->out_len = 0;
         p->out_cursor = 0;
     }
-    inc_delivered(p, evt);
+    inc_delivered(p, *evt);
     return OYL_OK;
 }
 
 oyl_status oyl_parse_next(oyl_parser *p, const oyl_event **evt) {
     /* an error is final: the stream isn't read past it, where the open
      * collections would be closed and the rest taken as it comes */
-    oyl_status st = p->failed ? p->failed : next_event(p, &p->out_evt);
+    const oyl_event *e = NULL;
+    oyl_status st = p->failed ? p->failed : next_event(p, &e);
     if (st != OYL_OK) p->failed = st;
-    *evt = st == OYL_OK ? &p->out_evt : NULL;
+    *evt = st == OYL_OK ? e : NULL;
     return st;
 }
 

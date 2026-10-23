@@ -144,7 +144,7 @@ static inline void advance_cols(oyl_scanner *s, size_t n) {
     s->col += n;
 }
 
-static void skip_break(oyl_scanner *s) {
+ALWAYS_INLINE void skip_break(oyl_scanner *s) {
     if (s->pos >= s->len) return;
     if (s->buf[s->pos] == '\r') {
         s->pos++;
@@ -169,6 +169,16 @@ static bool continuation_indent_ok(const oyl_scanner *s, char closer) {
     return (ptrdiff_t)(k - line_start) > s->indent;
 }
 
+/* oyl_skip_blanks at the cursor, with the runs between tokens it is mostly
+ * called for (none, or one space) taken inline. */
+ALWAYS_INLINE size_t skip_blanks_here(const oyl_scanner *s) {
+    const char *b = BUF_AT(s);
+    size_t n = REMAINING(s);
+    if (n == 0 || (b[0] != ' ' && b[0] != '\t')) return 0;
+    if (n == 1 || (b[1] != ' ' && b[1] != '\t')) return 1;
+    return 2 + oyl_skip_blanks(b + 2, n - 2);
+}
+
 /* Skip whitespace, line breaks and comments. Returns an error message, or
  * NULL on success:
  *  - a '#' that would start a comment must be separated from the previous
@@ -177,11 +187,10 @@ static bool continuation_indent_ok(const oyl_scanner *s, char closer) {
  *    spaces before it must already exceed the current block indent. */
 ALWAYS_INLINE const char *skip_blanks_and_comments(oyl_scanner *s) {
     size_t line_start = (s->col == 1) ? s->pos : SIZE_MAX;
+    /* skip spaces and tabs: here those after a token, below a line's
+     * indentation (two inline copies, which branch prediction tells apart) */
+    advance_cols(s, skip_blanks_here(s));
     for (;;) {
-        /* skip spaces and tabs */
-        size_t skip = oyl_skip_blanks(BUF_AT(s), REMAINING(s));
-        advance_cols(s, skip);
-
         /* comment? skip to end of line */
         if (PEEK(s) == '#') {
             if (s->pos > s->begin && !oyl_is_blank_or_break((uint8_t)s->buf[s->pos - 1]))
@@ -192,13 +201,10 @@ ALWAYS_INLINE const char *skip_blanks_and_comments(oyl_scanner *s) {
         }
 
         /* line break? continue with the next line */
-        if (oyl_is_break(PEEK(s))) {
-            skip_break(s);
-            line_start = s->pos;
-            continue;
-        }
-
-        break;
+        if (!oyl_is_break(PEEK(s))) break;
+        skip_break(s);
+        line_start = s->pos;
+        advance_cols(s, skip_blanks_here(s));
     }
 
     /* first token on its line inside a flow collection: it must be indented
@@ -416,7 +422,8 @@ static bool is_doc_indicator_at(const char *buf, size_t pos, size_t len);
 
 /* ── Scan specific token types ───────────────────────────── */
 
-static oyl_status scan_plain_scalar(oyl_scanner *s, oyl_token *tok) {
+/* Inlined into oyl_scan_token, its one caller: the most common token */
+ALWAYS_INLINE oyl_status scan_plain_scalar(oyl_scanner *s, oyl_token *tok) {
     oyl_mark start = mark(s);
 
     /* We use a two-phase approach:
@@ -528,7 +535,7 @@ static oyl_status scan_plain_scalar(oyl_scanner *s, oyl_token *tok) {
 
         /* whitespace — potential end or mid-line */
         if (oyl_is_blank(c)) {
-            size_t blank_run = oyl_skip_blanks(BUF_AT(s), REMAINING(s));
+            size_t blank_run = skip_blanks_here(s);
             const char *blank_start = BUF_AT(s);
             s->pos += blank_run;
             s->col += blank_run;
@@ -559,7 +566,7 @@ static oyl_status scan_plain_scalar(oyl_scanner *s, oyl_token *tok) {
             while (!AT_END(s) && oyl_is_break(PEEK(s))) {
                 skip_break(s);
                 break_count++;
-                size_t blanks = oyl_skip_blanks(BUF_AT(s), REMAINING(s));
+                size_t blanks = skip_blanks_here(s);
                 s->pos += blanks;
                 s->col += blanks;
                 if (!AT_END(s) && !oyl_is_break(PEEK(s))) break;
@@ -658,26 +665,31 @@ static oyl_status scan_plain_scalar(oyl_scanner *s, oyl_token *tok) {
     #undef TRIM_TRAILING
 }
 
-static oyl_status scan_single_quoted(oyl_scanner *s, oyl_token *tok) {
+static oyl_status scan_single_quoted_slow(oyl_scanner *s, oyl_token *tok, oyl_mark start);
+
+/* The fast path, inlined into oyl_scan_token: no '' escapes or line
+ * breaks → zero-copy slice of the input. The rest is out of line. */
+ALWAYS_INLINE oyl_status scan_single_quoted(oyl_scanner *s, oyl_token *tok) {
     oyl_mark start = mark(s);
-    advance(s, 1); /* skip opening ' */
+    advance_cols(s, 1); /* skip opening ' */
 
-    /* fast path: no '' escapes or line breaks → zero-copy slice of the input */
-    {
-        size_t j = s->pos + oyl_find_in_quotes_short(BUF_AT(s), REMAINING(s), '\'', '\'');
-        if (j < s->len && s->buf[j] == '\'' &&
-            !(j + 1 < s->len && s->buf[j + 1] == '\'')) {
-            oyl_str val = {s->buf + s->pos, j - s->pos};
-            s->col += j + 1 - s->pos;
-            s->pos = j + 1;
-            s->last_token_col = (ptrdiff_t)start.col - 1;
-            s->last_was_quoted = true;
-            note_node(s, start, s->pos);
-            tok_scalar(tok, val, OYL_SCALAR_SINGLE_QUOTED, start, mark(s));
-            return OYL_OK;
-        }
+    size_t j = s->pos + oyl_find_in_quotes_short(BUF_AT(s), REMAINING(s), '\'', '\'');
+    if (j < s->len && s->buf[j] == '\'' &&
+        !(j + 1 < s->len && s->buf[j + 1] == '\'')) {
+        oyl_str val = {s->buf + s->pos, j - s->pos};
+        s->col += j + 1 - s->pos;
+        s->pos = j + 1;
+        s->last_token_col = (ptrdiff_t)start.col - 1;
+        s->last_was_quoted = true;
+        note_node(s, start, s->pos);
+        tok_scalar(tok, val, OYL_SCALAR_SINGLE_QUOTED, start, mark(s));
+        return OYL_OK;
     }
+    return scan_single_quoted_slow(s, tok, start);
+}
 
+/* Past the opening quote, at `start` */
+NOINLINE oyl_status scan_single_quoted_slow(oyl_scanner *s, oyl_token *tok, oyl_mark start) {
     /* Allocate buffer for the result (handles escapes and line folding) */
     size_t buf_cap = 64;
     char *buf = oyl_arena_alloc(s->arena, buf_cap, 1);
@@ -751,25 +763,30 @@ static oyl_status scan_single_quoted(oyl_scanner *s, oyl_token *tok) {
     #undef SQ_ENSURE
 }
 
-static oyl_status scan_double_quoted(oyl_scanner *s, oyl_token *tok) {
+static oyl_status scan_double_quoted_slow(oyl_scanner *s, oyl_token *tok, oyl_mark start);
+
+/* The fast path, inlined into oyl_scan_token: no escapes or line breaks →
+ * zero-copy slice of the input. The rest is out of line. */
+ALWAYS_INLINE oyl_status scan_double_quoted(oyl_scanner *s, oyl_token *tok) {
     oyl_mark start = mark(s);
-    advance(s, 1); /* skip opening " */
+    advance_cols(s, 1); /* skip opening " */
 
-    /* fast path: no escapes or line breaks → zero-copy slice of the input */
-    {
-        size_t j = s->pos + oyl_find_in_quotes_short(BUF_AT(s), REMAINING(s), '"', '\\');
-        if (j < s->len && s->buf[j] == '"') {
-            oyl_str val = {s->buf + s->pos, j - s->pos};
-            s->col += j + 1 - s->pos;
-            s->pos = j + 1;
-            s->last_token_col = (ptrdiff_t)start.col - 1;
-            s->last_was_quoted = true;
-            note_node(s, start, s->pos);
-            tok_scalar(tok, val, OYL_SCALAR_DOUBLE_QUOTED, start, mark(s));
-            return OYL_OK;
-        }
+    size_t j = s->pos + oyl_find_in_quotes_short(BUF_AT(s), REMAINING(s), '"', '\\');
+    if (j < s->len && s->buf[j] == '"') {
+        oyl_str val = {s->buf + s->pos, j - s->pos};
+        s->col += j + 1 - s->pos;
+        s->pos = j + 1;
+        s->last_token_col = (ptrdiff_t)start.col - 1;
+        s->last_was_quoted = true;
+        note_node(s, start, s->pos);
+        tok_scalar(tok, val, OYL_SCALAR_DOUBLE_QUOTED, start, mark(s));
+        return OYL_OK;
     }
+    return scan_double_quoted_slow(s, tok, start);
+}
 
+/* Past the opening quote, at `start` */
+NOINLINE oyl_status scan_double_quoted_slow(oyl_scanner *s, oyl_token *tok, oyl_mark start) {
     /* double-quoted always needs processing for escape sequences */
     /* pre-scan for length */
     size_t max_len = 0;
@@ -1051,6 +1068,15 @@ static bool at_doc_indicator(oyl_scanner *s, char ch) {
 
 /* ── Main scan function ──────────────────────────────────── */
 
+/* The bytes oyl_scan_token checks a token's first byte for before taking it
+ * as a plain scalar's. */
+static const bool indicator_start[256] = {
+    ['-'] = true, ['.'] = true, ['%'] = true, ['['] = true, [']'] = true,
+    ['{'] = true, ['}'] = true, [','] = true, ['?'] = true, [':'] = true,
+    ['!'] = true, ['&'] = true, ['*'] = true, ['\''] = true, ['"'] = true,
+    ['|'] = true, ['>'] = true,
+};
+
 oyl_scanner *oyl_scanner_new(const char *input, size_t len, oyl_arena *a) {
     if (!input) {   /* no input is empty text, so offsets aren't taken from NULL */
         if (len) return NULL;
@@ -1166,6 +1192,13 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
     oyl_mark start = mark(s);
     uint8_t c = PEEK(s);
 
+    /* most tokens start with a byte none of the checks below take (a
+     * letter or digit): those are plain scalars */
+    if (!indicator_start[c]) {
+        s->last_was_quoted = false;
+        goto plain;   /* one call site, so that it is inlined */
+    }
+
     /* document indicators at column 1 */
     if (at_doc_indicator(s, '-')) {
         maybe_unroll_indents(s, -1);
@@ -1202,13 +1235,13 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
         s->last_was_quoted = false;
         if (!flow_push(s, false)) return OYL_ERR_MEMORY;
         s->flow_level++;
-        advance(s, 1);
+        advance_cols(s, 1);
         tok_simple(tok, OYL_TOK_FLOW_SEQ_START, start, mark(s));
         return OYL_OK;
     case ']': {
         oyl_mark open = flow_pop(s);
         if (s->flow_level > 0) s->flow_level--;
-        advance(s, 1);
+        advance_cols(s, 1);
         note_node(s, open, s->pos);
         s->last_was_quoted = true; /* allow ]:value like "key":value */
         tok_simple(tok, OYL_TOK_FLOW_SEQ_END, start, mark(s));
@@ -1218,13 +1251,13 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
         s->last_was_quoted = false;
         if (!flow_push(s, true)) return OYL_ERR_MEMORY;
         s->flow_level++;
-        advance(s, 1);
+        advance_cols(s, 1);
         tok_simple(tok, OYL_TOK_FLOW_MAP_START, start, mark(s));
         return OYL_OK;
     case '}': {
         oyl_mark open = flow_pop(s);
         if (s->flow_level > 0) s->flow_level--;
-        advance(s, 1);
+        advance_cols(s, 1);
         note_node(s, open, s->pos);
         s->last_was_quoted = true; /* allow }:value like "key":value */
         tok_simple(tok, OYL_TOK_FLOW_MAP_END, start, mark(s));
@@ -1234,7 +1267,7 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
         s->last_was_quoted = false;   /* ":" after "," is not adjacent to a key */
         /* so does a ',' at its depth: the entry ended without a value */
         if (s->explicit_key && s->explicit_depth == s->flows_len) s->explicit_key = false;
-        advance(s, 1);
+        advance_cols(s, 1);
         tok_simple(tok, OYL_TOK_FLOW_ENTRY, start, mark(s));
         return OYL_OK;
     }
@@ -1250,7 +1283,7 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
                 SCAN_ERROR(s, "tabs are not allowed before a nested block collection");
             ptrdiff_t col = (ptrdiff_t)s->col - 1;
             if (col > s->indent && !indent_push(s, col)) return OYL_ERR_MEMORY;
-            advance(s, 1);
+            advance_cols(s, 1);
             s->indicator_end = s->pos;
             tok_simple(tok, OYL_TOK_BLOCK_SEQ_ENTRY, start, mark(s));
             return OYL_OK;
@@ -1299,12 +1332,17 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
              * an empty key starts at its props ("&k :") or the ':' itself
              * ("- : v") */
             ptrdiff_t key_col = colon_col;
+            size_t key_at = SIZE_MAX;   /* key_start(s), worked out here */
             if (only_blanks_between(s, s->node_end, s->pos)) {
                 key_col = s->node_col;
-                if (only_blanks_between(s, s->props_end, s->node_start))
+                key_at = s->node_start;
+                if (only_blanks_between(s, s->props_end, s->node_start)) {
                     key_col = s->props_col;
+                    key_at = s->props_start;
+                }
             } else if (only_blanks_between(s, s->props_end, s->pos)) {
                 key_col = s->props_col;
+                key_at = s->props_start;
             }
             /* use minimum of key and colon column — handles explicit key
              * (? key\n: val) where colon_col is the mapping indent */
@@ -1313,7 +1351,7 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
             if (kind == COLON_BAD_KEY)
                 SCAN_ERROR(s, "implicit key must be on a single line");
             if (kind == COLON_IMPLICIT) {
-                if (key_too_long(s, key_start(s)))
+                if (key_too_long(s, key_at))
                     SCAN_ERROR(s, "an implicit key is at most 1024 characters");
                 /* "a: b: c" — a block mapping can't start on the line of
                  * another implicit key */
@@ -1328,7 +1366,7 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
                 map_col = colon_col;
             }
             if (map_col > s->indent && !indent_push(s, map_col)) return OYL_ERR_MEMORY;
-            advance(s, 1);
+            advance_cols(s, 1);
             s->indicator_end = s->pos;
             tok_simple(tok, OYL_TOK_BLOCK_MAP_VALUE, start, mark(s));
             return OYL_OK;
@@ -1347,7 +1385,7 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
             if (kind == COLON_IMPLICIT && s->flows_len > 0 && !s->flows[s->flows_len - 1].is_map &&
                 key_too_long(s, key_start(s)))
                 SCAN_ERROR(s, "an implicit key is at most 1024 characters");
-            advance(s, 1);
+            advance_cols(s, 1);
             tok_simple(tok, OYL_TOK_BLOCK_MAP_VALUE, start, mark(s));
             return OYL_OK;
         }
@@ -1687,6 +1725,7 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
             SCAN_ERROR(s, "block sequence entry not allowed in flow context");
     }
 
+plain:
     /* plain scalar — the common case, SIMD-accelerated */
     return scan_plain_scalar(s, tok);
 }
