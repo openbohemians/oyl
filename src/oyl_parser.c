@@ -82,6 +82,10 @@ typedef struct {
 
 /* ── Parser state ────────────────────────────────────────── */
 
+/* Events the incremental parser holds at once: a step makes up to three,
+ * the flow fast path (inc_flow_fast) a whole collection. */
+#define OUT_CAP 64
+
 struct oyl_parser {
     oyl_scanner *scanner;
     oyl_arena   *arena;
@@ -172,8 +176,7 @@ struct oyl_parser {
     state_frame *frames;
     int          frame_len;
     int          frame_cap;
-    oyl_event    out_buf[8];    /* small output buffer for incremental */
-    int          out_len;
+    int          out_len;       /* events in out_buf, at the end */
     int          out_cursor;
     oyl_event    saved_node;    /* saved scalar/alias for : lookahead */
     oyl_event    spare_evt;     /* inc_next's slot when out_buf is full */
@@ -224,6 +227,10 @@ struct oyl_parser {
     int          skip_n;           /* events of it left to skip */
     uint64_t     skip_sig;         /* their expected signature */
     uint64_t     skip_got;         /* and what was skipped so far */
+
+    /* the incremental parser's output, last: the fields used for every
+     * event stay near the start */
+    oyl_event    out_buf[OUT_CAP];
 };
 
 /* ── Error reporting ─────────────────────────────────────── */
@@ -3412,13 +3419,54 @@ static bool flow_is_block_key(oyl_parser *p, size_t offset) {
 
 /* ── Incremental state machine ───────────────────────────── */
 
+/* The flow fast path (oyl_scan_flow_fast) for a flow collection, the
+ * current token its opening bracket: its events are emitted, and the
+ * scanner moved past it, only when they are what the states below would
+ * make. So no properties wait for it, it is no key (`keyless`, or as the
+ * flow-key lookahead says: its cache, or its scan of the collection, which
+ * reads it as the scanner does and stops at its close), and the event and
+ * depth limits fall outside it. node_return ends as the states inside it
+ * would leave it, `node_return` if they don't set it. The caller goes on as
+ * from its close (ST_FLOW_MAP_END). Out of line: it runs once per
+ * collection, and inlined it slows the rest. */
+NOINLINE bool inc_flow_fast(oyl_parser *p, bool keyless, parser_state node_return) {
+    if (p->has_anchor || p->has_tag) return false;
+    oyl_flow_fast ff;
+    int n = oyl_scan_flow_fast(p->scanner, &p->current, &p->out_buf[p->out_len],
+                               OUT_CAP - p->out_len, &ff);
+    if (n < 0) return false;
+    size_t open = p->current.start.offset;
+    if (keyless) {
+        /* known */
+    } else if (p->fk_valid && open >= p->fk_lo && open <= p->fk_hi) {
+        if (p->fk_nkeys < 0) return false;
+        size_t lo = 0, hi = (size_t)p->fk_nkeys;   /* a key at or after open */
+        while (lo < hi) {
+            size_t mid = lo + (hi - lo) / 2;
+            if (p->fk_keys[mid] < open) lo = mid + 1;
+            else hi = mid;
+        }
+        if (lo < (size_t)p->fk_nkeys && p->fk_keys[lo] <= ff.close) return false;
+    } else if (fk_colon_follows(p->input, p->input_len, ff.close)) {
+        return false;
+    }
+    if (p->max_events > 0 && p->events_delivered + p->out_len + n > p->max_events) return false;
+    if (p->max_depth > 0 && p->frame_len + ff.depth > p->max_depth) return false;
+    p->out_len += n;
+    oyl_scan_flow_commit(p->scanner, &ff);
+    consume_token(p);
+    /* where the states inside it last went on to after a node */
+    p->node_return = !ff.nested ? node_return : ff.last_value ? ST_FLOW_MAP_SEP : ST_FLOW_SEQ_SEP;
+    return true;
+}
+
 /* Out of line: inlined, GCC may copy the event with `rep movs`. */
 NOINLINE void inc_emit(oyl_parser *p, const oyl_event *evt) {
     if (p->max_events > 0 && p->events_delivered + p->out_len >= p->max_events) {
         hit_limit(p, "event limit exceeded");
         return;
     }
-    if (p->out_len < 8)
+    if (p->out_len < OUT_CAP)
         p->out_buf[p->out_len++] = *evt;
 }
 
@@ -3431,7 +3479,7 @@ ALWAYS_INLINE oyl_event *inc_slot(oyl_parser *p) {
         hit_limit(p, "event limit exceeded");
         return NULL;
     }
-    return p->out_len < 8 ? &p->out_buf[p->out_len++] : NULL;
+    return p->out_len < OUT_CAP ? &p->out_buf[p->out_len++] : NULL;
 }
 
 /* Emit an event with no value and no properties. */
@@ -3458,7 +3506,7 @@ ALWAYS_INLINE void inc_emit_at(oyl_parser *p, oyl_event_type type, oyl_mark star
  * be emitted (inc_commit emits it); a spare when the buffer is full, as
  * inc_emit then drops the event. */
 static inline oyl_event *inc_next(oyl_parser *p) {
-    return p->out_len < 8 ? &p->out_buf[p->out_len] : &p->spare_evt;
+    return p->out_len < OUT_CAP ? &p->out_buf[p->out_len] : &p->spare_evt;
 }
 
 /* Emit the event built at inc_next(). */
@@ -3467,7 +3515,7 @@ static inline void inc_commit(oyl_parser *p) {
         hit_limit(p, "event limit exceeded");
         return;
     }
-    if (p->out_len < 8) p->out_len++;
+    if (p->out_len < OUT_CAP) p->out_len++;
 }
 
 /* Build an event with no value at inc_next(), to emit with inc_commit once
@@ -3572,7 +3620,7 @@ static inline void inc_emit_scalar_token(oyl_parser *p) {
         hit_limit(p, "event limit exceeded");
         return;
     }
-    if (p->out_len < 8) {
+    if (p->out_len < OUT_CAP) {
         oyl_event *e = &p->out_buf[p->out_len++];
         *e = (oyl_event){
             .type = OYL_EVT_SCALAR,
@@ -3888,6 +3936,10 @@ static oyl_status parser_step_flow(oyl_parser *p) {
          * to the matching close bracket: if ':' follows it's a pair key
          * and we fall back to eager; otherwise parse incrementally. */
         if (tt == OYL_TOK_FLOW_SEQ_START || tt == OYL_TOK_FLOW_MAP_START) {
+            if (inc_flow_fast(p, false, ST_FLOW_SEQ_SEP)) {
+                p->state = ST_FLOW_SEQ_SEP;
+                return inc_flow_sep(p, true);
+            }
             if (flow_is_block_key(p, p->current.start.offset)) {
                 p->state = ST_EAGER_DRAIN;
             } else {
@@ -4313,10 +4365,15 @@ ALWAYS_INLINE oyl_status parser_step(oyl_parser *p) {
              * starts its line (an explicit value's, or an empty key's), it
              * can (": [a]: b"), as the scanner has it. Elsewhere, scan
              * ahead to check if ':' follows the matching close bracket. */
-            if ((p->node_return == ST_BLOCK_MAP_LOOP &&
-                 p->current.start.line == p->value_colon_line &&
-                 !starts_line(p, p->value_colon_offset)) ||
-                !flow_is_block_key(p, p->current.start.offset)) {
+            bool keyless = p->node_return == ST_BLOCK_MAP_LOOP &&
+                           p->current.start.line == p->value_colon_line &&
+                           !starts_line(p, p->value_colon_offset);
+            parser_state after = p->node_return;
+            if (inc_flow_fast(p, keyless, after)) {
+                p->state = after;
+                return OYL_OK;
+            }
+            if (keyless || !flow_is_block_key(p, p->current.start.offset)) {
                 p->state = ST_FLOW_NODE;
             } else {
                 p->state = ST_EAGER_DRAIN;

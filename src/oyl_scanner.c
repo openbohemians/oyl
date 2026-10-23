@@ -1775,6 +1775,160 @@ plain:
     return scan_plain_scalar(s, tok);
 }
 
+/* ── Flow fast path (oyl_internal.h) ───────────────────────── */
+
+static inline bool ff_alnum(uint8_t c) {
+    return (uint8_t)((c | 0x20) - 'a') < 26 || (uint8_t)(c - '0') < 10;
+}
+
+/* A byte of a plain scalar the fast path takes: letters, digits, . _ + - */
+static inline bool ff_plain(uint8_t c) {
+    return ff_alnum(c) || c == '.' || c == '_' || c == '+' || c == '-';
+}
+
+#define FF_MAX_DEPTH 32
+
+/* Its subset is chosen so that the flow-key lookahead (oyl_parser.c,
+ * fk_scan) reads every byte of it as the scanner does: each quote opens a
+ * quoted scalar after an entry start or a value's ':', there are no
+ * comments, line breaks or escapes, and a ':' always follows a key. The
+ * events are those the parser's flow states make from the tokens; a
+ * scalar's end is where its token ends, past a plain scalar's trailing
+ * blanks. */
+int oyl_scan_flow_fast(const oyl_scanner *s, const oyl_token *open, oyl_event *out, int cap,
+                       oyl_flow_fast *ff) {
+    /* a '?' entry awaiting its ':' changes what ',' and a close do */
+    if (s->explicit_key || s->flows_len == 0 || cap < 2) return -1;
+    const char *b = s->buf;
+    size_t len = s->len;
+    size_t line = open->start.line;
+    size_t col1 = open->start.offset - (open->start.col - 1);   /* column 1's offset */
+    enum { ITEM, COLON, VALUE, SEP } state = ITEM;
+    bool map[FF_MAX_DEPTH];
+    int depth = 1, maxd = 1, n = 0;
+    bool nested = false, last_value = false;
+    ptrdiff_t last_col = -1;
+
+    #define FF_EMIT(t, v, st, a, z, fl) do { \
+        if (n >= cap) return -1; \
+        oyl_event *e = &out[n++]; \
+        e->type = (t); \
+        e->value = (v); \
+        e->anchor = OYL_STR_NULL; \
+        e->tag = OYL_STR_NULL; \
+        e->scalar_style = (st); \
+        e->implicit = false; \
+        e->flow = (fl); \
+        e->start = (oyl_mark){(a), line, (a) - col1 + 1}; \
+        e->end = (oyl_mark){(z), line, (z) - col1 + 1}; \
+    } while (0)
+
+    map[0] = open->type == OYL_TOK_FLOW_MAP_START;
+    FF_EMIT(map[0] ? OYL_EVT_MAPPING_START : OYL_EVT_SEQUENCE_START, OYL_STR_NULL,
+            OYL_SCALAR_PLAIN, open->start.offset, open->end.offset, true);
+    size_t i = s->pos;
+    for (;;) {
+        while (i < len && (b[i] == ' ' || b[i] == '\t')) i++;
+        if (i >= len) return -1;
+        uint8_t c = (uint8_t)b[i];
+        switch (state) {
+        case ITEM:
+        case VALUE:
+            if (c == '}' || c == ']') {
+                if (state == VALUE) return -1;   /* an empty value */
+                goto close;                      /* empty, or after a final ',' */
+            }
+            if (c == '{' || c == '[') {
+                if (state == ITEM && map[depth - 1]) return -1;   /* a collection as a key */
+                if (depth == FF_MAX_DEPTH) return -1;
+                nested = true;
+                last_value = state == VALUE;
+                map[depth++] = c == '{';
+                if (depth > maxd) maxd = depth;
+                FF_EMIT(c == '{' ? OYL_EVT_MAPPING_START : OYL_EVT_SEQUENCE_START, OYL_STR_NULL,
+                        OYL_SCALAR_PLAIN, i, i + 1, true);
+                i++;
+                state = ITEM;
+                continue;
+            }
+            {
+                size_t a = i, z;
+                oyl_str v;
+                oyl_scalar_style st;
+                if (c == '"') {
+                    size_t j = i + 1 + oyl_find_in_quotes_short(b + i + 1, len - i - 1, '"', '\\');
+                    if (j >= len || b[j] != '"') return -1;   /* an escape, a break, a control */
+                    v = (oyl_str){b + i + 1, j - i - 1};
+                    st = OYL_SCALAR_DOUBLE_QUOTED;
+                    z = i = j + 1;
+                } else {
+                    if (!(ff_alnum(c) || c == '.' || c == '_' ||
+                          ((c == '-' || c == '+') && i + 1 < len && ff_plain((uint8_t)b[i + 1]))))
+                        return -1;
+                    size_t j = i + 1;
+                    while (j < len && ff_plain((uint8_t)b[j])) j++;
+                    size_t k = j;   /* the token ends past trailing blanks */
+                    while (k < len && (b[k] == ' ' || b[k] == '\t')) k++;
+                    if (k >= len) return -1;
+                    if (b[k] == ':') {
+                        /* a value indicator only before a blank; otherwise
+                         * part of the scalar */
+                        if (k + 1 >= len || (b[k + 1] != ' ' && b[k + 1] != '\t')) return -1;
+                    } else if (b[k] != ',' && b[k] != ']' && b[k] != '}') {
+                        return -1;   /* more words, a comment, other bytes */
+                    }
+                    v = (oyl_str){b + i, j - i};
+                    st = OYL_SCALAR_PLAIN;
+                    z = i = k;
+                }
+                last_col = (ptrdiff_t)(a - col1);
+                FF_EMIT(OYL_EVT_SCALAR, v, st, a, z, false);
+                state = state == ITEM && map[depth - 1] ? COLON : SEP;
+                continue;
+            }
+        case COLON:
+            if (c != ':') return -1;   /* a key without a value */
+            i++;
+            state = VALUE;
+            continue;
+        case SEP:
+            if (c == ',') {
+                i++;
+                state = ITEM;
+                continue;
+            }
+            if (c == '}' || c == ']') goto close;
+            return -1;   /* a ':' after a sequence entry (a pair), ... */
+        }
+    close:
+        if ((c == '}') != map[depth - 1]) return -1;
+        FF_EMIT(c == '}' ? OYL_EVT_MAPPING_END : OYL_EVT_SEQUENCE_END, OYL_STR_NULL,
+                OYL_SCALAR_PLAIN, i, i + 1, false);
+        if (--depth == 0) break;
+        i++;
+        state = SEP;
+    }
+    #undef FF_EMIT
+    ff->close = i;
+    ff->depth = maxd;
+    ff->nested = nested;
+    ff->last_value = last_value;
+    ff->last_col = last_col;
+    return n;
+}
+
+void oyl_scan_flow_commit(oyl_scanner *s, const oyl_flow_fast *ff) {
+    if (ff->last_col >= 0) s->last_token_col = ff->last_col;
+    /* as the closing bracket's token: the collections inside it opened and
+     * closed, leaving nothing behind (no props before them, no '?') */
+    oyl_mark open = flow_pop(s);
+    if (s->flow_level > 0) s->flow_level--;
+    s->col += ff->close + 1 - s->pos;
+    s->pos = ff->close + 1;
+    note_node(s, open, s->pos);
+    s->last_was_quoted = true;
+}
+
 const char *oyl_scanner_error(oyl_scanner *s) {
     if (!s || s->error_msg[0] == '\0') return NULL;
     return s->error_msg;

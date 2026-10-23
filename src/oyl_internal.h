@@ -310,6 +310,25 @@ void oyl_scanner_set_syntax(oyl_scanner *s, unsigned syntax, oyl_warn_state *w);
  * checkpoint at a document start). */
 bool oyl_scanner_copy(oyl_scanner *dst, const oyl_scanner *src);
 
+/* The flow fast path: a flow collection read whole, its opening bracket the
+ * last token scanned (`open`), when it is on one line and made only of
+ * plain words and numbers, double-quoted text without escapes, and nested
+ * collections, as JSON is. oyl_scan_flow_fast writes its events to `out`
+ * (at most `cap`), exactly as the parser would make them from its tokens,
+ * and returns how many, changing nothing, or -1 if it isn't such a
+ * collection. oyl_scan_flow_commit then moves the scanner past it, as
+ * scanning its tokens would have. */
+typedef struct {
+    size_t    close;      /* offset of the closing bracket */
+    int       depth;      /* deepest nesting, the collection itself 1 */
+    bool      nested;     /* a collection opens inside it ... */
+    bool      last_value; /* ... the last of them a mapping's value */
+    ptrdiff_t last_col;   /* 0-based column of its last scalar, or -1 */
+} oyl_flow_fast;
+int oyl_scan_flow_fast(const oyl_scanner *s, const oyl_token *open, oyl_event *out, int cap,
+                       oyl_flow_fast *ff);
+void oyl_scan_flow_commit(oyl_scanner *s, const oyl_flow_fast *ff);
+
 /* ── Tags, for the parser and the emitter ────────────────── */
 
 /* A URI character (YAML's ns-uri-char, but for %-escapes) */
