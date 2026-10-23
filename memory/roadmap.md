@@ -69,7 +69,11 @@ That is bad.") agreed this order:
    pushed; main stays as 1.2.0 will be tagged): the per-token machinery
    trimmed first, since a profile showed Oyl at 4+ instructions per cycle
    with no branch misses, so the cost was instructions, spread thinly
-   (performance.md, "Step 3 so far").
+   (performance.md, "Step 3 so far"). Then the flow fast path, anchors
+   and tags without the eager parser, and the block fast path: **as of
+   `1f9485f` (2026-10-23) Oyl is ahead of rapidyaml on every benchmark
+   input** (block 1.28x, config 1.12x, mixed 1.10x, JSON 1.63x). Still
+   local, unpushed; merging waits on the user (after the 1.2.0 tag).
 
 Where the bindings fall after step 3 isn't decided.
 

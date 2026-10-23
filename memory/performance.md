@@ -147,6 +147,30 @@ MB/s at `08c95c7` (5 alternating rounds, against 418635d): block 160 →
   instructions alike). Function placement still moves block/travis by
   1-3%.
 
+- **the block fast path** (`1f9485f`): plain values in a block mapping read
+  from their bytes (oyl_scan_block_fast), after a key's ':' or from a plain
+  key's ':' the token path just read, then following "key: value" lines at
+  the mapping's indentation, past blank lines. Only values that end their
+  line (or at a comment) where the next line can't continue them; tabs,
+  CR, deeper lines go to the tokens. The last value waits for the next
+  token's scan, as on the token path (a scanner error there drops it).
+  Verified: corpus (also shifted, under ASan/UBSan with exact buffers, and
+  with the SSE2 loops compiled out), 14,328 block mutations, all limits on
+  runs that fill the 64-event buffer. Lessons: a byte loop for values lost
+  to the token path's SIMD (travis −4% until SSE2); failed attempts cost
+  more than they saved until an inline check of the bytes after ':' kept
+  most lines from making the call; looking past comment blocks for the
+  next key line doubled work on appveyor (now stops at a comment).
+
+Where it stands at `1f9485f` (MB/s, 5 alternating rounds; 08c95c7 / now /
+rapidyaml 0.16.0): block 223/314/245, mixed 303/310/282, config
+353/418/373, JSON 479/532/327, travis 652/848/435, appveyor 616/590/431,
+compile_commands 2591/2717/1217, Kubernetes stream (854 valid documents)
+759/777/(rapidyaml's harness gives no result). Ahead of rapidyaml on all
+of them. appveyor lost 4% (blank lines and seq entries break the runs;
+the call's fixed cost stays); multi-line plain scalars 3% (found out only
+after reading the first line).
+
 Not yet in the fast path: collections over several lines (pretty-printed
 JSON: compile_commands' objects bail at their first line break), single
 quotes, escapes, and collections as flow-mapping values when the mapping
