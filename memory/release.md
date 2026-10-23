@@ -1,6 +1,6 @@
 # Release 1.0
 
-*Updated 2026-10-22*
+*Updated 2026-10-23*
 
 ## Status
 
@@ -307,17 +307,22 @@ spec has it** ("Easy, YAML 1.2 spec. done."). Change it when oyl.cr is
 moved onto C trees (the plan agreed 2026-10-21: Rust re-vendor, then Go
 trees and `Unmarshal`, then Crystal on C trees with dialects and JSON).
 
-**Wanted by Jargon** (@projects, 2026-10-22,
+**Wanted by Jargon** (as @projects, 2026-10-22,
 `mail/received/20261022-180226Z-@projects--yaml-dates-*`): Jargon reads
 YAML configs as JSON through Crystal's YAML, so a plain `2026-10-22`
 becomes a timestamp and fails its `format: date` check. It asked for
 oyl.cr's JSON path or a dialect choice; answered that it comes with the
 move onto C trees (every Oyl dialect keeps dates as strings), and that
-`YAML::Nodes.parse` / `Oyl::Nodes.parse` give raw scalars meanwhile. Also:
-a planned Rust port, jargon.rs, would depend on oyl.rs (optional feature,
-on by default) from 1.2. Their test of `next_json`: yaml11 matches
-Crystal's typing except `0o17` (YAML 1.1 has no `0o`) and dates. They
-floated a Crystal-compatible dialect; not planned, the user's call.
+`YAML::Nodes.parse` / `Oyl::Nodes.parse` give raw scalars meanwhile. Their
+test of `next_json`: yaml11 matches Crystal's typing except `0o17` (YAML
+1.1 has no `0o`) and dates. They floated a Crystal-compatible dialect; not
+planned, the user's call. **Since then** (@jargon, its own address now,
+2026-10-23, `mail/received/20261023-112625Z-@jargon--*`): Jargon needs
+nothing from Oyl. jargon.cr v0.22.0 fixed the dates itself (a core-schema
+subclass keeping a scalar that resolves to a Time as written), and
+jargon.rs leaves YAML out (a program converts it, or registers a config
+format, oyl.rs among the choices), so it won't depend on oyl.rs. jargon.cr
+may let programs register a config format later; nothing decided.
 
 ## After the tag
 
