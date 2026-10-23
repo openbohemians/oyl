@@ -129,7 +129,23 @@ travis 640/495, config 641/539, JSON 612/212, compile_commands 771/653.
 MB/s at `08c95c7` (5 alternating rounds, against 418635d): block 160 →
 227, mixed 204 → 311, config 308 → 356, JSON 197 → 538, appveyor 425 →
 620, travis 474 → 652, compile_commands 2154 → 2616; rapidyaml 250, 285,
-380, 334, 425, 431, 1203. Left behind it: block 1.10x, config 1.07x.
+380, 334, 425, 431, 1203. Left behind it: block 1.10x, config 1.07x
+(config since passed it, below).
+
+- **anchors and tags without the eager parser** (`e783e0b`, the user
+  agreed to closing config next, 2026-10-23): one property on a block node
+  used to send the rest of the stream to the eager parser (config.yaml:
+  all of it). The common cases are now read incrementally, the rest still
+  fall back. Valid input gives identical events (corpus, 13,879 mutations
+  of property documents, 5,791 of the valid ones now without a fallback);
+  invalid input with properties now gets what input without them always
+  got: events up to the error (the eager parser withholds the failing
+  document's), the incremental parser's message, and likewise under event
+  limits. config 354 → 421 MB/s (rapidyaml 376).
+- **`oyl_scan_flow_fast` aligned to 64 bytes** (same commit): rebasing on
+  the hang fix moved it to offset 32 and cost JSON 10% (530 → 481 MB/s,
+  instructions alike). Function placement still moves block/travis by
+  1-3%.
 
 Not yet in the fast path: collections over several lines (pretty-printed
 JSON: compile_commands' objects bail at their first line break), single
@@ -145,9 +161,10 @@ object's first line break).
 
 Open: a branch at the token-start blank check mispredicts 0.1 per event on
 block.yaml since the dispatch table (whether a blank follows ':', i.e.
-`nested:` lines); config.yaml goes eager for every document (an anchor);
-the parser fills each event's marks from the token (a quarter of its
-instructions on block).
+`nested:` lines); the parser fills each event's marks from the token (a
+quarter of its instructions on block). Still eager: properties on a key
+(`&a k: v`), two sets of properties, a flow collection as a block key; and
+once eager, the rest of the stream stays eager.
 
 ## Post-1.0 plan (agreed 2026-10-03; nothing before the tag)
 
