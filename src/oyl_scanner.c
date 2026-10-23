@@ -13,6 +13,9 @@
 #include "oyl_internal.h"
 #include "oyl_chars.h"
 #include "oyl_simd.h"
+#if defined(__SSE2__)
+#  include <emmintrin.h>
+#endif
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -1927,6 +1930,259 @@ void oyl_scan_flow_commit(oyl_scanner *s, const oyl_flow_fast *ff) {
     s->pos = ff->close + 1;
     note_node(s, open, s->pos);
     s->last_was_quoted = true;
+}
+
+/* ── Block fast path (oyl_internal.h) ──────────────────────── */
+
+/* A plain scalar's first byte, as oyl_scan_token takes it: one it sends
+ * straight to the plain scanner, or a '-' or '.' that a letter or digit
+ * follows (neither a sequence entry nor a document marker). */
+static inline bool bf_plain_start(const char *b, size_t i, size_t len) {
+    uint8_t c = (uint8_t)b[i];
+    if (c == '-' || c == '.') return i + 1 < len && ff_alnum((uint8_t)b[i + 1]);
+    return c > ' ' && c != '#' && c != 0x7F && !indicator_start[c];
+}
+
+/* The first byte from `i` that isn't simply more of a plain value's text in
+ * block context (spaces are, for now): a control character (a line break
+ * among them), ':', '#' or DEL; len if none. */
+static inline size_t bf_special(const char *b, size_t i, size_t len) {
+#if defined(__SSE2__)
+    const __m128i ctl = _mm_set1_epi8(0x1F), colon = _mm_set1_epi8(':'),
+                  hash = _mm_set1_epi8('#'), del = _mm_set1_epi8(0x7F);
+    for (; i + 16 <= len; i += 16) {
+        __m128i v = _mm_loadu_si128((const __m128i *)(const void *)(b + i));
+        __m128i m = _mm_or_si128(
+            _mm_or_si128(_mm_cmpeq_epi8(_mm_min_epu8(v, ctl), v), _mm_cmpeq_epi8(v, colon)),
+            _mm_or_si128(_mm_cmpeq_epi8(v, hash), _mm_cmpeq_epi8(v, del)));
+        int mask = _mm_movemask_epi8(m);
+        if (mask) return i + (size_t)__builtin_ctz((unsigned)mask);
+    }
+#endif
+    for (; i < len; i++) {
+        uint8_t c = (uint8_t)b[i];
+        if (c < 0x20 || c == ':' || c == '#' || c == 0x7F) return i;
+    }
+    return len;
+}
+
+/* A plain value from `i`, where scan_plain_scalar would end it in block
+ * context: at its line's break, or at a comment after blanks. It may hold
+ * text, runs of spaces, and ':' not before a blank. Returns where its
+ * token ends (the break, or the '#'), with *vend the end of its text
+ * (before trailing spaces); SIZE_MAX at anything else (a tab, a control
+ * character, the end of the input). */
+static inline size_t bf_value(const char *b, size_t i, size_t len, size_t *vend, bool *comment) {
+    for (;;) {
+        i = bf_special(b, i, len);
+        if (i >= len) return SIZE_MAX;
+        uint8_t c = (uint8_t)b[i];
+        if (c == '\n' || (c == '#' && b[i - 1] == ' ')) {
+            size_t e = i;
+            while (b[e - 1] == ' ') e--;
+            *vend = e;
+            *comment = c == '#';
+            return i;
+        }
+        if (c == '#') {
+            i++;   /* in the text */
+        } else if (c == ':') {
+            if (i + 1 >= len || (uint8_t)b[i + 1] <= ' ' || b[i + 1] == 0x7F) return SIZE_MAX;
+            i++;
+        } else {
+            return SIZE_MAX;
+        }
+    }
+}
+
+/* How many spaces from `i`. */
+static inline size_t bf_spaces(const char *b, size_t i, size_t len) {
+    size_t from = i;
+#if defined(__SSE2__)
+    const __m128i sp = _mm_set1_epi8(' ');
+    for (; i + 16 <= len; i += 16) {
+        __m128i v = _mm_loadu_si128((const __m128i *)(const void *)(b + i));
+        unsigned mask = (unsigned)_mm_movemask_epi8(_mm_cmpeq_epi8(v, sp)) ^ 0xFFFFu;
+        if (mask) return i + (size_t)__builtin_ctz(mask) - from;
+    }
+#endif
+    while (i < len && b[i] == ' ') i++;
+    return i - from;
+}
+
+/* From the line break at `i`, past lines of only blanks, as
+ * scan_plain_scalar's look past a break goes: returns where the blanks of
+ * the next line with anything else end, with *line its number (the
+ * break's going in), *ls its start and *tabs whether its blanks hold a
+ * tab; len at the end of the input, SIZE_MAX at a '\r'. */
+static inline size_t bf_blank_lines(const char *b, size_t i, size_t len, size_t *line, size_t *ls,
+                                    bool *tabs) {
+    for (;;) {
+        i++;
+        (*line)++;
+        *ls = i;
+        i += bf_spaces(b, i, len);
+        *tabs = i < len && b[i] == '\t';
+        while (i < len && (b[i] == ' ' || b[i] == '\t')) i++;
+        if (i >= len) return len;
+        if (b[i] == '\r') return SIZE_MAX;
+        if (b[i] != '\n') return i;
+    }
+}
+
+/* Writes the events of a block mapping's plain values, and of whole
+ * "key: value" lines, straight from the bytes; see oyl_internal.h. The
+ * scanner is left as scanning their tokens would have left it. */
+int oyl_scan_block_fast(oyl_scanner *s, oyl_block_fast_mode mode, const oyl_token *key,
+                        ptrdiff_t indent, oyl_event *out, int cap, oyl_mark *colon, bool *full) {
+    *full = false;
+    if (s->pending_count > 0 || s->flow_level > 0 || !s->stream_started || s->indent != indent ||
+        indent < 0 || cap < (mode == OYL_BF_VALUE ? 1 : 2))
+        return 0;
+    const char *b = s->buf;
+    size_t len = s->len;
+    size_t i = s->pos;
+    size_t line = s->line, ls = s->pos - (s->col - 1);   /* the line and its start */
+    int n = 0;
+
+    /* what the last value taken leaves behind: its token's end (a break or
+     * a '#'), its start, and how far its look past a break went */
+    size_t end = 0, vstart = 0, vline = 0, vls = 0;
+    bool ahead = false;
+    size_t ahead_pos = 0, ahead_line = 0, ahead_ls = 0;
+    oyl_mark last_colon = {0, 0, 0};
+
+    /* a scalar [a, z), its end mark at `to` (past trailing blanks) */
+    #define BF_EMIT(a, z, to) do { \
+        oyl_event *ev = &out[n++]; \
+        ev->type = OYL_EVT_SCALAR; \
+        ev->value = (oyl_str){b + (a), (z) - (a)}; \
+        ev->anchor = OYL_STR_NULL; \
+        ev->tag = OYL_STR_NULL; \
+        ev->scalar_style = OYL_SCALAR_PLAIN; \
+        ev->implicit = false; \
+        ev->flow = false; \
+        ev->start = (oyl_mark){(a), line, (a) - ls + 1}; \
+        ev->end = (oyl_mark){(to), line, (to) - ls + 1}; \
+    } while (0)
+
+    size_t t = 0;      /* where the next line's key may start */
+    bool tabs = false; /* and whether a tab is in its indentation */
+    if (mode == OYL_BF_KEY) {
+        /* the key just scanned, at the mapping's indentation, and its ':'
+         * right after it, as oyl_scan_token's ':' case takes it: no props
+         * before the key, which is short, and no error */
+        size_t ks = key->start.offset;
+        if (key->scalar_style != OYL_SCALAR_PLAIN || key->end.offset != i ||
+            key->start.line != line || (ptrdiff_t)(ks - ls) != indent || i + 1 >= len ||
+            b[i] != ':' || b[i + 1] != ' ' || s->node_start != ks || s->node_end != i ||
+            only_blanks_between(s, s->props_end, ks) || i - ks > 1024 ||
+            s->key_colon_line == line || tab_after_indicator(s, ks))
+            return 0;
+    } else if (mode == OYL_BF_LINES) {
+        /* the next line, past blank lines, after the break at the cursor */
+        if (i >= len || b[i] != '\n') return 0;
+        t = bf_blank_lines(b, i, len, &line, &ls, &tabs);
+    }
+
+    for (bool first = true;; first = false) {
+        size_t k = 0, k_text = 0, k_end = 0;   /* a key the line has: text, ':' */
+        if (mode == OYL_BF_KEY && first) {
+            k = key->start.offset;
+            k_end = i;
+            i++;
+        } else if (mode != OYL_BF_VALUE || !first) {
+            /* a plain key at the mapping's indentation (spaces only), on
+             * one line, its ':' the first in it */
+            if (t >= len || tabs || (ptrdiff_t)(t - ls) != indent || !bf_plain_start(b, t, len)) break;
+            size_t q = bf_special(b, t, len);
+            if (q + 1 >= len || b[q] != ':' || b[q + 1] != ' ' || q - t > 1024) break;
+            k = t;
+            k_text = q;
+            while (b[k_text - 1] == ' ') k_text--;
+            k_end = q;
+            i = q + 1;
+        }
+        /* the value: blanks after the ':' (spaces only), then a plain
+         * scalar */
+        size_t v = i;
+        while (v < len && b[v] == ' ') v++;
+        if (v == i || v >= len || !bf_plain_start(b, v, len)) break;
+        size_t vend;
+        bool comment;
+        size_t e = bf_value(b, v, len, &vend, &comment);
+        if (e == SIZE_MAX) break;
+        /* a value ending at its line's break looks past it: it ends there if
+         * the next line with anything on it is indented no more than the
+         * mapping, or is a comment (a deeper line may continue it); one
+         * ending at a comment doesn't look */
+        bool has_ahead = false, atabs = false;
+        size_t al = line, als = ls, ap = len;
+        if (!comment) {
+            ap = bf_blank_lines(b, e, len, &al, &als, &atabs);
+            if (ap == SIZE_MAX) break;
+            if (ap < len) {
+                if ((ptrdiff_t)(ap - als) > indent && b[ap] != '#') break;
+                has_ahead = true;
+            }
+        }
+        if (k_end) {
+            if (cap - n < 2) {
+                *full = true;
+                break;
+            }
+            if (mode == OYL_BF_KEY && first) {
+                BF_EMIT(k, k_end, k_end);
+                out[n - 1].value = key->value;
+            } else {
+                BF_EMIT(k, k_text, k_end);   /* its text without blanks before the ':' */
+            }
+            last_colon = (oyl_mark){k_end, line, k_end - ls + 1};
+        }
+        BF_EMIT(v, vend, e);
+        end = e;
+        vstart = v;
+        vline = line;
+        vls = ls;
+        ahead = has_ahead;
+        ahead_pos = ap;
+        ahead_line = al;
+        ahead_ls = als;
+        /* go on with the next line (not past a comment) */
+        if (comment || !has_ahead) break;
+        t = ap;
+        tabs = atabs;
+        line = al;
+        ls = als;
+    }
+    #undef BF_EMIT
+    if (n == 0) return 0;
+
+    /* as the last value's token left it: at its end, having looked past
+     * its break (scan_plain_scalar's END_AT_BREAK) unless the input ends
+     * or a comment ended it */
+    s->pos = end;
+    s->line = vline;
+    s->col = end - vls + 1;
+    if (ahead) {
+        s->ahead_from = end;
+        s->ahead_pos = ahead_pos;
+        s->ahead_line = ahead_line;
+        s->ahead_col = ahead_pos - ahead_ls + 1;
+        s->ahead_line_start = ahead_ls;
+    } else {
+        s->ahead_from = SIZE_MAX;
+    }
+    s->last_token_col = (ptrdiff_t)(vstart - vls);
+    s->last_was_quoted = false;
+    note_node(s, (oyl_mark){vstart, vline, vstart - vls + 1}, end);
+    if (last_colon.line) {
+        /* and the last key's ':' */
+        s->key_colon_line = last_colon.line;
+        s->indicator_end = last_colon.offset + 1;
+        *colon = last_colon;
+    }
+    return n;
 }
 
 const char *oyl_scanner_error(oyl_scanner *s) {

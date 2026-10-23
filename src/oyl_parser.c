@@ -4166,6 +4166,51 @@ static oyl_status parser_step_flow(oyl_parser *p) {
     return OYL_ERR_PARSE;
 }
 
+/* Might a plain value follow a ':' whose next byte is at `i`, for the block
+ * fast path to try? Blanks (one space at least), then a letter, digit,
+ * non-ASCII byte or one of "-./_". Inline, so that most of the lines it
+ * won't take cost no call. */
+ALWAYS_INLINE bool bf_value_may_follow(const oyl_parser *p, size_t i) {
+    if (i >= p->input_len || p->input[i] != ' ') return false;
+    do i++; while (i < p->input_len && p->input[i] == ' ');
+    if (i >= p->input_len) return false;
+    uint8_t c = (uint8_t)p->input[i];
+    return (uint8_t)((c | 0x20) - 'a') < 26 || (uint8_t)(c - '0') < 10 || c >= 0x80 ||
+           c == '-' || c == '.' || c == '/' || c == '_';
+}
+
+/* The block fast path (oyl_scan_block_fast) in the current block mapping:
+ * its value after the ':' just consumed (OYL_BF_VALUE), or the ':' and
+ * value of the key token waiting (OYL_BF_KEY), or its next lines (with no
+ * token waiting), and lines after those. Each takes the parser from where
+ * it is to the mapping's loop, as the token path would after them. */
+NOINLINE bool inc_block_fast(oyl_parser *p, oyl_block_fast_mode mode) {
+    state_frame *top = inc_top_frame(p);
+    if (!top || top->type != CTX_BLOCK_MAP) return false;
+    int cap = OUT_CAP - p->out_len;
+    if (p->max_events > 0 && p->max_events - p->events_delivered - p->out_len < cap)
+        cap = p->max_events - p->events_delivered - p->out_len;
+    oyl_mark colon = {0, 0, 0};
+    bool full;
+    int n = oyl_scan_block_fast(p->scanner, mode, &p->current, top->indent,
+                                &p->out_buf[p->out_len], cap, &colon, &full);
+    if (n == 0) return false;
+    consume_token(p);   /* the key, for OYL_BF_KEY */
+    /* the token path emits a value once it has scanned the token after it,
+     * and a scanner error there drops the value: the same here, unless
+     * what follows is a line the fast path takes */
+    p->out_len += n - 1;
+    if (!full) peek_token(p);
+    p->out_len++;
+    if (colon.line) {
+        p->value_colon_line = colon.line;
+        p->value_colon_offset = colon.offset;
+    }
+    p->node_return = ST_BLOCK_MAP_LOOP;
+    p->state = ST_BLOCK_MAP_LOOP;
+    return true;
+}
+
 /* A block node with properties, in the common cases, read as the eager
  * parser reads them (parse_block_node): an anchor and a tag at most, on
  * one line, and then on that line a scalar that isn't a key, or a flow
@@ -4604,6 +4649,7 @@ ALWAYS_INLINE oyl_status parser_step(oyl_parser *p) {
 #endif
 
     case ST_BLOCK_MAP_LOOP: {
+        if (!p->have_token && inc_block_fast(p, OYL_BF_LINES)) return OYL_OK;
         peek_token(p);
         tt = tok_type(p);
         col = tok_col(p);
@@ -4679,6 +4725,12 @@ ALWAYS_INLINE oyl_status parser_step(oyl_parser *p) {
         tt = tok_type(p);
 
         if (tt == OYL_TOK_SCALAR) {
+            /* "key: value" */
+            size_t ke = p->current.end.offset;
+            if (p->current.scalar_style == OYL_SCALAR_PLAIN && ke < p->input_len &&
+                p->input[ke] == ':' && bf_value_may_follow(p, ke + 1) &&
+                inc_block_fast(p, OYL_BF_KEY))
+                return OYL_OK;
             fill_scalar(inc_next(p), &p->current);
             consume_token(p);
 
@@ -4741,6 +4793,12 @@ ALWAYS_INLINE oyl_status parser_step(oyl_parser *p) {
         size_t colon_offset = p->current.start.offset;
         size_t colon_line = p->current.start.line;
         consume_token(p);
+        p->value_colon_line = colon_line;
+        p->value_colon_offset = colon_offset;
+
+        /* a plain value ending its line, and "key: value" lines after it */
+        if (bf_value_may_follow(p, colon_offset + 1) && inc_block_fast(p, OYL_BF_VALUE))
+            return OYL_OK;
 
         /* peek at what follows */
         peek_token(p);
@@ -4748,9 +4806,6 @@ ALWAYS_INLINE oyl_status parser_step(oyl_parser *p) {
         col = tok_col(p);
         top = inc_top_frame(p);
         ptrdiff_t map_indent = top ? top->indent : 0;
-
-        p->value_colon_line = colon_line;
-        p->value_colon_offset = colon_offset;
 
         /* empty value: next token at same/less indent, or is doc/stream marker */
         if (tt == OYL_TOK_DOC_START || tt == OYL_TOK_DOC_END ||
