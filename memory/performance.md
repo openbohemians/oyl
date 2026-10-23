@@ -112,13 +112,29 @@ slices; every field, incremental and eager paths, token stream):
   out only where asked; a plain scalar's look past a line break reused by
   the next token's skip
 
-Instructions per event 418635d → now: block 619/468, mixed 610/479,
-travis 640/495, config 641/539, JSON 612/499, compile_commands 771/630.
-MB/s at `b57f624` (5 alternating rounds, against 418635d): block 159 →
-222, mixed 199 → 277, config 307 → 344, JSON 195 → 242, appveyor 421 →
-594, travis 477 → 629, compile_commands 2173 → 2743; rapidyaml 249, 280,
-379, 327, 425, 432, 1240. Left behind it: block 1.12x, config 1.10x, JSON
-1.35x; mixed even.
+- **the flow fast path** (`f24b54b`, the user left the choice to me,
+  2026-10-23): a flow collection on one line, of plain words and numbers,
+  escape-free double-quoted text and nested collections, as a flow
+  sequence's entry or a block node, is read whole from its bytes into
+  events (`oyl_scan_flow_fast`). Taken only when its events are what the
+  token path would make: no pending properties, no key (its subset is one
+  the flow-key lookahead reads as the scanner does, so `fk_colon_follows`
+  at its close, or the lookahead's cache, gives the same answer), limits
+  outside it. Verified also over 21,205 single-byte mutations of flow
+  documents (35,383 collections taken) and every event/depth limit on
+  four documents; the fuzz corpus alone takes it only 666 times.
+
+Instructions per event 418635d → now: block 619/469, mixed 610/442,
+travis 640/495, config 641/539, JSON 612/212, compile_commands 771/653.
+MB/s at `f24b54b` (5 alternating rounds, against 418635d): block 160 →
+227, mixed 204 → 311, config 308 → 356, JSON 197 → 538, appveyor 425 →
+620, travis 474 → 652, compile_commands 2154 → 2616; rapidyaml 250, 285,
+380, 334, 425, 431, 1203. Left behind it: block 1.10x, config 1.07x.
+
+Not yet in the fast path: collections over several lines (pretty-printed
+JSON: compile_commands' objects bail at their first line break), single
+quotes, escapes, and collections as flow-mapping values when the mapping
+around them took the slow path.
 
 Tried and dropped: an 8-byte inline blank loop and an inline SSE2 skip
 (more instructions); batching events per refill (the call overhead was
@@ -130,8 +146,8 @@ object's first line break).
 Open: a branch at the token-start blank check mispredicts 0.1 per event on
 block.yaml since the dispatch table (whether a blank follows ':', i.e.
 `nested:` lines); config.yaml goes eager for every document (an anchor);
-JSON's flow-key scan is 16% of its instructions; the parser fills each
-event's marks from the token (a quarter of its instructions on block).
+the parser fills each event's marks from the token (a quarter of its
+instructions on block).
 
 ## Post-1.0 plan (agreed 2026-10-03; nothing before the tag)
 
