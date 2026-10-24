@@ -1,6 +1,6 @@
 # Roadmap after 1.0
 
-*Updated 2026-10-23*
+*Updated 2026-10-24*
 
 The order the user agreed on 2026-10-11 (revised from 2026-10-10, when the
 tree came first; YAMLToJSON needs no tree, so it moved ahead):
@@ -74,6 +74,10 @@ That is bad.") agreed this order:
    `1f9485f` (2026-10-23) Oyl is ahead of rapidyaml on every benchmark
    input** (block 1.28x, config 1.12x, mixed 1.10x, JSON 1.63x). Still
    local, unpushed; merging waits on the user (after the 1.2.0 tag).
+   **Fuzzed locally at `1f9485f`: 24 hours clean** (2026-10-23/24, one
+   libFuzzer process, ASan+UBSan, `fuzz/yaml.dict`, 30.0M runs; corpus
+   79,039 → 106,453). ClusterFuzzLite fuzzes only main, so the branch
+   gets batch runs only once merged.
 
 Where the bindings fall after step 3 isn't decided.
 
