@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.2.0 (unreleased)
+## 1.2.0 (2026-10-24)
 
 Trees, scalar values, dialects, YAML to JSON, and an emitter that is
 faster, checks what it is given and keeps a document's directives.

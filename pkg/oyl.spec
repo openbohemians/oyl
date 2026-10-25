@@ -57,7 +57,7 @@ make test test-schema test-emitter test-merge test-resolve test-errors \
 %{_libdir}/pkgconfig/oyl.pc
 
 %changelog
-* Wed Oct 21 2026 Thomas Sawyer <transfire@gmail.com> - 1.2.0-1
+* Sat Oct 24 2026 Thomas Sawyer <transfire@gmail.com> - 1.2.0-1
 - Trees: oyl_parse_tree reads a document into one flat array of nodes,
   whose lookups follow aliases and apply merges, with keys compared as
   YAML compares them; oyl_emit_tree writes one back.

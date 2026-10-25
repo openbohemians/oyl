@@ -15,7 +15,7 @@ oyl (1.2.0-1) unstable; urgency=medium
   * API and ABI compatible with 1.0: the runtime library is still
     liboyl.so.1.
 
- -- Thomas Sawyer <transfire@gmail.com>  Wed, 21 Oct 2026 12:49:47 -0400
+ -- Thomas Sawyer <transfire@gmail.com>  Sat, 24 Oct 2026 23:12:50 -0400
 
 oyl (1.0.0-1) unstable; urgency=medium
 
