@@ -249,6 +249,16 @@ v1.2.0 on 2026-10-26** (`9cf8c9c` on `oyl-1.2`, main fast-forwarded to
 it, both pushed): the header changed only in a doc comment; tests 22 API,
 14 custom, 12 serde, 21 tree, 2 sys, 13 doc; `cargo publish --workspace
 --dry-run -j1` packages and verifies both crates. **Not published.**
+CI added 2026-10-26 (`2bd9b99`, the user said "yes"): Linux and macOS
+green (debug and `--release`), clippy and rustdoc `-D warnings`, Rust
+1.77 builds. **Windows fails: Oyl's C doesn't compile with MSVC**
+(`oyl_simd.c`'s unguarded `__attribute__((constructor))` first; about 27
+GCC/Clang-only sites in 8 files, some with fallbacks already: `__builtin_ctz`,
+the overflow builtins, `__builtin_trap`, `target("sse4.2")`, CPU
+detection, and `__SSE2__`, which MSVC never defines). 0.1.0 had the same
+C, so Windows never worked; Oyl's README says GCC and Clang on Linux and
+macOS. ASan+LSan rerun on v1.2.0 the same day: every test clean, and LSan
+shown to work by a deliberately leaked parser (probe deleted).
 **Brought up to
 1.2.0 on 2026-10-21 (`f8c36ff`, vendors `ace0d0e`; the user said "let's
 get Rust up to snuff first")**: oyl-sys mirrors the whole header again
@@ -325,7 +335,10 @@ which redirects; local folder `~/Projects/oyl.cr`), shard `oyl`, module
 submodules: the old submodule setup never installed. After any library
 change, run `make -C ext sync OYL=~/Projects/oyl [REF=v1.2.0]`, then
 `make -C ext && crystal spec`, and commit. **Vendors v1.2.0** (`e2e6255`,
-2026-10-26, which added `REF`; 55 specs pass; no CI).
+2026-10-26, which added `REF`; 55 specs pass). CI added (`64bda1c`):
+green on Linux, macOS and Crystal 1.19.1 (shard.yml's minimum). The
+Crystal code calls only 9 of the 52 C functions it declares (parsing);
+the emitter, scanner and schema bindings are unused and untested.
 `Oyl.parse` resolves scalars like Crystal's YAML module (YAML 1.1
 yes/no/on/off booleans): **the user decided 2026-10-21: YAML 1.2, as the
 spec has it** ("Easy, YAML 1.2 spec. done."). Change it when oyl.cr is
