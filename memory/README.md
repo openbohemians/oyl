@@ -19,7 +19,7 @@ was split from that history. Older citations such as
 
 | File | What it holds |
 |---|---|
-| [release.md](release.md) | 1.0 (released 2026-10-10), the clean-fuzz rule, the tagging checklist, the bindings |
+| [release.md](release.md) | 1.2.0 (released 2026-10-25) and 1.0 (2026-10-10), the clean-fuzz rule, the tagging checklist, the bindings |
 | [fuzzing.md](fuzzing.md) | ClusterFuzzLite, the "fuzzies parsed" tally, finding and fixing crashes, CI habits |
 | [performance.md](performance.md) | How to measure, where Oyl stands, and the post-1.0 performance plan |
 | [naming.md](naming.md) | The yam → Oyl rename and the move to openbohemians |

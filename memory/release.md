@@ -1,9 +1,23 @@
 # Release 1.0
 
-*Updated 2026-10-23*
+*Updated 2026-10-26*
 
 ## Status
 
+- **v1.2.0 is released** (2026-10-25, tag on `5ee251e`; the user said
+  "go for it" 2026-10-24): github.com/openbohemians/oyl/releases/tag/v1.2.0,
+  notes from the changelog's 1.2.0 section plus 1.0.0's Packages
+  paragraph. The Package workflow (run 40253481995) attached the Arch,
+  Debian and RPM builds (9 files), and the website's fuzz counter
+  started over (fuzz-tally ran on the release). Tagged after 16 clean
+  batch runs (8 ASan, 8 UBSan) on `dc46992` or later, over two days, plus
+  the local 24-hour run on `per-token`. `5af5acb` set the date to
+  2026-10-24, but the tag waited a day (Claude Code's auto mode blocked
+  `gh release create`; the user switched to manual mode), so `5ee251e`
+  moved it to the 25th. **Open: re-vendor the bindings at the tag**
+  (below; ask before `cargo publish`).
+- `per-token` (roadmap.md step 3) merged into main after the tag:
+  fast-forward to `ed02b19` (2026-10-26), CI green on Linux and macOS.
 - **v1.0.0 is released** (2026-10-10, tag on `c5e72e0`, the user's
   go-ahead): github.com/openbohemians/oyl/releases/tag/v1.0.0, with the
   Arch, Debian and RPM packages attached. The website's fuzz counter now
@@ -17,7 +31,7 @@
   parse-path agreement; `94239d8`, verbatim tags), 2026-09-28 (`8e1d455`, flow-key lookahead
   redesign).
 
-## 1.2.0: prepared, not tagged
+## 1.2.0: how it was prepared (released 2026-10-25, see Status)
 
 **Prepared 2026-10-21 in `ace0d0e`** (the user said "prepare the 1.2.0
 release"): `OYL_VERSION` 1.2.0 (`just bump-version`), the changelog's

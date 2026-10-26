@@ -1,6 +1,6 @@
 # Roadmap after 1.0
 
-*Updated 2026-10-24*
+*Updated 2026-10-26*
 
 The order the user agreed on 2026-10-11 (revised from 2026-10-10, when the
 tree came first; YAMLToJSON needs no tree, so it moved ahead):
@@ -65,19 +65,22 @@ That is bad.") agreed this order:
    (performance.md, post-1.0 items 5 and 4). Not parallel parsing: the
    user agreed to hold a multi-threaded benchmark section until it is in
    the library. **Started 2026-10-23** (the user: "start on that"), before
-   the bindings. **In progress on the local branch `per-token`** (not
-   pushed; main stays as 1.2.0 will be tagged): the per-token machinery
+   the bindings. **Done, merged into main after the 1.2.0 tag** (the user:
+   "go for it", 2026-10-24; fast-forward to `ed02b19` on 2026-10-26, CI
+   green). Rebasing changed the hashes the notes cite: `632d1fd` →
+   `42df192`, `4a8c7d3` → `6f31b33`, `3b572a1` → `ee3c9d4`, `08c95c7` →
+   `b60dca3`, `e783e0b` → `5a46469`, `1f9485f` → `ed02b19` (same code;
+   only the release-date lines differ). The work: the per-token machinery
    trimmed first, since a profile showed Oyl at 4+ instructions per cycle
    with no branch misses, so the cost was instructions, spread thinly
    (performance.md, "Step 3 so far"). Then the flow fast path, anchors
    and tags without the eager parser, and the block fast path: **as of
    `1f9485f` (2026-10-23) Oyl is ahead of rapidyaml on every benchmark
-   input** (block 1.28x, config 1.12x, mixed 1.10x, JSON 1.63x). Still
-   local, unpushed; merging waits on the user (after the 1.2.0 tag).
+   input** (block 1.28x, config 1.12x, mixed 1.10x, JSON 1.63x).
    **Fuzzed locally at `1f9485f`: 24 hours clean** (2026-10-23/24, one
    libFuzzer process, ASan+UBSan, `fuzz/yaml.dict`, 30.0M runs; corpus
-   79,039 → 106,453). ClusterFuzzLite fuzzes only main, so the branch
-   gets batch runs only once merged.
+   79,039 → 106,453). ClusterFuzzLite's batch runs cover it from
+   `ed02b19` on. Not released: it goes out in the next release.
 
 Where the bindings fall after step 3 isn't decided.
 
