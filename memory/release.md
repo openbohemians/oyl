@@ -15,8 +15,9 @@
   2026-10-24, but the tag waited a day (Claude Code's auto mode blocked
   `gh release create`; the user switched to manual mode), so `5ee251e`
   moved it to the 25th. **Bindings re-vendored at the tag 2026-10-26**
-  (below, the user: "yes, re-vendor the bindings"); **open: oyl.rs's
-  crates.io publish waits on the user's go-ahead.**
+  (below, the user: "yes, re-vendor the bindings"). oyl.rs 0.2.0:
+  the user agreed to publish it for Linux and macOS (2026-10-26);
+  **open: auto mode blocked `cargo publish`, so the user runs it.**
 - `per-token` (roadmap.md step 3) merged into main after the tag:
   fast-forward to `ed02b19` (2026-10-26), CI green on Linux and macOS.
 - **v1.0.0 is released** (2026-10-10, tag on `c5e72e0`, the user's
@@ -259,13 +260,21 @@ detection, and `__SSE2__`, which MSVC never defines). 0.1.0 had the same
 C, so Windows never worked; Oyl's README says GCC and Clang on Linux and
 macOS. ASan+LSan rerun on v1.2.0 the same day: every test clean, and LSan
 shown to work by a deliberately leaked parser (probe deleted).
+**The user agreed (2026-10-26)** to publish 0.2.0 for Linux and macOS
+now, the README saying Windows isn't supported yet, with the Windows CI
+job allowed to fail (`continue-on-error`) rather than removed, so it
+shows when Windows works: `3dfa790`, CI green with Windows failing. The
+MSVC port is its own work for Oyl's next release (todo.md). `cargo
+publish --workspace -j1` was blocked by Claude Code's auto mode
+(2026-10-26), nothing uploaded; the user runs it. No git tags in oyl.rs
+(0.1.0 had none either).
 **Brought up to
 1.2.0 on 2026-10-21 (`f8c36ff`, vendors `ace0d0e`; the user said "let's
 get Rust up to snuff first")**: oyl-sys mirrors the whole header again
 (`oyl_dialect_new`'s version, `oyl_dialect_version`, the directive
 functions, `OYL_INT_BIN_SIGN`; all 101 constants checked against C;
 `oyl_hash.c` builds with the rest, `rand_s` on Windows still untested:
-oyl.rs has no CI). `oyl` gains `Directives`, `Parser::directives` (owned
+Windows doesn't build yet). `oyl` gains `Directives`, `Parser::directives` (owned
 copies: the parser reuses its strings), `Tree::directives`,
 `Emitter::directives`/`yaml_directive`/`tag_directive`, `Emitter::reemit`
 (events with each document's directives), `Dialect::version`; docs for

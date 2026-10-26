@@ -1,10 +1,21 @@
 # TODO
 
-*Updated 2026-10-22*
+*Updated 2026-10-26*
 
 Small deferred tasks: each is agreed or obvious, but none is planned yet.
 Larger features go in ideas.md, and the order of work in roadmap.md.
 
+- **Build with MSVC** (**Open**; the user agreed 2026-10-26, for the
+  next release). oyl.rs's Windows CI job fails because MSVC, Rust's
+  default C compiler on Windows, can't compile Oyl (release.md, "The
+  bindings"). About 27 GCC/Clang-only sites in 8 files: `__builtin_ctz`
+  and `ctzll`, the overflow builtins, `__builtin_trap`,
+  `oyl_simd.c`'s `target("sse4.2")`, `__attribute__((constructor))` and
+  `__builtin_cpu_supports`, plus `__SSE2__`, which MSVC never defines
+  (it has `_M_X64`). Some sites have fallbacks already (oyl_internal.h's
+  inline macros, oyl_schema.c's constructor). Small macros, and a
+  Windows job in Oyl's CI; oyl.rs picks it up when it vendors the
+  release, and its Windows job should then pass.
 - **Public `oyl_tree_json`** (**Open**). The tree design sketch has
   `oyl_status oyl_tree_json(const oyl_tree *t, unsigned flags, oyl_str
   *json)`, for JSON from a tree a program already holds. It wasn't built
