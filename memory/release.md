@@ -14,8 +14,9 @@
   the local 24-hour run on `per-token`. `5af5acb` set the date to
   2026-10-24, but the tag waited a day (Claude Code's auto mode blocked
   `gh release create`; the user switched to manual mode), so `5ee251e`
-  moved it to the 25th. **Open: re-vendor the bindings at the tag**
-  (below; ask before `cargo publish`).
+  moved it to the 25th. **Bindings re-vendored at the tag 2026-10-26**
+  (below, the user: "yes, re-vendor the bindings"); **open: oyl.rs's
+  crates.io publish waits on the user's go-ahead.**
 - `per-token` (roadmap.md step 3) merged into main after the tag:
   fast-forward to `ed02b19` (2026-10-26), CI green on Linux and macOS.
 - **v1.0.0 is released** (2026-10-10, tag on `c5e72e0`, the user's
@@ -243,7 +244,12 @@ value, mark, span, raw_nodes; Send + Sync; `Emitter::tree`), `Value`,
 fixed in `8b2a7e2`: a tree's dialect pointed into the parser when only a
 schema was set. **To publish:** after Oyl 1.2.0 is tagged, re-vendor the tag
 (`scripts/sync-oyl.sh ~/Projects/oyl v1.2.0`), merge `oyl-1.2` into main,
-and ask the user before `cargo publish --workspace`. **Brought up to
+and ask the user before `cargo publish --workspace`. **Re-vendored
+v1.2.0 on 2026-10-26** (`9cf8c9c` on `oyl-1.2`, main fast-forwarded to
+it, both pushed): the header changed only in a doc comment; tests 22 API,
+14 custom, 12 serde, 21 tree, 2 sys, 13 doc; `cargo publish --workspace
+--dry-run -j1` packages and verifies both crates. **Not published.**
+**Brought up to
 1.2.0 on 2026-10-21 (`f8c36ff`, vendors `ace0d0e`; the user said "let's
 get Rust up to snuff first")**: oyl-sys mirrors the whole header again
 (`oyl_dialect_new`'s version, `oyl_dialect_version`, the directive
@@ -297,14 +303,18 @@ package `oyl`. `YAMLToJSON` and `YAMLToJSONStrict`, byte for byte
 `sigs.k8s.io/yaml`'s, through the go-yaml v2 dialect, one cgo call per
 document. Vendors Oyl's C in `c/` with one including `.c` per source in
 the package root (cgo compiles only that directory); `scripts/sync-oyl.sh
-~/Projects/oyl [ref]` re-vendors. Currently vendors the `schema-parsers`
-branch (`bbde00e`); **no tags until Oyl 1.1** (README says so). Tests
+~/Projects/oyl [ref]` re-vendors. **Vendors v1.2.0** (`539180b`,
+2026-10-26; README status and speed table updated, CI green on Linux and
+macOS). No tags yet: the README no longer promises one, and tagging the
+module is the user's call. Tests
 compare `testdata/` with `sigs.k8s.io/yaml` (`OYL_COMPARE=dir` adds more;
 866 Kubernetes documents all match), fuzz for valid JSON; CI on Linux and
 macOS green. `MaxDepth` 256 (go-yaml v2 allows 10,000; cgo thread stacks
 may be small). 7.3x `sigs.k8s.io/yaml` through Go on real manifests
-(`OYL_BENCH=dir`), 5-6x on tiny or synthetic ones. Vendors `e90ac2a`. Not yet linked from
-Oyl's README (it documents 1.0).
+(`OYL_BENCH=dir`) at `e90ac2a`; at v1.2.0 (2026-10-26, `taskset -c 3`):
+7.0x on the 855 k8s documents (333 vs 48 MB/s), 6.1x small manifests,
+7.7x the synthetic CRD; with v1.2.0 all 870 + 675 comparison files
+match. Not yet linked from Oyl's README.
 
 ### Crystal
 
@@ -313,8 +323,9 @@ which redirects; local folder `~/Projects/oyl.cr`), shard `oyl`, module
 `Oyl`, ported to the 1.0 API. It **vendors** Oyl's C sources in `ext/oyl`
 (`ext/oyl/COMMIT` names the commit), because shards doesn't fetch git
 submodules: the old submodule setup never installed. After any library
-change, run `make -C ext sync OYL=~/Projects/oyl`, then `make -C ext &&
-crystal spec`, and commit. Vendors v1.0.0 (`e78a6a6` in oyl.cr).
+change, run `make -C ext sync OYL=~/Projects/oyl [REF=v1.2.0]`, then
+`make -C ext && crystal spec`, and commit. **Vendors v1.2.0** (`e2e6255`,
+2026-10-26, which added `REF`; 55 specs pass; no CI).
 `Oyl.parse` resolves scalars like Crystal's YAML module (YAML 1.1
 yes/no/on/off booleans): **the user decided 2026-10-21: YAML 1.2, as the
 spec has it** ("Easy, YAML 1.2 spec. done."). Change it when oyl.cr is
