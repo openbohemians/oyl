@@ -14,7 +14,7 @@ tree came first; YAMLToJSON needs no tree, so it moved ahead):
    1.0.1 is tagged.
 4. **A thin Go wrapper:** just YAMLToJSON over cgo, with benchmarks against
    what Kubernetes uses now. Built 2026-10-11: openbohemians/oyl.go
-   (release.md, "Go"); tagged once Oyl 1.1 is.
+   (release.md, "Go"); tagged `v0.1.0` 2026-10-26, vendoring Oyl 1.2.0.
 4b. **A faster JSON writer** (the user, 2026-10-11: next on the list).
    Today YAMLToJSON is 5-6x `sigs.k8s.io/yaml` (94 against 18 MB/s through
    Go on a 1 MB CRD); Oyl parses that document at 300 MB/s but converts

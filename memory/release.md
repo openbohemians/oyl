@@ -325,8 +325,9 @@ document. Vendors Oyl's C in `c/` with one including `.c` per source in
 the package root (cgo compiles only that directory); `scripts/sync-oyl.sh
 ~/Projects/oyl [ref]` re-vendors. **Vendors v1.2.0** (`539180b`,
 2026-10-26; README status and speed table updated, CI green on Linux and
-macOS). No tags yet: the README no longer promises one, and tagging the
-module is the user's call. Tests
+macOS). **Tagged `v0.1.0` on `539180b`** (2026-10-26, the user said
+"yes"; lightweight, as Oyl's tags; the Go proxy resolves it; no GitHub
+release). Tests
 compare `testdata/` with `sigs.k8s.io/yaml` (`OYL_COMPARE=dir` adds more;
 866 Kubernetes documents all match), fuzz for valid JSON; CI on Linux and
 macOS green. `MaxDepth` 256 (go-yaml v2 allows 10,000; cgo thread stacks
