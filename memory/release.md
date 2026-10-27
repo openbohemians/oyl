@@ -326,8 +326,8 @@ the package root (cgo compiles only that directory); `scripts/sync-oyl.sh
 ~/Projects/oyl [ref]` re-vendors. **Vendors v1.2.0** (`539180b`,
 2026-10-26; README status and speed table updated, CI green on Linux and
 macOS). **Tagged `v0.1.0` on `539180b`** (2026-10-26, the user said
-"yes"; lightweight, as Oyl's tags; the Go proxy resolves it; no GitHub
-release). Tests
+"yes"; lightweight, as Oyl's tags; the Go proxy resolves it; GitHub
+release with notes 2026-10-27). Tests
 compare `testdata/` with `sigs.k8s.io/yaml` (`OYL_COMPARE=dir` adds more;
 866 Kubernetes documents all match), fuzz for valid JSON; CI on Linux and
 macOS green. `MaxDepth` 256 (go-yaml v2 allows 10,000; cgo thread stacks
@@ -335,7 +335,9 @@ may be small). 7.3x `sigs.k8s.io/yaml` through Go on real manifests
 (`OYL_BENCH=dir`) at `e90ac2a`; at v1.2.0 (2026-10-26, `taskset -c 3`):
 7.0x on the 855 k8s documents (333 vs 48 MB/s), 6.1x small manifests,
 7.7x the synthetic CRD; with v1.2.0 all 870 + 675 comparison files
-match. Not yet linked from Oyl's README.
+match. Linked from Oyl's README as "YAML to JSON for Go" (`576b2d4`,
+2026-10-27), not "Go bindings", until the full library (roadmap step
+6) exists.
 
 ### Crystal
 
