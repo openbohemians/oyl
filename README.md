@@ -9,7 +9,8 @@ Fast, minimal, zero-copy. (Formerly *yam*; see the
 [Benchmarks](#performance) ·
 [Changelog](CHANGELOG.md) ·
 [Crystal binding (oyl.cr)](https://github.com/openbohemians/oyl.cr) ·
-[Rust binding (oyl.rs)](https://github.com/openbohemians/oyl.rs)
+[Rust binding (oyl.rs)](https://github.com/openbohemians/oyl.rs) ·
+[YAML to JSON for Go (oyl.go)](https://github.com/openbohemians/oyl.go)
 
 Features a SIMD-accelerated scanner (SSE4.2 with scalar fallback),
 an event-based parser, an emitter with block/flow/minimal output styles,
