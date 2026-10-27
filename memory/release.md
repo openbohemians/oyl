@@ -16,8 +16,8 @@
   `gh release create`; the user switched to manual mode), so `5ee251e`
   moved it to the 25th. **Bindings re-vendored at the tag 2026-10-26**
   (below, the user: "yes, re-vendor the bindings"). oyl.rs 0.2.0:
-  the user agreed to publish it for Linux and macOS (2026-10-26);
-  **open: auto mode blocked `cargo publish`, so the user runs it.**
+  **published on crates.io 2026-10-26** for Linux and macOS, with the
+  user's go-ahead (below).
 - `per-token` (roadmap.md step 3) merged into main after the tag:
   fast-forward to `ed02b19` (2026-10-26), CI green on Linux and macOS.
 - **v1.0.0 is released** (2026-10-10, tag on `c5e72e0`, the user's
@@ -249,7 +249,7 @@ and ask the user before `cargo publish --workspace`. **Re-vendored
 v1.2.0 on 2026-10-26** (`9cf8c9c` on `oyl-1.2`, main fast-forwarded to
 it, both pushed): the header changed only in a doc comment; tests 22 API,
 14 custom, 12 serde, 21 tree, 2 sys, 13 doc; `cargo publish --workspace
---dry-run -j1` packages and verifies both crates. **Not published.**
+--dry-run -j1` packages and verifies both crates. Published the same day (below).
 CI added 2026-10-26 (`2bd9b99`, the user said "yes"): Linux and macOS
 green (debug and `--release`), clippy and rustdoc `-D warnings`, Rust
 1.77 builds. **Windows fails: Oyl's C doesn't compile with MSVC**
@@ -264,10 +264,11 @@ shown to work by a deliberately leaked parser (probe deleted).
 now, the README saying Windows isn't supported yet, with the Windows CI
 job allowed to fail (`continue-on-error`) rather than removed, so it
 shows when Windows works: `3dfa790`, CI green with Windows failing. The
-MSVC port is its own work for Oyl's next release (todo.md). `cargo
-publish --workspace -j1` was blocked by Claude Code's auto mode
-(2026-10-26), nothing uploaded; the user runs it. No git tags in oyl.rs
-(0.1.0 had none either).
+MSVC port is its own work for Oyl's next release (todo.md). **Published
+2026-10-26:** `oyl-sys` 0.2.0+1.2.0 and `oyl` 0.2.0 (`cargo publish
+--workspace -j1` from `3dfa790`; auto mode blocked it first, and it ran
+once the user switched to manual mode). No git tags in oyl.rs (0.1.0
+had none either).
 **Brought up to
 1.2.0 on 2026-10-21 (`f8c36ff`, vendors `ace0d0e`; the user said "let's
 get Rust up to snuff first")**: oyl-sys mirrors the whole header again
