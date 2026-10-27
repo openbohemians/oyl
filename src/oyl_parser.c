@@ -3251,7 +3251,7 @@ static inline size_t fk_next(fk_cursor *c) {
         c->base += 64;
         c->bits = fk_mask_at(c->in, c->len, c->base);
     }
-    size_t k = (size_t)__builtin_ctzll(c->bits);
+    size_t k = (size_t)oyl_ctz64(c->bits);
     c->bits &= c->bits - 1;
     return c->base + k;
 }

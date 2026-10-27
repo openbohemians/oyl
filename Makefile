@@ -54,10 +54,11 @@ TEST_JSON := $(OBJDIR)/test_json
 TEST_DIALECT := $(OBJDIR)/test_dialect
 TEST_TREE := $(OBJDIR)/test_tree
 TEST_HASH := $(OBJDIR)/test_hash
+TEST_PORT := $(OBJDIR)/test_port
 
 .PHONY: all static shared pkgconfig install uninstall dist version \
         clean test test-suite test-schema test-emitter test-merge \
-        test-resolve test-errors test-flow test-json test-dialect test-tree test-hash test-oom test-all bench bench-parser bench-cmp bench-parser-cmp bench-compare bench-compare-tree bench-compare-emit bench-classify bench-oracle bench-parallel
+        test-resolve test-errors test-flow test-json test-dialect test-tree test-hash test-port test-oom test-all bench bench-parser bench-cmp bench-parser-cmp bench-compare bench-compare-tree bench-compare-emit bench-classify bench-oracle bench-parallel
 
 all: $(LIB) $(TEST)
 
@@ -180,6 +181,10 @@ $(TEST_TREE): $(TESTDIR)/test_tree.c $(LIB)
 $(TEST_HASH): $(TESTDIR)/test_hash.c $(LIB) $(SRCDIR)/oyl_internal.h
 	$(CC) $(OYL_CFLAGS) -I$(SRCDIR) $< $(LIB) -lm -o $@
 
+# so are the compiler differences, and the constructors they run
+$(TEST_PORT): $(TESTDIR)/test_port.c $(LIB) $(SRCDIR)/oyl_internal.h $(SRCDIR)/oyl_port.h
+	$(CC) $(OYL_CFLAGS) -I$(SRCDIR) $< $(LIB) -lm -o $@
+
 # Every allocation failing in turn: malloc, calloc and realloc wrapped with
 # the linker's --wrap, which GNU ld (and lld) have, so Linux only
 ifeq ($(shell uname -s),Linux)
@@ -245,6 +250,10 @@ test-hash: $(TEST_HASH)
 	@echo "─── Running hash tests ───"
 	@./$(TEST_HASH)
 
+test-port: $(TEST_PORT)
+	@echo "─── Running port tests ───"
+	@./$(TEST_PORT)
+
 ifdef TEST_OOM
 test-oom: $(TEST_OOM) $(TEST_OOM_EACH)
 	@echo "─── Running allocation failure tests ───"
@@ -256,7 +265,7 @@ test-oom:
 	@echo "─── Allocation failure tests: Linux only (the linker's --wrap) ───"
 endif
 
-test-all: test test-suite test-schema test-emitter test-merge test-resolve test-errors test-flow test-json test-dialect test-tree test-hash test-oom
+test-all: test test-suite test-schema test-emitter test-merge test-resolve test-errors test-flow test-json test-dialect test-tree test-hash test-port test-oom
 
 bench: $(OBJDIR)/bench_scanner $(OBJDIR)/bench_parser
 	@./$(OBJDIR)/bench_scanner $(SIZE)

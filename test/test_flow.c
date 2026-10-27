@@ -16,9 +16,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
-#include <sys/resource.h>
-#include <sys/wait.h>
+
+/* The memory tests measure peak memory with getrusage, in child processes
+ * (fork): POSIX only */
+#if !defined(_WIN32)
+#  define MEMORY_TESTS 1
+#  include <unistd.h>
+#  include <sys/resource.h>
+#  include <sys/wait.h>
+#endif
 
 static int tests_run    = 0;
 static int tests_passed = 0;
@@ -391,7 +397,11 @@ static void test_error_after_events(void) {
 
 static double now(void) {
     struct timespec ts;
+#if defined(_WIN32)
+    timespec_get(&ts, TIME_UTC);
+#else
     clock_gettime(CLOCK_MONOTONIC, &ts);
+#endif
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
 
@@ -692,6 +702,7 @@ static void test_flow_key_quotes_in_plain(void) {
     check("[a!<b], [c]]: x", "[ a!<b ] ERR");      /* "!<" inside text is text */
 }
 
+#if defined(MEMORY_TESTS)
 /* Peak resident memory of this process, in MB. */
 static long peak_rss_mb(void) {
     struct rusage r;
@@ -795,6 +806,7 @@ static void test_multi_document_memory(void) {
     }
     free(buf);
 }
+#endif
 
 /* ── Main ───────────────────────────────────────────────────── */
 
@@ -814,8 +826,10 @@ int main(void) {
     test_stray_flow_indicators();
     test_continuation_indent();
     test_props_across_lines();
+#if defined(MEMORY_TESTS)
     test_plain_scalar_memory();
     test_multi_document_memory();
+#endif
     test_flow_key_quotes_in_plain();
 
     printf("\n--- Flow tests: %d / %d passed ---\n", tests_passed, tests_run);

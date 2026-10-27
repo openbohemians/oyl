@@ -117,7 +117,7 @@ static bool int_result(uint64_t mag, bool sign, bool neg, bool big, unsigned fla
 }
 
 static bool mul_add(uint64_t *v, uint64_t m, uint64_t a) {
-    return !__builtin_mul_overflow(*v, m, v) && !__builtin_add_overflow(*v, a, v);
+    return !oyl_mul_overflow_u64(*v, m, v) && !oyl_add_overflow_u64(*v, a, v);
 }
 
 /* YAML 1.1's base 60 int, [-+]?[1-9][0-9_]*(:[0-5]?[0-9])+: 190:20:30 is
@@ -211,8 +211,8 @@ static bool parse_int(const char *s, size_t len, unsigned flags, oyl_value *out)
     for (ch = cur_peek(&c); ch >= 0; cur_next(&c), ch = cur_peek(&c)) {
         int d = digit_value(ch, base);
         if (d < 0) return false;
-        if (!big && (__builtin_mul_overflow(mag, (uint64_t)base, &mag) ||
-                     __builtin_add_overflow(mag, (uint64_t)d, &mag)))
+        if (!big && (oyl_mul_overflow_u64(mag, (uint64_t)base, &mag) ||
+                     oyl_add_overflow_u64(mag, (uint64_t)d, &mag)))
             big = true;
     }
     return int_result(mag, sign, neg, big, flags, s, len, out);
@@ -835,7 +835,7 @@ static bool py_construct_int(const char *s, size_t len, oyl_value *out) {
             start = p + 1;
             if (big || (big = b)) continue;
             uint64_t lo, hi = mul60(mag, &lo);
-            if (n == neg) big = hi || __builtin_add_overflow(lo, m, &mag);
+            if (n == neg) big = hi || oyl_add_overflow_u64(lo, m, &mag);
             else if (hi > 1 || (hi == 1 && lo >= m)) big = true;
             else if (hi == 1 || lo >= m) mag = lo - m;   /* 2^64 + lo - m wraps to it */
             else { mag = m - lo; neg = n; }
@@ -1059,9 +1059,9 @@ oyl_status oyl_schema_value_of(const oyl_schema *schema, oyl_str text, oyl_scala
     .default_map_tag    = TAG(MAP)
 
 /* The presets' candidate rules by first byte are filled in when the library
- * loads, where the compiler can arrange it; until then (cand_at[257] 0),
- * and elsewhere, every rule is tried */
-#if defined(__GNUC__) || defined(__clang__)
+ * loads, where the compiler can arrange it (oyl_port.h); until then
+ * (cand_at[257] 0), and elsewhere, every rule is tried */
+#if defined(OYL_CONSTRUCTOR)
 #  define CAND(r) static uint16_t r##_at[258]; static uint8_t r##_cand[512];
 #  define PRESET(r, f, t) { .rules = r, .rule_count = sizeof(r) / sizeof(r[0]), DEFAULT_TAGS, \
                             .first = f, .cand_at = r##_at, .cand = r##_cand, .tagged = t }
@@ -1176,9 +1176,9 @@ static const oyl_schema_rule goyaml2_rules[] = {
 CAND(goyaml2_rules)
 static const oyl_schema goyaml2_schema = PRESET(goyaml2_rules, goyaml2_first, OYL_TAGGED_GOYAML2);
 
-#if defined(__GNUC__) || defined(__clang__)
+#if defined(OYL_CONSTRUCTOR)
 #  define FILL(r) fill_cand(r, (int)(sizeof(r) / sizeof(r[0])), r##_at, r##_cand, sizeof r##_cand)
-__attribute__((constructor)) static void fill_preset_cands(void) {
+OYL_CONSTRUCTOR(oyl_fill_preset_cands) {
     FILL(json_rules);
     FILL(core_rules);
     FILL(yaml11_rules);

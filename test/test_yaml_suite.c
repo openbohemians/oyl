@@ -9,9 +9,40 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <dirent.h>
 #include <stdbool.h>
 #include <ctype.h>
+
+#if defined(_WIN32)
+/* The few calls of POSIX's dirent.h used here, over the C runtime's
+ * _findfirst */
+#include <io.h>
+#include <stdint.h>
+struct dirent { const char *d_name; };
+typedef struct { intptr_t h; struct _finddata_t fd; struct dirent ent; bool first; } DIR;
+static DIR *opendir(const char *path) {
+    char pattern[512];
+    snprintf(pattern, sizeof pattern, "%s/*", path);
+    DIR *d = malloc(sizeof *d);
+    if (!d) return NULL;
+    d->h = _findfirst(pattern, &d->fd);
+    if (d->h == -1) { free(d); return NULL; }
+    d->first = true;
+    return d;
+}
+static struct dirent *readdir(DIR *d) {
+    if (!d->first && _findnext(d->h, &d->fd) != 0) return NULL;
+    d->first = false;
+    d->ent.d_name = d->fd.name;
+    return &d->ent;
+}
+static int closedir(DIR *d) {
+    _findclose(d->h);
+    free(d);
+    return 0;
+}
+#else
+#include <dirent.h>
+#endif
 
 /* ── Colors ──────────────────────────────────────────────── */
 

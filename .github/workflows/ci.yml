@@ -24,6 +24,45 @@ jobs:
       - name: Build and run all tests
         run: make CC=${{ matrix.cc }} test-all
 
+  # MSVC, for each architecture oyl_port.h has code for. No make: cl builds
+  # the library and every test but test_oom (Linux only).
+  windows:
+    name: Tests (Windows, MSVC ${{ matrix.arch }})
+    runs-on: ${{ matrix.arch == 'arm64' && 'windows-11-arm' || 'windows-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, x86, arm64]
+    steps:
+      # the test suite's files as committed, without CRLF
+      - run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+
+      - name: Build and run the tests
+        shell: pwsh
+        run: |
+          $cflags = '/nologo', '/std:c11', '/utf-8', '/O2', '/W3', '/Iinclude', '/D_CRT_SECURE_NO_WARNINGS'
+          New-Item -ItemType Directory -Force build | Out-Null
+          cl @cflags /c src\*.c /Fobuild\
+          if ($LASTEXITCODE) { exit 1 }
+          lib /nologo /OUT:build\oyl.lib (Get-ChildItem build\*.obj).FullName
+          if ($LASTEXITCODE) { exit 1 }
+          $tests = 'scanner', 'yaml_suite', 'schema', 'emitter', 'merge', 'resolve', 'errors',
+                   'flow', 'json', 'dialect', 'tree', 'hash', 'port'
+          foreach ($t in $tests) {
+            cl @cflags /Isrc test\test_$t.c build\oyl.lib /Fobuild\ /Febuild\test_$t.exe
+            if ($LASTEXITCODE) { exit 1 }
+            & build\test_$t.exe
+            if ($LASTEXITCODE) { Write-Output "test_$t failed"; exit 1 }
+          }
+
   sanitize:
     name: Sanitizers (ASan + UBSan)
     runs-on: ubuntu-latest

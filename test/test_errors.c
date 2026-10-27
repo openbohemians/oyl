@@ -23,11 +23,25 @@ static int tests_failed = 0;
 
 /* ── File input tests ───────────────────────────────────────── */
 
+/* The temporary directory: $TMPDIR, or %TEMP% on Windows, else /tmp */
+static const char *tmp_dir(void) {
+    const char *t = getenv("TMPDIR");
+    if (!t || !*t) t = getenv("TEMP");
+    return t && *t ? t : "/tmp";
+}
+
+/* A file there (one at a time: the name's buffer is reused) */
+static const char *tmp_file(const char *name) {
+    static char path[512];
+    snprintf(path, sizeof path, "%s/%s", tmp_dir(), name);
+    return path;
+}
+
 static void test_read_file(void) {
     printf("test_read_file:\n");
 
     /* write a temp file */
-    const char *path = "/tmp/oyl_test_input.yaml";
+    const char *path = tmp_file("oyl_test_input.yaml");
     FILE *f = fopen(path, "wb");
     ASSERT(f != NULL, "can create temp file");
     if (!f) return;
@@ -50,7 +64,7 @@ static void test_read_nonexistent(void) {
     printf("test_read_nonexistent:\n");
 
     oyl_arena *a = oyl_arena_new(4096);
-    oyl_str data = oyl_read_file("/tmp/oyl_nonexistent_file.yaml", a);
+    oyl_str data = oyl_read_file(tmp_file("oyl_nonexistent_file.yaml"), a);
 
     ASSERT(data.data == NULL, "nonexistent file returns NULL");
     ASSERT(data.len == 0, "nonexistent file returns zero length");
@@ -61,7 +75,7 @@ static void test_read_nonexistent(void) {
 static void test_read_and_parse(void) {
     printf("test_read_and_parse:\n");
 
-    const char *path = "/tmp/oyl_test_parse.yaml";
+    const char *path = tmp_file("oyl_test_parse.yaml");
     FILE *f = fopen(path, "wb");
     ASSERT(f != NULL, "can create temp file");
     if (!f) return;
@@ -803,10 +817,15 @@ static void test_read_file_edges(void) {
     printf("test_read_file_edges:\n");
     oyl_arena *a = oyl_arena_new(4096);
 
-    /* a directory is an error, not an empty file */
+    /* a directory is an error, not an empty file (Windows doesn't open
+     * one: EACCES) */
     errno = 0;
-    oyl_str d = oyl_read_file("/tmp", a);
+    oyl_str d = oyl_read_file(tmp_dir(), a);
+#if defined(_WIN32)
+    ASSERT(d.data == NULL && errno == EACCES, "directory fails with EACCES");
+#else
     ASSERT(d.data == NULL && errno == EISDIR, "directory fails with EISDIR");
+#endif
 
     /* files that report size 0 but have content (Linux /proc) */
     FILE *probe = fopen("/proc/self/status", "rb");
@@ -817,7 +836,7 @@ static void test_read_file_edges(void) {
     }
 
     /* an empty file */
-    const char *path = "/tmp/oyl_test_empty.yaml";
+    const char *path = tmp_file("oyl_test_empty.yaml");
     FILE *f = fopen(path, "wb");
     if (f) fclose(f);
     oyl_str e = oyl_read_file(path, a);
@@ -825,7 +844,7 @@ static void test_read_file_edges(void) {
     remove(path);
 
     /* larger than the initial read buffer */
-    path = "/tmp/oyl_test_big.yaml";
+    path = tmp_file("oyl_test_big.yaml");
     f = fopen(path, "wb");
     size_t n = 0;
     if (f) {

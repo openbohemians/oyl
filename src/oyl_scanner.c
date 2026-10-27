@@ -13,7 +13,7 @@
 #include "oyl_internal.h"
 #include "oyl_chars.h"
 #include "oyl_simd.h"
-#if defined(__SSE2__)
+#if defined(OYL_SSE2)
 #  include <emmintrin.h>
 #endif
 
@@ -1947,7 +1947,7 @@ static inline bool bf_plain_start(const char *b, size_t i, size_t len) {
  * block context (spaces are, for now): a control character (a line break
  * among them), ':', '#' or DEL; len if none. */
 static inline size_t bf_special(const char *b, size_t i, size_t len) {
-#if defined(__SSE2__)
+#if defined(OYL_SSE2)
     const __m128i ctl = _mm_set1_epi8(0x1F), colon = _mm_set1_epi8(':'),
                   hash = _mm_set1_epi8('#'), del = _mm_set1_epi8(0x7F);
     for (; i + 16 <= len; i += 16) {
@@ -1956,7 +1956,7 @@ static inline size_t bf_special(const char *b, size_t i, size_t len) {
             _mm_or_si128(_mm_cmpeq_epi8(_mm_min_epu8(v, ctl), v), _mm_cmpeq_epi8(v, colon)),
             _mm_or_si128(_mm_cmpeq_epi8(v, hash), _mm_cmpeq_epi8(v, del)));
         int mask = _mm_movemask_epi8(m);
-        if (mask) return i + (size_t)__builtin_ctz((unsigned)mask);
+        if (mask) return i + (size_t)oyl_ctz32((uint32_t)mask);
     }
 #endif
     for (; i < len; i++) {
@@ -1998,12 +1998,12 @@ static inline size_t bf_value(const char *b, size_t i, size_t len, size_t *vend,
 /* How many spaces from `i`. */
 static inline size_t bf_spaces(const char *b, size_t i, size_t len) {
     size_t from = i;
-#if defined(__SSE2__)
+#if defined(OYL_SSE2)
     const __m128i sp = _mm_set1_epi8(' ');
     for (; i + 16 <= len; i += 16) {
         __m128i v = _mm_loadu_si128((const __m128i *)(const void *)(b + i));
         unsigned mask = (unsigned)_mm_movemask_epi8(_mm_cmpeq_epi8(v, sp)) ^ 0xFFFFu;
-        if (mask) return i + (size_t)__builtin_ctz(mask) - from;
+        if (mask) return i + (size_t)oyl_ctz32(mask) - from;
     }
 #endif
     while (i < len && b[i] == ' ') i++;
