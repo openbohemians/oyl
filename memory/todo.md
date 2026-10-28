@@ -1,21 +1,36 @@
 # TODO
 
-*Updated 2026-10-26*
+*Updated 2026-10-28*
 
 Small deferred tasks: each is agreed or obvious, but none is planned yet.
 Larger features go in ideas.md, and the order of work in roadmap.md.
 
-- **Build with MSVC** (**Open**; the user agreed 2026-10-26, for the
-  next release). oyl.rs's Windows CI job fails because MSVC, Rust's
-  default C compiler on Windows, can't compile Oyl (release.md, "The
-  bindings"). About 27 GCC/Clang-only sites in 8 files: `__builtin_ctz`
-  and `ctzll`, the overflow builtins, `__builtin_trap`,
-  `oyl_simd.c`'s `target("sse4.2")`, `__attribute__((constructor))` and
-  `__builtin_cpu_supports`, plus `__SSE2__`, which MSVC never defines
-  (it has `_M_X64`). Some sites have fallbacks already (oyl_internal.h's
-  inline macros, oyl_schema.c's constructor). Small macros, and a
-  Windows job in Oyl's CI; oyl.rs picks it up when it vendors the
-  release, and its Windows job should then pass.
+- **Build with MSVC** (**Built on branch `msvc`, not merged**; the user
+  agreed 2026-10-26 and said "start on the MSVC build" 2026-10-27).
+  oyl.rs's Windows CI job failed because MSVC, Rust's default C compiler
+  on Windows, couldn't compile Oyl. `9ca327d`: `src/oyl_port.h` holds
+  the compiler differences (`OYL_SSE2`, `oyl_ctz32/64`, the overflow
+  checks, the inline macros moved from oyl_internal.h, `OYL_CONSTRUCTOR`
+  as a `.CRT$XCU` pointer kept by `/include`); `__cpuid` for SSE4.2;
+  `_fstat64` in oyl_arena.c. GCC's and Clang's objects disassemble the
+  same as before (one register move fewer in Clang's scanner).
+  `test_port` checks the helpers and that the constructors ran; the
+  tests run on Windows but test_oom and test_flow's two POSIX memory
+  checks. CI: `cl /std:c11` on x64, x86 (windows-latest) and ARM64
+  (windows-11-arm), all green (run 40614795515), no `/W3` warnings.
+  `f0e0173`: **MSVC's strtod reads at most 768 significant digits**, so
+  the sticky "1" after 800 was lost (2^53+1, a thousand 0s, then 1
+  rounded to even). Halfway points need 768 digits (not 767, as the old
+  comment said); now 768 are copied and, with a nonzero tail, the copy
+  and the copy plus one in its last digit are both converted: where they
+  differ, the copy's double's parity decides. Checked on 4,016 literals
+  of 800+ digits around halfway points against glibc, and with a strtod
+  cut to 768 digits (old code: 472 wrong; new: 0). `53449e9`: README and
+  an Unreleased changelog section. **oyl.rs passes on Windows with it**:
+  trial branch `oyl-msvc` (`2f3e1c0`, CI run 40626763483), all tests,
+  debug and release, in MSVC's default C mode (cc ignores `-std=c11`
+  there). Next: the user decides on merging `msvc`; oyl.rs takes it
+  from the next release.
 - **Public `oyl_tree_json`** (**Open**). The tree design sketch has
   `oyl_status oyl_tree_json(const oyl_tree *t, unsigned flags, oyl_str
   *json)`, for JSON from a tree a program already holds. It wasn't built

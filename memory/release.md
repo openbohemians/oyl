@@ -20,6 +20,9 @@
   user's go-ahead (below).
 - `per-token` (roadmap.md step 3) merged into main after the tag:
   fast-forward to `ed02b19` (2026-10-26), CI green on Linux and macOS.
+  **Open:** the changelog has no entry for its speed work yet; the
+  Unreleased section (started on branch `msvc`, `53449e9`) needs one
+  before the next release.
 - **v1.0.0 is released** (2026-10-10, tag on `c5e72e0`, the user's
   go-ahead): github.com/openbohemians/oyl/releases/tag/v1.0.0, with the
   Arch, Debian and RPM packages attached. The website's fuzz counter now
