@@ -100,6 +100,13 @@ and tree users see, and doesn't reach the decoding differences (go-yaml's
 merge order and alias counting), where most of the JSON review's findings
 were. As a tool for moving users to 1.2, yes.
 
+**2026-10-28: the user wants it** ("a way to just 'touch up' a YAML 1.1
+file to make sure it is YAML 1.2 compliant without the whole parse-emit
+round trip"): read once with the source dialect, patch only the scalars
+that disagree by their spans, keep everything else byte for byte, report
+each change. In C, so every binding wraps it. Design still to be proposed
+before building; writing YAML from Crystal values comes first.
+
 ## Performance
 
 See [performance.md](performance.md): NEON, the plain-scalar classifier, the

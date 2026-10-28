@@ -372,25 +372,30 @@ change, run `make -C ext sync OYL=~/Projects/oyl [REF=v1.2.0]`, then
 green on Linux, macOS and Crystal 1.19.1 (shard.yml's minimum). The
 Crystal code calls only 9 of the 52 C functions it declares (parsing);
 the emitter, scanner and schema bindings are unused and untested.
-**Bug, open:** `Oyl.parse` resolves plain scalars with yam.cr's copy of
-Crystal's `YAML::Schema::Core` (`src/oyl/schema/core.cr`): YAML 1.1
-booleans (yes/no/on/off), timestamps, Crystal's integer prefixes. Oyl is
-a YAML 1.2 library by premise, so the binding must use 1.2's Core schema.
-This is a fix, not a choice to reopen: the user confirmed it 2026-10-21
-("Easy, YAML 1.2 spec. done.") and said so again 2026-10-28 (the whole
-project was built on wanting a modern YAML 1.2 parser and emitter).
-Planned with the move onto C trees (agreed 2026-10-21: Rust re-vendor,
-then Go trees and `Unmarshal`, then Crystal on C trees with dialects and
-JSON), unless the user wants it sooner.
+**Fixed in `d9948bd` (2026-10-28), version 0.3.0; tag `v0.3.0` not yet
+pushed** (the auto-mode classifier blocked it; the user approved 0.3.0).
+`Oyl.parse` had typed plain scalars with yam.cr's copy of Crystal's
+`YAML::Schema::Core`: YAML 1.1 booleans, 0-octal, timestamps. Oyl is a
+YAML 1.2 library by premise (the user, 2026-10-28: the whole project was
+built on wanting a modern YAML 1.2 parser and emitter), so this was a bug,
+never a choice. Now scalars go through Oyl's C schemas
+(`oyl_schema_value_of`): `Oyl::Dialect` YAML12 (default), YAML11, GOYAML2,
+the parser's default; a `%YAML 1.1` document gets YAML 1.1 itself
+(`Document#dialect`). `<<` merges are the C parser's (`oyl_parser_set_merge`)
+in `Oyl.parse`; the copy let a `<<` override keys written before it
+(`x: {a: 9, <<: *b}` gave b's `a`). The event-level merge always uses
+YAML's order, so GOYAML2's merge order isn't applied (README says so);
+it comes with C trees. Integers above Int64::MAX are UInt64. 64 specs,
+CI green on all three jobs. The later steps of the 2026-10-21 plan
+(Crystal on C trees, JSON) still stand; writing YAML from Crystal values
+is next (the user, 2026-10-28).
 
 **Fixed 2026-10-28: installing failed.** The repo's only tag was
 `v0.1.0` (`fbe746f`), the old yam.cr with `name: yam` in shard.yml, so
 `github: openbohemians/oyl.cr` gave "shard name (yam) doesn't match
 dependency name (oyl)". Tagged **`v0.2.0`** on `ce47b72` (the user said
-yes; version bumped in shard.yml, `Oyl::VERSION` and its spec; CI green
-on all three jobs); a fresh `shards install` now builds and runs. Still
-vendors Oyl 1.2.0, and still has the scalar bug above. The specs also
-pass against Oyl main `f7a6a0f` (55).
+yes; CI green); a fresh `shards install` builds and runs. Vendors Oyl
+1.2.0; the specs also pass against Oyl main `f7a6a0f`.
 
 **Wanted by Jargon** (as @projects, 2026-10-22,
 `mail/received/20261022-180226Z-@projects--yaml-dates-*`): Jargon reads
