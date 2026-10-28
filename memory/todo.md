@@ -5,7 +5,7 @@
 Small deferred tasks: each is agreed or obvious, but none is planned yet.
 Larger features go in ideas.md, and the order of work in roadmap.md.
 
-- **Build with MSVC** (**Built on branch `msvc`, not merged**; the user
+- **Build with MSVC** (**Done, merged into main 2026-10-28**; the user
   agreed 2026-10-26 and said "start on the MSVC build" 2026-10-27).
   oyl.rs's Windows CI job failed because MSVC, Rust's default C compiler
   on Windows, couldn't compile Oyl. `9ca327d`: `src/oyl_port.h` holds
@@ -29,8 +29,9 @@ Larger features go in ideas.md, and the order of work in roadmap.md.
   an Unreleased changelog section. **oyl.rs passes on Windows with it**:
   trial branch `oyl-msvc` (`2f3e1c0`, CI run 40626763483), all tests,
   debug and release, in MSVC's default C mode (cc ignores `-std=c11`
-  there). Next: the user decides on merging `msvc`; oyl.rs takes it
-  from the next release.
+  there). Merged by fast-forward (the user: "if you think it time to
+  merge than yes", 2026-10-28). oyl.rs takes it from the next release;
+  its `oyl-msvc` branch was only the trial.
 - **Public `oyl_tree_json`** (**Open**). The tree design sketch has
   `oyl_status oyl_tree_json(const oyl_tree *t, unsigned flags, oyl_str
   *json)`, for JSON from a tree a program already holds. It wasn't built

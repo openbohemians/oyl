@@ -1,6 +1,6 @@
 # Performance
 
-*Updated 2026-10-23*
+*Updated 2026-10-28*
 
 ## Measuring
 
@@ -189,6 +189,19 @@ block.yaml since the dispatch table (whether a blank follows ':', i.e.
 quarter of its instructions on block). Still eager: properties on a key
 (`&a k: v`), two sets of properties, a flow collection as a block key; and
 once eager, the rest of the stream stays eager.
+
+## 1.2.0 against main (2026-10-28, `be989e9`)
+
+`cmp_oyl` against v1.2.0's and main's libraries (built per "Re-measured
+for 1.2.0"), 10 MB inputs plus rapidyaml's cases, the Kubernetes stream
+and the largest CRD, five alternating rounds of 11 runs, pinned to CPU 3;
+rapidyaml 0.16.0's event parser alongside. MB/s, 1.2.0 / main /
+rapidyaml: block 159/314/244, mixed 201/310/281, config 307/423/377,
+JSON 192/531/323, travis 470/834/430, appveyor 422/579/424,
+compile_commands 2138/2707/1206, Kubernetes stream 604/776/-, largest
+CRD 596/793/-, multi-line plain 835/985/301, literal 2844/3116/971,
+folded 1886/2073/879, double-quoted 2789/3062/352, single-quoted
+2400/2645/368. The changelog's Performance entry cites these.
 
 ## Post-1.0 plan (agreed 2026-10-03; nothing before the tag)
 

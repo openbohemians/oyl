@@ -20,9 +20,14 @@
   user's go-ahead (below).
 - `per-token` (roadmap.md step 3) merged into main after the tag:
   fast-forward to `ed02b19` (2026-10-26), CI green on Linux and macOS.
-  **Open:** the changelog has no entry for its speed work yet; the
-  Unreleased section (started on branch `msvc`, `53449e9`) needs one
-  before the next release.
+  Its changelog entry (Unreleased: Changed, Performance) is `be989e9`
+  (2026-10-28, the user asked for it), from a fresh 1.2.0-vs-main
+  measurement (performance.md, "1.2.0 against main").
+- **MSVC build merged into main** (the user: "if you think it time to
+  merge than yes", 2026-10-28): fast-forward to `53449e9` (todo.md).
+  Unreleased in the changelog: Windows with MSVC (Added), the per-token
+  error change (Changed), the speed work (Performance), long floats with
+  a 768-digit strtod (Fixed).
 - **v1.0.0 is released** (2026-10-10, tag on `c5e72e0`, the user's
   go-ahead): github.com/openbohemians/oyl/releases/tag/v1.0.0, with the
   Arch, Debian and RPM packages attached. The website's fuzz counter now
@@ -202,6 +207,11 @@ changelog's figures were re-measured as published (3 passes each; inputs
 in the session scratchpad, rebuildable per tree-design.md "Step 4").
 YAMLToJSON: 7.3x `sigs.k8s.io/yaml` on 855 manifests. The website's
 "970 tests" (from 2026-10-03) is stale, not yet changed.
+**For the next release:** the README's Performance table and its text
+still show 1.2.0 (rapidyaml leading on generated inputs); main is now
+ahead of rapidyaml everywhere (performance.md, "1.2.0 against main").
+Refresh them, the headline and the website, at the tag, not before:
+they describe the release people can install.
 
 ## Checklist at tag time
 
