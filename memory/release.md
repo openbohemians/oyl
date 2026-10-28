@@ -378,6 +378,13 @@ spec has it** ("Easy, YAML 1.2 spec. done."). Change it when oyl.cr is
 moved onto C trees (the plan agreed 2026-10-21: Rust re-vendor, then Go
 trees and `Unmarshal`, then Crystal on C trees with dialects and JSON).
 
+**Open (found 2026-10-28): the README's install fails.** The repo's only
+tag, `v0.1.0` (`fbe746f`), is the old yam.cr, whose shard.yml says
+`name: yam`; shards picks the newest tag, so `github: openbohemians/oyl.cr`
+gives "shard name (yam) doesn't match dependency name (oyl)". A new tag
+(`v0.2.0`, with shard.yml's version to match) fixes it; the user's call.
+The specs pass on the vendored 1.2.0 and on main `f7a6a0f` (55 each).
+
 **Wanted by Jargon** (as @projects, 2026-10-22,
 `mail/received/20261022-180226Z-@projects--yaml-dates-*`): Jargon reads
 YAML configs as JSON through Crystal's YAML, so a plain `2026-10-22`
