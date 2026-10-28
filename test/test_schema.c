@@ -459,8 +459,8 @@ static bool is_text(oyl_value v, const char *t) {
 
 static oyl_str tag_of(const char *t) { return (oyl_str){ t, strlen(t) }; }
 
-/* A float far longer than a stack copy: the first 800 significant digits
- * and one for the rest round as the whole */
+/* A float far longer than a stack copy: the first 768 significant digits,
+ * and whether any after them isn't 0, round as the whole */
 static void test_long_floats(void) {
     printf("test_long_floats:\n");
     static char lit[2048];
@@ -474,6 +474,28 @@ static void test_long_floats(void) {
     snprintf(lit + n + 1000, sizeof lit - n - 1000, "1");
     ASSERT(value_of(oyl_schema_core(), lit, OYL_SCALAR_PLAIN, (oyl_str){ NULL, 0 }, &v) == OYL_OK &&
            v.as.f == 9007199254740994.0, "a 1 a thousand digits on: up");
+    /* 2^53 + 3 is halfway too, its even neighbour above: past a thousand
+     * more digits, up there as well; and just below either, down */
+    snprintf(lit, sizeof lit, "9007199254740995.");
+    memset(lit + n, '0', 1000);
+    snprintf(lit + n + 1000, sizeof lit - n - 1000, "1");
+    ASSERT(value_of(oyl_schema_core(), lit, OYL_SCALAR_PLAIN, (oyl_str){ NULL, 0 }, &v) == OYL_OK &&
+           v.as.f == 9007199254740996.0, "past the halfway point below the even double: up");
+    snprintf(lit, sizeof lit, "9007199254740992.");
+    memset(lit + n, '9', 1000);
+    lit[n + 1000] = '\0';
+    ASSERT(value_of(oyl_schema_core(), lit, OYL_SCALAR_PLAIN, (oyl_str){ NULL, 0 }, &v) == OYL_OK &&
+           v.as.f == 9007199254740992.0, "just below the halfway point above the even double: down");
+    snprintf(lit, sizeof lit, "9007199254740994.");
+    memset(lit + n, '9', 1000);
+    lit[n + 1000] = '\0';
+    ASSERT(value_of(oyl_schema_core(), lit, OYL_SCALAR_PLAIN, (oyl_str){ NULL, 0 }, &v) == OYL_OK &&
+           v.as.f == 9007199254740994.0, "just below the halfway point above the odd double: down");
+    snprintf(lit, sizeof lit, "0.");
+    memset(lit + 2, '9', 1000);
+    lit[1002] = '\0';
+    ASSERT(value_of(oyl_schema_core(), lit, OYL_SCALAR_PLAIN, (oyl_str){ NULL, 0 }, &v) == OYL_OK &&
+           v.as.f == 1.0, "a thousand 9s after the point: 1");
     snprintf(lit, sizeof lit, "0.");
     memset(lit + 2, '0', 1200);
     snprintf(lit + 1202, sizeof lit - 1202, "15e1210");

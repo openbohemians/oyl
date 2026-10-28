@@ -227,10 +227,11 @@ static bool spelled(const char *s, size_t len, const char *lower,
                         memcmp(s, upper, 4) == 0);
 }
 
-/* At most this many significant digits are copied for strtod: with a last
- * 1 standing for any others that aren't 0, the copy rounds as the whole
- * literal does (a double's halfway points need at most 767) */
-#define FLOAT_DIGITS 800
+/* At most this many significant digits are copied for strtod: as many as
+ * the halfway points between doubles have, so how the literal rounds
+ * depends only on them and on whether any after them isn't 0 (float_value).
+ * MSVC's strtod reads no more. */
+#define FLOAT_DIGITS 768
 
 /* strtod on `buf`, n bytes, whose decimal point is the '.' at `point`, in
  * the locale's terms: its decimal point may not be '.', nor one byte */
@@ -252,6 +253,19 @@ static double locale_strtod(char *buf, size_t n, size_t point, int *err) {
     }
     *err = errno;
     return f;
+}
+
+/* locale_strtod on the digits in buf[0..n) times 10^exp10, written after
+ * them */
+static double exp_strtod(char *buf, size_t n, size_t point, long long exp10, int *err) {
+    buf[n++] = 'e';
+    if (exp10 < 0) { buf[n++] = '-'; exp10 = -exp10; }
+    char digits[24];
+    int nd = 0;
+    do { digits[nd++] = (char)('0' + exp10 % 10); exp10 /= 10; } while (exp10);
+    while (nd) buf[n++] = digits[--nd];
+    buf[n] = '\0';
+    return locale_strtod(buf, n, point, err);
 }
 
 /* The double a validated float literal stands for, from a copy on the
@@ -298,7 +312,6 @@ static int float_value(const char *s, size_t len, bool underscores, unsigned fla
         return 1;
     }
     n += nsig;
-    if (sticky) buf[n++] = '1';
     long long e = 0;
     bool eneg = false;
     for (i += i < len; i < len; i++) {   /* the exponent, past its e */
@@ -308,14 +321,24 @@ static int float_value(const char *s, size_t len, bool underscores, unsigned fla
     long long exp10 = place + (eneg ? -e : e);   /* the value is .DDD times 10^exp10 */
     if (exp10 > 100000000) exp10 = 100000000;
     if (exp10 < -100000000) exp10 = -100000000;
-    buf[n++] = 'e';
-    if (exp10 < 0) { buf[n++] = '-'; exp10 = -exp10; }
-    char digits[24];
-    int nd = 0;
-    do { digits[nd++] = (char)('0' + exp10 % 10); exp10 /= 10; } while (exp10);
-    while (nd) buf[n++] = digits[--nd];
-    buf[n] = '\0';
-    *f = locale_strtod(buf, n, point, &err);
+    *f = exp_strtod(buf, n, point, exp10, &err);
+    if (sticky) {
+        /* The literal lies strictly between the copy, t, and u, one more
+         * in t's last digit. No halfway point between doubles lies
+         * strictly between them, so they round alike, or one is a halfway
+         * point: if t is, it rounds to the even double and the literal
+         * up, to u's; if u is, the literal rounds down, to t's, the odd
+         * one. So where they differ, it's u's if t's is even. */
+        size_t k = n;
+        while (k > point + 1 && buf[k - 1] == '9') buf[--k] = '0';
+        if (k > point + 1) buf[k - 1]++;
+        else { buf[point + 1] = '1'; exp10++; }   /* .999... up to .1000... */
+        int uerr;
+        double u = exp_strtod(buf, n, point, exp10, &uerr);
+        uint64_t bits;
+        memcpy(&bits, f, sizeof bits);
+        if (u != *f && !(bits & 1)) { *f = u; err = uerr; }
+    }
     return err == ERANGE && isinf(*f) && (flags & OYL_FLOAT_RANGE) ? 0 : 1;
 }
 
