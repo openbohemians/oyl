@@ -12,6 +12,45 @@
   GCC and Clang compile to the same code as before. The Makefile still
   needs a Unix shell: compile `src/*.c` with `cl /std:c11 /Iinclude`.
 
+### Changed
+
+- An anchor or tag on a block node no longer sends the rest of the
+  stream to the eager parser, which parses a whole document before
+  handing out its events. The incremental parser reads the common cases
+  itself: an anchor and a tag on one line, then a scalar or flow
+  collection on that line, or a block collection or scalar on a later
+  one. Valid input gives the same events as before. Invalid input with
+  such properties now gets what input without them gets: the events up
+  to the error, where the eager parser withheld the failing document's,
+  and the incremental parser's message (for some flow errors
+  `unexpected token in flow sequence` rather than `expected ',' or
+  ']'`). Properties on a key, two sets of them and empty nodes still go
+  to the eager parser.
+
+### Performance
+
+- Parsing is up to 2.8x as fast as 1.2.0's, in MB/s: block YAML 159
+  to 314, JSON 192 to 531, rapidyaml's travis.yml 470 to 834, config
+  files 307 to 423, a 7.3 MB stream of public Kubernetes manifests 604
+  to 776, multi-line scalars 10-18% (one core of an Intel Core Ultra 7
+  155H, GCC, median of five alternating rounds). That puts Oyl's event
+  parser ahead of rapidyaml's on the generated inputs and on rapidyaml's
+  own benchmark files; 1.2.0 trailed it by up to 1.8x on generated
+  inputs of short tokens. Oyl
+  already ran at over four instructions a cycle with almost no branch
+  misses, so the work was cutting instructions spread over every token:
+  - events built where they are handed out instead of copied, a block
+    key/value pair in two parser steps instead of five, the scanner's
+    indicators dispatched by a switch, short runs of blanks skipped
+    inline, a plain scalar's look past a line break reused by the next
+    token, and no stack-protector checks on the hot paths (GCC's
+    `-fstack-protector-strong`, the default in common distributions,
+    added one per token);
+  - fast paths that read events straight from the bytes, without
+    tokens, where the result is what tokens would give: one-line flow
+    collections of plain and escape-free double-quoted scalars (JSON's),
+    and plain `key: value` lines in block mappings.
+
 ### Fixed
 
 - **Float literals longer than 768 significant digits** round exactly
