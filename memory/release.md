@@ -251,7 +251,16 @@ Crystal and Go. **Crystal JSON done in oyl.cr `93475f2`** (2026-10-28,
 CI green): `Oyl.yaml_to_json`/`yaml_to_json_all` over `oyl_parse_json`
 with the parser's dialect (so `:goyaml2` gives Kubernetes's output and
 merge order), `strict:`; 87 specs, a random check against the data in
-every dialect (20,000 more with another seed passed). Not released. The work is against Oyl main and doesn't hold the Oyl
+every dialect (20,000 more with another seed passed). Not released.
+**Rust's Serializer done in oyl.rs `2e05fad`** (2026-10-28, CI green but
+Windows, as before): `to_string`/`to_vec`/`to_writer`, `Emitter::serialize`
+(one node), public `Serializer`; Crystal's quoting rule; floats from
+Rust's shortest form with a dot and a signed exponent (`1.0e+20`, which
+YAML 1.1 needs); bytes `!!binary`, and `from_str` now decodes `!!binary`
+into bytes; enum variants a name or a one-key mapping (not serde_yaml
+0.9's `!Variant` tags, which `from_str` still reads). Random round trip:
+6,000 values read back by all three dialects (120,000 more passed);
+turning off the quoting or the float fix fails it. Not published. The work is against Oyl main and doesn't hold the Oyl
 tag; each binding re-vendors the tag, and each release is asked first.
 
 **Rust**, done 2026-10-08: **openbohemians/oyl.rs** (local
