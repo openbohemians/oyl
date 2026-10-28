@@ -280,7 +280,24 @@ table. Tests: random round trip in all three dialects, GoYAML2 decoding
 against `YAMLToJSON` on testdata, `FuzzRoundTrip` (3.1M inputs clean
 locally, 60 s in CI); clean under `-race`, `cgocheck2` and `-asan`.
 Bench now imports `sigs.k8s.io/yaml/goyaml.v3` (adds indirect
-`go.yaml.in/yaml/v3`, tests only). Not tagged. The work is against Oyl main and doesn't hold the Oyl
+`go.yaml.in/yaml/v3`, tests only). Not tagged.
+**Windows trials, 2026-10-28, both green, kept on `windows-trial`
+branches until the 1.3.0 tag** (each vendors Oyl main `f7a6a0f`; at the
+tag: re-vendor the tag there, merge into main): oyl.go `29a465c` adds
+windows-latest to CI, and cgo builds Oyl with MinGW GCC (tests with
+-race, both fuzz targets, benchmarks). oyl.cr `f87b5db`: `ext/build.cr`
+replaces `make -C ext` as the postinstall (`crystal run ext/build.cr`;
+cc/ar on Unix with CC/AR/CFLAGS; on Windows `cl /std:c11 /O2 /MD` and
+`lib` into `oyl.lib`, `/MD` because Crystal links the DLL CRT; with no
+cl on PATH it takes vcvars64/vcvarsarm64's environment via vswhere and a
+temporary .bat); `lib_oyl.cr` links `oyl.lib` under `flag?(:win32)`;
+windows-latest in CI, plus a step building with MSVC removed from PATH.
+The runner has no cl on PATH, so the vswhere path is what ran: 87 specs
+pass, no warnings. A fresh `shards install` of the branch on Linux runs
+the new postinstall and works. The Makefile stays for `sync`.
+Rust's Windows was proven by `oyl-msvc` (todo.md).
+**Fuzzing for 1.3.0:** 4 clean batch runs on the release code (2 ASan,
+2 UBSan: on `53449e9` and dispatched on `f7a6a0f`, docs-only after it). The work is against Oyl main and doesn't hold the Oyl
 tag; each binding re-vendors the tag, and each release is asked first.
 
 **Rust**, done 2026-10-08: **openbohemians/oyl.rs** (local
