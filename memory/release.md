@@ -207,11 +207,18 @@ changelog's figures were re-measured as published (3 passes each; inputs
 in the session scratchpad, rebuildable per tree-design.md "Step 4").
 YAMLToJSON: 7.3x `sigs.k8s.io/yaml` on 855 manifests. The website's
 "970 tests" (from 2026-10-03) is stale, not yet changed.
-**For the next release:** the README's Performance table and its text
-still show 1.2.0 (rapidyaml leading on generated inputs); main is now
-ahead of rapidyaml everywhere (performance.md, "1.2.0 against main").
-Refresh them, the headline and the website, at the tag, not before:
-they describe the release people can install.
+**Refreshed for the next release in `f7a6a0f`** (2026-10-28, the user:
+"update the README -- I assume we are about to release?"): the event and
+tree tables (3 passes each, raw output in the session scratchpad,
+`readme-bench/`), their text, "where the speed comes from", the headline
+(2-14x) and the website's chart, notes, stat and test count (2,018:
+each program's passed count plus the suite's 402). The emitter table and
+tree memory weren't re-measured: that code is unchanged since 1.2.0.
+rapidyaml's new-tree mode swung up to 28% between passes (one low pass);
+the README says so.
+**Before tagging:** more batch runs on `53449e9` or later (2 so far, on
+2026-10-28: the MSVC merge changed long-float rounding), the version
+number and dates, and asking the user.
 
 ## Checklist at tag time
 
