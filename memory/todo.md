@@ -148,9 +148,10 @@ Larger features go in ideas.md, and the order of work in roadmap.md.
   less than rapidyaml, libyaml and libfyaml (on long scalars rapidyaml
   and libfyaml hold less; tree-design.md, "Step 4 so far"). If programs
   that hold many trees want it, make it opt-in rather than the default.
-- **oyl.go: a wrapper .c for `oyl_tree.c`** (**Open**). oyl.go needs one
-  wrapper per vendored source file. Add it when oyl.go vendors a release
-  with trees (1.2.0).
+- **oyl.go: a wrapper .c for `oyl_tree.c`** (**Done**, found so
+  2026-10-28): `scripts/sync-oyl.sh` writes one wrapper per vendored
+  source, so `539180b` (Oyl 1.2.0) has `oyl_tree.c`. oyl.go also builds
+  and passes against Oyl main `f7a6a0f` (trial, 2026-10-28).
 - **Keys compared by tag and value, not text** (**Fixed in `4191b09`**,
   2026-10-18; the user said "OK, lets do it" after the 1.2 spec check).
   YAML 1.2.2 §3.2.1.3: two scalars are equal when their tags and

@@ -31,7 +31,7 @@ was split from that history. Older citations such as
 | [tree-design.md](tree-design.md) | Agreed 2026-10-12: the tree API (32-byte nodes in document order, offsets, parallel-ready join); building on `tree` |
 | [roadmap.md](roadmap.md) | The agreed order after 1.0 (schemas, YAMLToJSON, Go, tree, parallel), and the Go plan |
 | [review.md](review.md) | The pre-1.2.0 code review: static analysis, CodeQL and coverage results (layer 1), open findings |
-| [todo.md](todo.md) | Small deferred tasks: the YAML 1.1 → 1.2 touch-up, public `oyl_tree_json`, an emitter whitespace nit, oyl.go's wrapper for `oyl_tree.c` |
+| [todo.md](todo.md) | Small deferred tasks: the YAML 1.1 → 1.2 touch-up, public `oyl_tree_json`, an emitter whitespace nit |
 | [outreach.md](outreach.md) | GitHub Sponsors, and the plan to reach heavy YAML users |
 | [perdoc-fallback-prototype.patch](perdoc-fallback-prototype.patch) | Prototype of per-document eager fallback (release.md issue 3), against `d6b8afb` |
 
