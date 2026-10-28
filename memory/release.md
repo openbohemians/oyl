@@ -372,18 +372,25 @@ change, run `make -C ext sync OYL=~/Projects/oyl [REF=v1.2.0]`, then
 green on Linux, macOS and Crystal 1.19.1 (shard.yml's minimum). The
 Crystal code calls only 9 of the 52 C functions it declares (parsing);
 the emitter, scanner and schema bindings are unused and untested.
-`Oyl.parse` resolves scalars like Crystal's YAML module (YAML 1.1
-yes/no/on/off booleans): **the user decided 2026-10-21: YAML 1.2, as the
-spec has it** ("Easy, YAML 1.2 spec. done."). Change it when oyl.cr is
-moved onto C trees (the plan agreed 2026-10-21: Rust re-vendor, then Go
-trees and `Unmarshal`, then Crystal on C trees with dialects and JSON).
+**Bug, open:** `Oyl.parse` resolves plain scalars with yam.cr's copy of
+Crystal's `YAML::Schema::Core` (`src/oyl/schema/core.cr`): YAML 1.1
+booleans (yes/no/on/off), timestamps, Crystal's integer prefixes. Oyl is
+a YAML 1.2 library by premise, so the binding must use 1.2's Core schema.
+This is a fix, not a choice to reopen: the user confirmed it 2026-10-21
+("Easy, YAML 1.2 spec. done.") and said so again 2026-10-28 (the whole
+project was built on wanting a modern YAML 1.2 parser and emitter).
+Planned with the move onto C trees (agreed 2026-10-21: Rust re-vendor,
+then Go trees and `Unmarshal`, then Crystal on C trees with dialects and
+JSON), unless the user wants it sooner.
 
-**Open (found 2026-10-28): the README's install fails.** The repo's only
-tag, `v0.1.0` (`fbe746f`), is the old yam.cr, whose shard.yml says
-`name: yam`; shards picks the newest tag, so `github: openbohemians/oyl.cr`
-gives "shard name (yam) doesn't match dependency name (oyl)". A new tag
-(`v0.2.0`, with shard.yml's version to match) fixes it; the user's call.
-The specs pass on the vendored 1.2.0 and on main `f7a6a0f` (55 each).
+**Fixed 2026-10-28: installing failed.** The repo's only tag was
+`v0.1.0` (`fbe746f`), the old yam.cr with `name: yam` in shard.yml, so
+`github: openbohemians/oyl.cr` gave "shard name (yam) doesn't match
+dependency name (oyl)". Tagged **`v0.2.0`** on `ce47b72` (the user said
+yes; version bumped in shard.yml, `Oyl::VERSION` and its spec; CI green
+on all three jobs); a fresh `shards install` now builds and runs. Still
+vendors Oyl 1.2.0, and still has the scalar bug above. The specs also
+pass against Oyl main `f7a6a0f` (55).
 
 **Wanted by Jargon** (as @projects, 2026-10-22,
 `mail/received/20261022-180226Z-@projects--yaml-dates-*`): Jargon reads
