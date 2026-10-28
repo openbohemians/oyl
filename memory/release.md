@@ -372,8 +372,8 @@ change, run `make -C ext sync OYL=~/Projects/oyl [REF=v1.2.0]`, then
 green on Linux, macOS and Crystal 1.19.1 (shard.yml's minimum). The
 Crystal code calls only 9 of the 52 C functions it declares (parsing);
 the emitter, scanner and schema bindings are unused and untested.
-**Fixed in `d9948bd` (2026-10-28), version 0.3.0; tag `v0.3.0` not yet
-pushed** (the auto-mode classifier blocked it; the user approved 0.3.0).
+**Fixed in `d9948bd` (2026-10-28), tagged `v0.3.0`** (pushed by the user;
+a fresh `shards install` gets 0.3.0 and reads `yes` as a string).
 `Oyl.parse` had typed plain scalars with yam.cr's copy of Crystal's
 `YAML::Schema::Core`: YAML 1.1 booleans, 0-octal, timestamps. Oyl is a
 YAML 1.2 library by premise (the user, 2026-10-28: the whole project was
