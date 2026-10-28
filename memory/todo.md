@@ -5,6 +5,19 @@
 Small deferred tasks: each is agreed or obvious, but none is planned yet.
 Larger features go in ideas.md, and the order of work in roadmap.md.
 
+- **Touch-up: make a YAML 1.1 file YAML 1.2 in place** (**Open**; the
+  user put it on this list 2026-10-28, after the Oyl release and the
+  bindings). Read the file once with the source dialect (yaml11 or
+  goyaml2); where a scalar's value differs from what YAML 1.2 Core reads,
+  patch just that scalar by its span (`"on"` or `true`, `493` for `0755`,
+  `"2001-12-14"` or a tag), keep every other byte, and report each change.
+  `on:` as a key is usually meant as the string (GitHub workflows), so
+  the rewrite is by policy, not always the 1.1 value. In C, so every
+  binding wraps it. The design goes to the user before any code.
+  Background, measurements and the merge-order case: ideas.md, "YAML 1.1
+  → 1.2 converter". A full read and rewrite (`Oyl.parse(..., dialect:
+  :yaml11).to_yaml` in oyl.cr 0.4.0) already works, but loses comments
+  and layout.
 - **Build with MSVC** (**Done, merged into main 2026-10-28**; the user
   agreed 2026-10-26 and said "start on the MSVC build" 2026-10-27).
   oyl.rs's Windows CI job failed because MSVC, Rust's default C compiler
