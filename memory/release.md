@@ -247,7 +247,11 @@ macOS and Windows, and vendors Oyl 1.3.0 once it's tagged. Gaps on
 writes nothing (decoding and encoding Go values is the core of roadmap
 step 6), no Windows. All three build and pass against Oyl main
 `f7a6a0f`. Order: Crystal JSON, Rust's Serializer, Go, then Windows for
-Crystal and Go. The work is against Oyl main and doesn't hold the Oyl
+Crystal and Go. **Crystal JSON done in oyl.cr `93475f2`** (2026-10-28,
+CI green): `Oyl.yaml_to_json`/`yaml_to_json_all` over `oyl_parse_json`
+with the parser's dialect (so `:goyaml2` gives Kubernetes's output and
+merge order), `strict:`; 87 specs, a random check against the data in
+every dialect (20,000 more with another seed passed). Not released. The work is against Oyl main and doesn't hold the Oyl
 tag; each binding re-vendors the tag, and each release is asked first.
 
 **Rust**, done 2026-10-08: **openbohemians/oyl.rs** (local
