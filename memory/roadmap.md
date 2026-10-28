@@ -1,6 +1,6 @@
 # Roadmap after 1.0
 
-*Updated 2026-10-26*
+*Updated 2026-10-28*
 
 The order the user agreed on 2026-10-11 (revised from 2026-10-10, when the
 tree came first; YAMLToJSON needs no tree, so it moved ahead):
@@ -37,6 +37,9 @@ tree came first; YAMLToJSON needs no tree, so it moved ahead):
    `tree`, carrying 1.0.1 and 1.1 too** (the user dropped the separate
    releases, 2026-10-17; release.md), after days of batch fuzzing.
 6. **The full Go library** (decoding into Go values, on the tree).
+   **Core done 2026-10-28** in oyl.go `3fbe3c2` (release.md, "the same
+   page"): Unmarshal/Marshal over the tree and the emitter. Not yet: a
+   Node type, events.
 7. **Parallel parsing in the library** (performance.md). Kubernetes streams
    are many small documents that Go callers can already parse on separate
    goroutines, so this mostly serves single huge files.

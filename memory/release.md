@@ -260,7 +260,27 @@ YAML 1.1 needs); bytes `!!binary`, and `from_str` now decodes `!!binary`
 into bytes; enum variants a name or a one-key mapping (not serde_yaml
 0.9's `!Variant` tags, which `from_str` still reads). Random round trip:
 6,000 values read back by all three dialects (120,000 more passed);
-turning off the quoting or the float fix fails it. Not published. The work is against Oyl main and doesn't hold the Oyl
+turning off the quoting or the float fix fails it. Not published.
+**Go's decoding and encoding done in oyl.go `3fbe3c2`** (2026-10-28):
+go-yaml's API (`Unmarshal(in, out, opts...)`, `Marshal`, `NewDecoder`/
+`Decode` with `io.EOF`, `NewEncoder`/`Encode`/`SetIndent`, `Marshaler`,
+`Unmarshaler` in go-yaml v2's `func(any) error` form since there's no
+Node type), `WithDialect(YAML12|YAML11|GoYAML2)`, `WithKnownFields`;
+struct keys from `yaml` tags, else `json` tags (Kubernetes types and
+their `json:",inline"`), else lowercased names (my choice, told to the
+user). One cgo call per document each way: C works out every scalar's
+value and every mapping's merged pairs (strict) and Go reads the tree's
+arrays in place; encoding packs events into one buffer for the emitter,
+with the same quoting rule as Crystal and Rust. Interface values as
+go-yaml v3 (`int`/`int64`/`uint64`, `map[string]any` else `map[any]any`;
+`!!binary` as a string), YAML 1.1 timestamps as `time.Time` except
+untagged under GoYAML2 (as v2). Speed (one core): decode 4.6x go-yaml v3
+on the 866 Kubernetes documents (207 vs 45 MB/s), encode 6.3x; README
+table. Tests: random round trip in all three dialects, GoYAML2 decoding
+against `YAMLToJSON` on testdata, `FuzzRoundTrip` (3.1M inputs clean
+locally, 60 s in CI); clean under `-race`, `cgocheck2` and `-asan`.
+Bench now imports `sigs.k8s.io/yaml/goyaml.v3` (adds indirect
+`go.yaml.in/yaml/v3`, tests only). Not tagged. The work is against Oyl main and doesn't hold the Oyl
 tag; each binding re-vendors the tag, and each release is asked first.
 
 **Rust**, done 2026-10-08: **openbohemians/oyl.rs** (local
