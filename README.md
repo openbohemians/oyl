@@ -50,7 +50,10 @@ make test-suite   # run YAML Test Suite (requires git submodules)
 make test-all     # run all tests
 ```
 
-Requires a C11 compiler. Tested with GCC and Clang on Linux and macOS.
+Requires a C11 compiler. Tested with GCC and Clang on Linux and macOS,
+and with MSVC on Windows (x64, x86 and ARM64). The Makefile needs a
+Unix shell; with MSVC, compile `src/*.c` with `/std:c11 /Iinclude` into
+a library, as CI does (`.github/workflows/ci.yml`).
 
 ## Quick Start
 
@@ -734,7 +737,8 @@ whatever parses, emits and parses again to the same data. It runs for 3
 minutes on every push, and
 [ClusterFuzzLite](https://google.github.io/clusterfuzzlite/) runs it for
 hours a day under AddressSanitizer and UndefinedBehaviorSanitizer. CI
-builds and tests with GCC and Clang on Linux and macOS.
+builds and tests with GCC and Clang on Linux and macOS, and with MSVC on
+Windows.
 
 ## License
 

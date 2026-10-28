@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Windows, with MSVC.** Oyl builds with Microsoft's C compiler on
+  x64, 32-bit x86 and ARM64, and CI runs the tests there, all but the
+  allocation failure tests (Linux only) and two memory checks that need
+  POSIX (`getrusage`, `fork`). The SSE4.2 scanner is chosen at load as
+  elsewhere. Builds with
+  GCC and Clang compile to the same code as before. The Makefile still
+  needs a Unix shell: compile `src/*.c` with `cl /std:c11 /Iinclude`.
+
+### Fixed
+
+- **Float literals longer than 768 significant digits** round exactly
+  with a `strtod` that reads no more than 768, as MSVC's does: Oyl
+  appended a digit standing for the rest after 800, which such a
+  `strtod` never saw, so a literal just past a halfway point between two
+  doubles could round the wrong way. glibc's and macOS's `strtod` read
+  every digit, so builds with them were exact already.
+
 ## 1.2.0 (2026-10-25)
 
 Trees, scalar values, dialects, YAML to JSON, and an emitter that is
