@@ -19,7 +19,7 @@ and an arena allocator. Against the
 [YAML Test Suite](https://github.com/yaml/yaml-test-suite), it produces the
 exact expected event stream for all 308 valid-YAML cases and rejects all 94
 invalid-YAML cases, in both parser modes (see
-[Conformance and Testing](#conformance-and-testing)). It parses 2–13×
+[Conformance and Testing](#conformance-and-testing)). It parses 2–14×
 faster than libyaml and libfyaml (see [Performance](#performance)).
 
 One deliberate leniency: a line inside a flow collection or multi-line
@@ -551,26 +551,26 @@ simple key resolution, and property (anchor/tag) attachment.
 
 Parse throughput in MB/s (higher is better), measured with
 `make bench-compare` on an Intel Core Ultra 7 155H, one core, GCC 16.2
-`-O2`, median of 11 runs in each of 3 passes (passes agree within 8%), October 2026.
+`-O2`, median of 11 runs in each of 3 passes (passes agree within 5%), October 2026.
 Every library parses the same bytes:
 
 | Input | Oyl | libyaml 0.2.5 | libfyaml 0.9.6 | rapidyaml 0.16 |
 |---|---:|---:|---:|---:|
 | **Generated, 10 MB** | | | | |
-| block mappings and sequences | 162 | 74 | 61 | 243 |
-| mixed block, flow and quoted | 201 | 85 | 74 | 286 |
-| JSON | 183 | 70 | 58 | 323 |
-| config files (comments, block scalars, anchors) | 306 | 122 | 103 | 386 |
+| block mappings and sequences | 314 | 73 | 61 | 245 |
+| mixed block, flow and quoted | 311 | 84 | 73 | 279 |
+| JSON | 531 | 69 | 58 | 324 |
+| config files (comments, block scalars, anchors) | 419 | 120 | 102 | 375 |
 | **Real files, repeated to ~10 MB** | | | | |
-| travis.yml | 464 | 145 | 178 | 433 |
-| appveyor.yml | 426 | 129 | 147 | 425 |
-| compile_commands.json | 2039 | 219 | 294 | 1215 |
+| travis.yml | 836 | 144 | 178 | 428 |
+| appveyor.yml | 580 | 128 | 145 | 422 |
+| compile_commands.json | 2701 | 217 | 294 | 1199 |
 | **Scalar-heavy text** | | | | |
-| literal block scalars (`\|`) | 2891 | 276 | 282 | 969 |
-| folded block scalars (`>`) | 1944 | 283 | 281 | 880 |
-| multi-line double-quoted | 2837 | 216 | 330 | 353 |
-| multi-line single-quoted | 2529 | 219 | 329 | 368 |
-| multi-line plain | 866 | 199 | 425 | 301 |
+| literal block scalars (`\|`) | 3218 | 276 | 282 | 972 |
+| folded block scalars (`>`) | 2108 | 279 | 282 | 878 |
+| multi-line double-quoted | 3105 | 214 | 327 | 350 |
+| multi-line single-quoted | 2873 | 216 | 329 | 366 |
+| multi-line plain | 994 | 198 | 421 | 299 |
 
 All four are measured as event parsers: Oyl, libyaml and libfyaml as they
 are, and rapidyaml through its event parser (`EventHandlerInts`, with
@@ -579,12 +579,11 @@ which builds a tree and so does more work. The real files and scalar-heavy
 inputs are the test files from rapidyaml's own benchmark suite; all timings
 were measured here, on the machine above, with `make bench-compare`.
 
-Oyl is 2.2–3.3× faster than libyaml and libfyaml on structure-heavy input
-and up to 13× faster on scalar-heavy input. Against rapidyaml's event
-parser it is faster on travis.yml and compile_commands.json, even on
-appveyor.yml, and 2–8× faster on long scalars; rapidyaml leads on the
-generated structure-heavy inputs (1.3–1.8×), which are mostly short keys
-and values.
+Oyl is 3.5–9.2× faster than libyaml and libfyaml on the generated
+inputs, 4–12× on the real files and 2.4–14.5× on scalar-heavy input.
+Against rapidyaml's event parser it is 1.1–1.6× faster on the generated
+inputs, which are mostly short keys and values, 1.4–2.3× on the real
+files and 2.4–8.9× on long scalars.
 
 Where the speed comes from:
 
@@ -597,36 +596,42 @@ Where the speed comes from:
   alike. Deciding whether a flow collection is a key needs a lookahead,
   which walks a SIMD bitmask and is cached for every collection nested in
   the one scanned, so it stays linear however deeply collections nest.
-- Tags, schemas, merge keys and alias resolution use an eager parse of the
-  whole document instead.
+- Common runs are read straight from the bytes into events, without
+  tokens, where the result is what tokens would give: plain `key: value`
+  lines in block mappings, and one-line flow collections of plain and
+  escape-free double-quoted scalars, as JSON's are. Events are built where
+  they are handed out, never copied.
+- A schema, merge keys, alias resolution, `%YAML` and `%TAG` directives,
+  and properties on a key use an eager parse of each document instead.
 
 ### Building trees
 
 Throughput in MB/s building each library's tree, measured with
 `make bench-compare-tree` on the same machine and compiler, median of 11
-runs in each of 3 passes (passes agree within 8%, except libyaml on
-JSON, 12%), October 2026:
+runs in each of 3 passes (passes agree within 6%, except libyaml on the
+CRD, 8%, and rapidyaml building a new tree each time, up to 28% on the
+generated inputs), October 2026:
 
 | Input | Oyl | libyaml 0.2.5 | libfyaml 0.9.6 | rapidyaml 0.16 | rapidyaml, reused |
 |---|---:|---:|---:|---:|---:|
 | **Generated, 10 MB** | | | | | |
-| block mappings and sequences | 111 | 46 | 32 | 105 | 167 |
-| mixed block, flow and quoted | 141 | 56 | 40 | 114 | 194 |
-| JSON | 129 | 47 | 34 | 117 | 195 |
-| config files (comments, block scalars, anchors) | 236 | 82 | 64 | 182 | 277 |
+| block mappings and sequences | 167 | 44 | 32 | 104 | 166 |
+| mixed block, flow and quoted | 176 | 56 | 40 | 112 | 189 |
+| JSON | 249 | 46 | 34 | 113 | 197 |
+| config files (comments, block scalars, anchors) | 301 | 82 | 63 | 182 | 278 |
 | **Real files, repeated to ~10 MB** | | | | | |
-| travis.yml | 397 | 101 | 110 | 194 | 295 |
-| appveyor.yml | 345 | 90 | 88 | 196 | 297 |
-| compile_commands.json | 1720 | 182 | 250 | 816 | 1103 |
+| travis.yml | 637 | 101 | 109 | 195 | 284 |
+| appveyor.yml | 434 | 89 | 87 | 194 | 294 |
+| compile_commands.json | 2258 | 180 | 246 | 827 | 1105 |
 | **Kubernetes** | | | | | |
-| 854 manifests in one stream, 7.3 MB | 507 | fails¹ | 136 | fails² | fails² |
-| the largest CRD, 1.4 MB | 513 | 161 | 145 | 286 | 392 |
+| 854 manifests in one stream, 7.3 MB | 566 | fails¹ | 134 | fails² | fails² |
+| the largest CRD, 1.4 MB | 625 | 161 | 148 | 274 | 394 |
 | **Scalar-heavy text** | | | | | |
-| literal block scalars (`\|`) | 2558 | 255 | 273 | 893 | 996 |
-| folded block scalars (`>`) | 1825 | 258 | 269 | 819 | 913 |
-| multi-line double-quoted | 2579 | 203 | 307 | 345 | 362 |
-| multi-line single-quoted | 2294 | 204 | 308 | 353 | 370 |
-| multi-line plain | 834 | 190 | 388 | 292 | 302 |
+| literal block scalars (`\|`) | 2733 | 254 | 268 | 876 | 973 |
+| folded block scalars (`>`) | 1880 | 255 | 265 | 804 | 885 |
+| multi-line double-quoted | 2659 | 200 | 306 | 329 | 342 |
+| multi-line single-quoted | 2431 | 203 | 307 | 358 | 368 |
+| multi-line plain | 940 | 190 | 389 | 290 | 301 |
 
 Each library builds its own tree: `oyl_parse_tree`, libyaml's
 `yaml_parser_load`, libfyaml's `fy_parse_load_document` (with duplicate
@@ -641,11 +646,12 @@ them left out for an escape YAML 1.2 doesn't have (`\'`).
 `...` without `---`. ² rapidyaml's trees can't hold a collection as a key,
 as in a Helm template's `config: {{config_data}}`.
 
-Oyl builds trees 2.4–12.7× faster than libyaml and 2.2–9.4× faster than
-libfyaml. Against rapidyaml building a new tree each time, it's about even
-on the generated block mappings and 1.1–7.5× faster on everything else.
-rapidyaml reusing its buffers leads on the generated inputs (1.2–1.5×);
-Oyl leads on the real files and long scalars (1.2–7×).
+Oyl builds trees 3.1–13× faster than libyaml and 2.4–10× faster than
+libfyaml, and 1.6–8.1× faster than rapidyaml building a new tree each
+time. rapidyaml reusing its buffers is even with Oyl on the generated
+block mappings and 7% faster on the mixed input; Oyl is 1.1–1.3× faster
+on the config files and JSON, and 1.5–7.8× on the real files and long
+scalars.
 
 The memory the trees hold after parsing, in MB per MB of YAML:
 
