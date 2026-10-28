@@ -1,6 +1,6 @@
 # Release 1.0
 
-*Updated 2026-10-26*
+*Updated 2026-10-28*
 
 ## Status
 
@@ -217,8 +217,11 @@ tree memory weren't re-measured: that code is unchanged since 1.2.0.
 rapidyaml's new-tree mode swung up to 28% between passes (one low pass);
 the README says so.
 **Before tagging:** more batch runs on `53449e9` or later (2 so far, on
-2026-10-28: the MSVC merge changed long-float rounding), the version
-number and dates, and asking the user.
+2026-10-28: the MSVC merge changed long-float rounding; one more per
+sanitizer dispatched 19:55 UTC, runs 40758608042 and 40758612827), the
+version number (1.3.0 proposed: Windows added, speed, changed error
+messages) and dates, and asking the user. Proposed tagging 2026-10-29
+with 4-6 clean runs on `53449e9`.
 
 ## Checklist at tag time
 
@@ -233,6 +236,19 @@ number and dates, and asking the user.
 4. Re-vendor both bindings at the tag (see below) and push them.
 
 ## The bindings
+
+**All three on the same page** (the user wants it, and chose the
+"common baseline" 2026-10-28): each binding reads YAML into its
+language's values (YAML 1.2 by default, the yaml11 and goyaml2 dialects),
+writes those values as YAML, converts YAML to JSON, is tested on Linux,
+macOS and Windows, and vendors Oyl 1.3.0 once it's tagged. Gaps on
+2026-10-28: Crystal has no JSON and no Windows; Rust no serde
+`Serializer` (Windows comes with 1.3.0); Go reads only to JSON and
+writes nothing (decoding and encoding Go values is the core of roadmap
+step 6), no Windows. All three build and pass against Oyl main
+`f7a6a0f`. Order: Crystal JSON, Rust's Serializer, Go, then Windows for
+Crystal and Go. The work is against Oyl main and doesn't hold the Oyl
+tag; each binding re-vendors the tag, and each release is asked first.
 
 **Rust**, done 2026-10-08: **openbohemians/oyl.rs** (local
 `~/Projects/oyl.rs`), one repo with two crates in a Cargo workspace:
