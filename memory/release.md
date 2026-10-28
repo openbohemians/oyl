@@ -387,8 +387,19 @@ in `Oyl.parse`; the copy let a `<<` override keys written before it
 YAML's order, so GOYAML2's merge order isn't applied (README says so);
 it comes with C trees. Integers above Int64::MAX are UInt64. 64 specs,
 CI green on all three jobs. The later steps of the 2026-10-21 plan
-(Crystal on C trees, JSON) still stand; writing YAML from Crystal values
-is next (the user, 2026-10-28).
+(Crystal on C trees, JSON) still stand.
+
+**Writing YAML, in `3b21a8c` (2026-10-28, version 0.4.0, CI green; tag
+`v0.4.0` waits on the user):** `Oyl.dump`/`dump_all`, `Any#to_yaml`,
+`Oyl::Builder` over the C emitter, and `to_oyl(builder)` on stdlib types
+(as their `to_yaml`). Choices made (mine, told to the user): a string is
+quoted where YAML 1.2, YAML 1.1 or go-yaml v2 would type it (so `y`/`n`
+too), so output reads the same to 1.1 readers, as go-yaml v3 does; text
+with line breaks is a literal block; `Time` is `!!timestamp`, `Bytes`
+`!!binary`. The C emitter's plain style only keeps the *text*, so typing
+is the binding's job. A random round trip (2,000 values per style, read
+back by yaml12 and yaml11) is in the specs; 20,000 more with another
+seed passed, and turning off the quoting fails it.
 
 **Fixed 2026-10-28: installing failed.** The repo's only tag was
 `v0.1.0` (`fbe746f`), the old yam.cr with `name: yam` in shard.yml, so
