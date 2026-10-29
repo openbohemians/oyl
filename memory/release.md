@@ -14,7 +14,9 @@
   at the tag the same day: oyl.rs `6d2df15` (0.3.0, Windows required in
   CI), oyl.go `fa6bfa9` (Windows in CI; the compare-test guard
   `c0dc2ba`), oyl.cr `9ea204b` (0.5.0, the windows-trial branch
-  squashed in, postinstall `crystal run ext/build.cr`). **Not yet:**
+  squashed in, postinstall `crystal run ext/build.cr`); CI green on all
+three, Windows included (oyl.rs 194 tests there, oyl.cr 87 specs twice);
+`cargo publish --dry-run --workspace` passes. **Not yet:**
   `cargo publish` of oyl.rs 0.3.0, tags oyl.cr v0.5.0 and oyl.go v0.2.0
   (ask the user for each); the windows-trial branches (oyl.go, oyl.cr)
   and oyl.rs's oyl-msvc are superseded and can be deleted.
