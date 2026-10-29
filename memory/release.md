@@ -217,10 +217,11 @@ tree memory weren't re-measured: that code is unchanged since 1.2.0.
 rapidyaml's new-tree mode swung up to 28% between passes (one low pass);
 the README says so.
 **Before tagging:** batch runs on `53449e9` or later (the MSVC merge
-changed long-float rounding). As of 2026-10-29 05:25 UTC, 6 clean
-hour-long runs, 3 per sanitizer: `53449e9` scheduled (40691270905,
-40697636229), `f7a6a0f` dispatched (40758608042, 40758612827) and
-`f7a6a0f` scheduled (40780820643, 40783268282). Still to do: the version
+changed long-float rounding). As of 2026-10-29 07:32 UTC, 8 clean
+hour-long runs, 4 per sanitizer (1.0.0 waited for 8): `53449e9`
+scheduled (40691270905, 40697636229), `f7a6a0f` dispatched
+(40758608042, 40758612827) and `f7a6a0f` scheduled (40780820643,
+40783268282, 40825192049, 40829666098). Still to do: the version
 number (1.3.0 proposed: Windows added, speed, changed error messages),
 dates, and asking the user.
 **Test audit 2026-10-29** (the user asked for a check for false greens):
