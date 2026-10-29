@@ -221,9 +221,14 @@ changed long-float rounding). As of 2026-10-29 07:32 UTC, 8 clean
 hour-long runs, 4 per sanitizer (1.0.0 waited for 8): `53449e9`
 scheduled (40691270905, 40697636229), `f7a6a0f` dispatched
 (40758608042, 40758612827) and `f7a6a0f` scheduled (40780820643,
-40783268282, 40825192049, 40829666098). Still to do: the version
-number (1.3.0 proposed: Windows added, speed, changed error messages),
-dates, and asking the user.
+40783268282, 40825192049, 40829666098). **Prepared 2026-10-29 in
+`c131bc0`** (the user said "go"): version 1.3.0, dated 2026-10-29 in
+`CHANGELOG.md`, `pkg/debian/changelog` and `pkg/oyl.spec`; every function
+and tag constant of 1.2.0's header still exported, SONAME `liboyl.so.1`;
+CI green on all 8 jobs, package dry run 40844529388 green (1.3.0 debs,
+rpm, Arch). **Waiting on the user to push the tag** (auto mode blocks
+it) and create the release with the notes built from the changelog
+section.
 **Test audit 2026-10-29** (the user asked for a check for false greens):
 batch runs fuzz the full hour on 4 workers (~5.5M inputs per run) and
 went red on real crashes 2026-10-11/16; fuzz coverage 92.6% of lines
