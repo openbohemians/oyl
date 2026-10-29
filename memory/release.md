@@ -216,12 +216,13 @@ each program's passed count plus the suite's 402). The emitter table and
 tree memory weren't re-measured: that code is unchanged since 1.2.0.
 rapidyaml's new-tree mode swung up to 28% between passes (one low pass);
 the README says so.
-**Before tagging:** more batch runs on `53449e9` or later (2 so far, on
-2026-10-28: the MSVC merge changed long-float rounding; one more per
-sanitizer dispatched 19:55 UTC, runs 40758608042 and 40758612827), the
-version number (1.3.0 proposed: Windows added, speed, changed error
-messages) and dates, and asking the user. Proposed tagging 2026-10-29
-with 4-6 clean runs on `53449e9`.
+**Before tagging:** batch runs on `53449e9` or later (the MSVC merge
+changed long-float rounding). As of 2026-10-29 05:25 UTC, 6 clean
+hour-long runs, 3 per sanitizer: `53449e9` scheduled (40691270905,
+40697636229), `f7a6a0f` dispatched (40758608042, 40758612827) and
+`f7a6a0f` scheduled (40780820643, 40783268282). Still to do: the version
+number (1.3.0 proposed: Windows added, speed, changed error messages),
+dates, and asking the user.
 
 ## Checklist at tag time
 
