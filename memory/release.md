@@ -15,11 +15,13 @@
   CI), oyl.go `fa6bfa9` (Windows in CI; the compare-test guard
   `c0dc2ba`), oyl.cr `9ea204b` (0.5.0, the windows-trial branch
   squashed in, postinstall `crystal run ext/build.cr`); CI green on all
-three, Windows included (oyl.rs 194 tests there, oyl.cr 87 specs twice);
-`cargo publish --dry-run --workspace` passes. **Not yet:**
-  `cargo publish` of oyl.rs 0.3.0, tags oyl.cr v0.5.0 and oyl.go v0.2.0
-  (ask the user for each); the windows-trial branches (oyl.go, oyl.cr)
-  and oyl.rs's oyl-msvc are superseded and can be deleted.
+  three, Windows included (oyl.rs 194 tests there, oyl.cr 87 specs
+  twice). **Released 2026-10-29** (the user approved each in manual
+  mode): oyl-sys 0.3.0+1.3.0 and oyl 0.3.0 on crates.io (oyl.rs has no
+  git tags or GitHub releases), oyl.cr tag `v0.5.0` (tags only, as
+  before), oyl.go tag `v0.2.0` with a GitHub release (on the module
+  proxy). The windows-trial branches (oyl.go, oyl.cr) and oyl.rs's
+  oyl-msvc are deleted, local and remote.
 - **v1.2.0 is released** (2026-10-25, tag on `5ee251e`; the user said
   "go for it" 2026-10-24): github.com/openbohemians/oyl/releases/tag/v1.2.0,
   notes from the changelog's 1.2.0 section plus 1.0.0's Packages
