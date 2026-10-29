@@ -223,6 +223,18 @@ hour-long runs, 3 per sanitizer: `53449e9` scheduled (40691270905,
 `f7a6a0f` scheduled (40780820643, 40783268282). Still to do: the version
 number (1.3.0 proposed: Windows added, speed, changed error messages),
 dates, and asking the user.
+**Test audit 2026-10-29** (the user asked for a check for false greens):
+batch runs fuzz the full hour on 4 workers (~5.5M inputs per run) and
+went red on real crashes 2026-10-11/16; fuzz coverage 92.6% of lines
+(unreached: schema builder, failsafe/JSON schemas, accessors); every CI
+job runs every suite and exits non-zero on a failure (Windows skips the
+12 fork-based memory tests, Windows/macOS one `/proc` test, the
+sanitizer job the port tests); breaking the long-float parity check
+fails 2 schema tests. Found: oyl.rs's green CI hides its failing
+Windows job (continue-on-error until 1.3.0), and oyl.go's
+TestSameAsSigsYAML passed with no files: a guard (fewer than 10 fails)
+is in oyl.go's working tree, **not committed**; commit it with the
+1.3.0 re-vendor.
 
 ## Checklist at tag time
 
