@@ -1,5 +1,5 @@
 Name:           oyl
-Version:        1.2.0
+Version:        1.3.0
 Release:        1%{?dist}
 Summary:        Fast, minimal, zero-copy YAML 1.2 parser and emitter library in C11
 
@@ -57,6 +57,19 @@ make test test-schema test-emitter test-merge test-resolve test-errors \
 %{_libdir}/pkgconfig/oyl.pc
 
 %changelog
+* Thu Oct 29 2026 Thomas Sawyer <transfire@gmail.com> - 1.3.0-1
+- Windows: builds with MSVC on x64, 32-bit x86 and ARM64, tested in CI.
+- Parsing up to 2.8x as fast as 1.2.0, ahead of rapidyaml's event parser
+  on every benchmark input: fewer instructions per token, and fast paths
+  for one-line flow collections and plain key: value lines.
+- An anchor or tag on a block node no longer hands the rest of the stream
+  to the eager parser; invalid input with such properties now gets the
+  events up to the error, and some flow errors read differently.
+- Float literals longer than 768 significant digits round exactly with any
+  strtod, MSVC's included.
+- API and ABI compatible with 1.0: the runtime library is still
+  liboyl.so.1.
+
 * Sun Oct 25 2026 Thomas Sawyer <transfire@gmail.com> - 1.2.0-1
 - Trees: oyl_parse_tree reads a document into one flat array of nodes,
   whose lookups follow aliases and apply merges, with keys compared as
