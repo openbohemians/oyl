@@ -28,6 +28,7 @@ was split from that history. Older citations such as
 | [dialects-design.md](dialects-design.md) | Agreed: %YAML sets the standard schema version, %TAG !! the dialect; dialects, warnings |
 | [yamltojson-design.md](yamltojson-design.md) | oyl_parse_json: identical to sigs.k8s.io/yaml, results, libyaml syntax gaps (decision open) |
 | [goyaml2-oracle/](goyaml2-oracle/README.md) | Tools comparing the go-yaml v2 preset with go-yaml v2 itself |
+| [touchup-design.md](touchup-design.md) | Proposed 2026-10-29: the YAML 1.1 → 1.2 touch-up in C (rewrite only disagreeing scalars, the file then reads the same in both); five decisions open |
 | [tree-design.md](tree-design.md) | Agreed 2026-10-12: the tree API (32-byte nodes in document order, offsets, parallel-ready join); building on `tree` |
 | [roadmap.md](roadmap.md) | The agreed order after 1.0 (schemas, YAMLToJSON, Go, tree, parallel), and the Go plan |
 | [review.md](review.md) | The pre-1.2.0 code review: static analysis, CodeQL and coverage results (layer 1), open findings |
