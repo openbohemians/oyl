@@ -1,9 +1,23 @@
 # Release 1.0
 
-*Updated 2026-10-28*
+*Updated 2026-10-29*
 
 ## Status
 
+- **v1.3.0 is released** (2026-10-29, tag on `c131bc0`; the user said
+  "go" and pushed the tag and release): Windows with MSVC, parsing up to
+  2.8x as fast, block properties without the eager parser, exact long
+  floats. Notes from the changelog's 1.3.0 section under a short lead.
+  The Package workflow (run 40849728458) attached the 9 Arch, Debian and
+  RPM files. Tagged after 8 clean batch runs (4 per sanitizer) on
+  `53449e9` or later and the 2026-10-29 test audit. Bindings re-vendored
+  at the tag the same day: oyl.rs `6d2df15` (0.3.0, Windows required in
+  CI), oyl.go `fa6bfa9` (Windows in CI; the compare-test guard
+  `c0dc2ba`), oyl.cr `9ea204b` (0.5.0, the windows-trial branch
+  squashed in, postinstall `crystal run ext/build.cr`). **Not yet:**
+  `cargo publish` of oyl.rs 0.3.0, tags oyl.cr v0.5.0 and oyl.go v0.2.0
+  (ask the user for each); the windows-trial branches (oyl.go, oyl.cr)
+  and oyl.rs's oyl-msvc are superseded and can be deleted.
 - **v1.2.0 is released** (2026-10-25, tag on `5ee251e`; the user said
   "go for it" 2026-10-24): github.com/openbohemians/oyl/releases/tag/v1.2.0,
   notes from the changelog's 1.2.0 section plus 1.0.0's Packages
