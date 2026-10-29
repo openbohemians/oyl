@@ -67,6 +67,7 @@ typedef enum {
     OYL_FIX_ESCAPE,      /**< \' in double quotes, a go-yaml v2 leniency */
     OYL_FIX_CHOMP,       /**< a block scalar ending the input without a line break */
     OYL_FIX_MERGE,       /**< a key go-yaml v2's merge overrides, commented out */
+    OYL_FIX_INDENT,      /**< a quoted or flow continuation line re-indented */
 } oyl_fix_kind;
 
 typedef struct {
@@ -148,13 +149,33 @@ YAML 1.2 dialect merges too), tags outside `!!` (`!Ref`, `!python/…`),
   what go-yaml v2 read, **as the user decided 2026-10-11**. Found with
   the tree (go-yaml v2's lookup gives the merged value, not the written
   one), since Oyl's merge-order warning only fires when writing JSON.
+- **A continuation line of a quoted scalar or flow collection indented
+  with tabs, or too little** (proposed 2026-10-29, after the user asked
+  whether a pre-pass could turn tabs into spaces): libyaml doesn't check
+  these lines' indentation at all, YAML 1.2 wants spaces, more than the
+  enclosing block's. Four of the 16 suite cases: DK95/01 and Y79Y/03
+  (tabs), 9C9N and QB6E (too little). The line's leading whitespace
+  becomes enough spaces; it is stripped from a quoted scalar's value and
+  separates in flow, so the data stays (DK95/01 and Y79Y/03 with a space:
+  libyaml reads the same, all three of Oyl's dialects accept them;
+  measured 2026-10-29). Not a text pre-pass: a tab in a block scalar is
+  content (`  \tcc -o x x.c` in a `|` scalar, a Makefile recipe), and
+  only the scanner knows where block scalars are. Instead the yaml11 and
+  goyaml2 dialects accept these lines with a leniency warning at the line
+  start, as they do `\'`, and the touch-up fixes each warned line. This
+  also makes the dialects read what PyYAML and go-yaml v2 read. A file
+  indented with tabs throughout (`foo:\n\tbar: 1`) libyaml rejects, so no
+  1.1 tool read it and there is no reading to keep: left as a parse
+  error.
 
 ## Reported, not fixed
 
-- **Syntax libyaml lets through that YAML 1.2 forbids** (tabs as
-  indentation, `#` touching text, …; ideas.md lists the 16 suite cases):
-  Oyl's dialects reject it too, so the touch-up fails with the parse
-  error and its position. Mechanical fixes for some could come later.
+- **The rest of the syntax libyaml lets through that YAML 1.2 forbids**
+  (`#` touching text, directives without `...`, dashes in flow; ideas.md
+  lists the 16 suite cases, four handled above): Oyl's dialects reject it
+  too, so the touch-up fails with the parse error and its position. The
+  same way (a dialect leniency with a warning, fixed at the warning)
+  could take more of them later.
 - **A rewrite that would make two keys of one mapping equal** (`yes:` and
   `"yes":`, quoting the first): that key is left alone.
 - **A merge override that can't be commented out**: in a flow mapping, or
@@ -224,3 +245,6 @@ About 600 lines of C in `src/oyl_touchup.c`, plus tests.
 4. **The check after rewriting.** Recommended: always on.
 5. **Where.** Recommended: the C function and all three bindings, then a
    command-line tool if wanted (Oyl has none; oyl.cr could carry one).
+6. **Continuation-line indentation** (added 2026-10-29). Recommended: the
+   dialect leniency plus the fix above, in the first version. Or leave
+   these files as parse errors.
