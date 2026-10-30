@@ -14,6 +14,32 @@ the original meaning, they just need to be represented in a 1.2 standard
 fashion"). Background and the 2026-10-10 measurements: ideas.md, "YAML
 1.1 → 1.2 converter"; the entry on todo.md.
 
+## Build status
+
+The order (agreed 2026-10-30, the user: "yes"): 1. the dialect
+leniency; 2. `oyl_upgrade` with `test_upgrade.c`; 3. real readers on the
+suite and the corpus; 4. the fuzzer; 5. the bindings; 6. Oyl 1.4.0, then
+the bindings (asking before each tag).
+
+- **Step 1, committed 2026-10-30: `c706a3b` on branch `upgrade`.** `OYL_SYNTAX_FLOW_INDENT`
+  (1 << 3), in `OYL_SYNTAX_GOYAML2` and the yaml11 dialect; four call
+  sites in oyl_scanner.c go through `continuation_lenient`, which warns
+  at the line's start (`OYL_WARN_LENIENCY`). A plain scalar's line in
+  flow follows libyaml: read on when under-indented, but an error for a
+  tab where the indentation would be. Three YAML 1.2 bugs found on the
+  way and fixed: a tab after a plain scalar's break counted as
+  indentation (`a: b\n\tc` read as `b c`); `[a\n\n]` read as `["a\n"]`;
+  empty lines after an escaped break in double quotes folded (`"a\<LF><LF>b"`
+  is `"a\nb"`, as libyaml, libfyaml and go-yaml v2 have it; eemeli's
+  `yaml` gets this one wrong). Checked: 60,000 random documents with odd
+  continuation indentation (scratchpad generator, diff/gen.py): Oyl's
+  yaml11 and goyaml2 read every document PyYAML and go-yaml v2 read, the
+  same; the only gap is libyaml rejecting a tab where a plain scalar's
+  indentation would be, even before `]` (about 5% of the documents, no
+  reading to keep). Oyl's yaml12 against eemeli's `yaml`: only its
+  escaped-break bug and Oyl's documented closing-bracket leniency.
+  test-all, sanitize clean; timing within layout noise.
+
 ## What it does
 
 It takes a file written for a YAML 1.1 reader (PyYAML and everything on

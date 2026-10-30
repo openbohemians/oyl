@@ -1,6 +1,6 @@
 # Dialects: directives choose a document's behavior
 
-*Updated 2026-10-18*
+*Updated 2026-10-30*
 
 **YAML 1.1 means libyaml with PyYAML (the user, 2026-10-18):** "if we
 had to choose between the two, libyaml ... since that is the one in
@@ -22,7 +22,10 @@ after a document without `...`: EB22, RHX7, MUS6:1. S98Z (a block
 scalar's leading blank lines deeper than its first line). An earlier
 claim that libyaml accepts tabs as indentation was wrong: it rejects
 them in block context, and even rejects some valid tabs (`-\ta`,
-`:\tb` after `?`, a tab-led plain continuation line), which Oyl reads.
+`:\tb` after `?`, a tab-led plain continuation line at the top level),
+which Oyl reads. A nested one (`a: b\n\tc`) is invalid 1.2 too: Oyl
+read it as `b c` until 2026-10-30 (the tab isn't indentation; eemeli's
+`yaml` rejects it as well).
 A `#` after plain text is part of the scalar in both (`b#c`), and a
 comment may start any line. In real files it doesn't come up: of the
 same 11,058 files, 10,553 outside Oyl's fuzz corpus, no file PyYAML
@@ -35,7 +38,11 @@ rejects `\'` and accepts `%YAML 1.2`, so `OYL_SYNTAX_LIBYAML` was renamed
 **The claim is "PyYAML's types and merge" (the user agreed, 2026-10-18):**
 a document PyYAML reads gets the same values, with two exceptions (ints
 beyond 64 bits; key equality, below), and libyaml's malformed leniencies
-are errors, the converter's to fix. Merges checked the same day, in
+are errors, the converter's to fix. **Except one, since 2026-10-30**:
+the 1.1 dialects take on `OYL_SYNTAX_FLOW_INDENT` (quoted and flow
+continuation lines not indented past their block, or with a tab: 9C9N,
+QB6E, DK95:1, Y79Y:3), with a warning per line, so the upgrade can read
+and fix them (the user agreed, upgrade-design.md decision 6). Merges checked the same day, in
 trees, JSON and `oyl_parser_set_merge`, on 34 cases and 4,000 random
 documents (nested, repeated and sequence merges, aliases to sequences);
 fixed in `5c12136` so all three give PyYAML's values: a later `<<` wins
