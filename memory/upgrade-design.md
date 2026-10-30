@@ -1,14 +1,16 @@
-# Touch-up: a YAML 1.1 file made YAML 1.2 in place — design for review
+# Upgrade: a YAML 1.1 file made YAML 1.2 in place — design for review
 
 *Updated 2026-10-30*
 
 **Proposed 2026-10-29** (the user: "feel free to design the in place 1.1
 -> 1.2 touch-up convertor"). Nothing built. **Settled:** it works
 without being told the reader, and does more when told ("Without a
-dialect"; the user's idea, agreed 2026-10-29). Values keep the source's
+dialect"; the user's idea, agreed 2026-10-29). Named "upgrade" (the user
+agreed 2026-10-30; first called the touch-up). Values keep the source's
 meaning, written in standard YAML 1.2 (the user, 2026-10-30: "values keep
 the original meaning, they just need to be represented in a 1.2 standard
-fashion"). The open decisions are at the end. Background and the 2026-10-10 measurements: ideas.md,
+fashion"). The open decisions are at the end. Background and the
+2026-10-10 measurements: ideas.md,
 "YAML 1.1 → 1.2 converter"; the entry on todo.md.
 
 ## What it does
@@ -64,7 +66,7 @@ The report:
 ## API
 
 In C, so every binding wraps one function. It reads the parser's whole
-stream, as the touch-up is of a file:
+stream, as the upgrade is of a file:
 
 ```c
 typedef enum {
@@ -86,29 +88,29 @@ typedef struct {
 } oyl_fix;
 
 enum {
-    OYL_TOUCHUP_KEYS_KEEP_VALUE  = 1 << 0,  /**< keys keep the source's value too */
-    OYL_TOUCHUP_VALUES_KEEP_TEXT = 1 << 1,  /**< values keep YAML 1.2's reading too */
-    OYL_TOUCHUP_TIMESTAMPS_TEXT  = 1 << 2,  /**< a timestamp's value is its text
+    OYL_UPGRADE_KEYS_KEEP_VALUE  = 1 << 0,  /**< keys keep the source's value too */
+    OYL_UPGRADE_VALUES_KEEP_TEXT = 1 << 1,  /**< values keep YAML 1.2's reading too */
+    OYL_UPGRADE_TIMESTAMPS_TEXT  = 1 << 2,  /**< a timestamp's value is its text
                                                  (go-yaml v2 decodes one so) */
 };
 
-/* Touch up the stream of parser p, whose default dialect names the
+/* Upgrade the stream of parser p, whose default dialect names the
  * source's reader (oyl_dialect_yaml11(), oyl_dialect_goyaml2(), or a
  * program's). Left at YAML 1.2, the parser's default, the reader is
- * unknown (touching up for a 1.2 reader would change nothing). A
+ * unknown (upgrading for a 1.2 reader would change nothing). A
  * document choosing YAML 1.2 by its directives is left alone. Output and
  * fixes are in the parser's arena. Errors as parse errors:
  * oyl_parser_error() and _mark(). */
-OYL_API oyl_status oyl_touchup(oyl_parser *p, unsigned flags, oyl_str *out,
+OYL_API oyl_status oyl_upgrade(oyl_parser *p, unsigned flags, oyl_str *out,
                                const oyl_fix **fixes, size_t *nfixes);
 ```
 
 Bindings, each a thin wrapper, the reader optional:
-- Crystal: `Oyl.touch_up(text, from: :yaml11) : {String, Array(Oyl::Fix)}`
+- Crystal: `Oyl.upgrade(text, from: :yaml11) : {String, Array(Oyl::Fix)}`
   (`from:` defaults to `nil`, unknown)
-- Rust: `oyl::touch_up(input, &TouchUp::from(Dialect::yaml11())) -> Result<(String, Vec<Fix>)>`
-  (`TouchUp::default()` for unknown)
-- Go: `oyl.TouchUp(in, oyl.WithDialect(oyl.GoYAML2)) ([]byte, []Fix, error)`,
+- Rust: `oyl::upgrade(input, &Upgrade::from(Dialect::yaml11())) -> Result<(String, Vec<Fix>)>`
+  (`Upgrade::default()` for unknown)
+- Go: `oyl.Upgrade(in, oyl.WithDialect(oyl.GoYAML2)) ([]byte, []Fix, error)`,
   setting `TIMESTAMPS_TEXT` for go-yaml v2 (no option for unknown).
 
 ## What changes
@@ -152,7 +154,7 @@ YAML 1.2 dialect merges too), tags outside `!!` (`!Ref`, `!python/…`),
 The user's idea, agreed 2026-10-29: "the ideal tool should do the best it
 can without being told what dialect of the yaml it is touching up, but
 would be more precise if given the dialect to expect." Without one, the
-touch-up reads the input as both 1.1 readers it knows (PyYAML, go-yaml
+upgrade reads the input as both 1.1 readers it knows (PyYAML, go-yaml
 v2) and:
 
 - **Fixes what they read alike and YAML 1.2 reads otherwise**, as with a
@@ -168,7 +170,7 @@ v2) and:
   report gives both readings: "PyYAML reads a string, go-yaml v2 1000.0:
   name the dialect to fix this."
 - **Uses what the file proves**: `\'` is an error to PyYAML, so a file
-  with one is go-yaml v2's and is touched up as such.
+  with one is go-yaml v2's and is upgraded as such.
 - **Suggests a likely reader, never assumes one**: `apiVersion` and
   `kind` at the top suggest Kubernetes, so go-yaml v2, but a wrong guess
   would change data, so the report only says so.
@@ -209,7 +211,7 @@ tree in both orders.
   content (`  \tcc -o x x.c` in a `|` scalar, a Makefile recipe), and
   only the scanner knows where block scalars are. Instead the yaml11 and
   goyaml2 dialects accept these lines with a leniency warning at the line
-  start, as they do `\'`, and the touch-up fixes each warned line. This
+  start, as they do `\'`, and the upgrade fixes each warned line. This
   also makes the dialects read what PyYAML and go-yaml v2 read. A file
   indented with tabs throughout (`foo:\n\tbar: 1`) libyaml rejects, so no
   1.1 tool read it and there is no reading to keep: left as a parse
@@ -220,7 +222,7 @@ tree in both orders.
 - **The rest of the syntax libyaml lets through that YAML 1.2 forbids**
   (`#` touching text, directives without `...`, dashes in flow; ideas.md
   lists the 16 suite cases, four handled above): Oyl's dialects reject it
-  too, so the touch-up fails with the parse error and its position. The
+  too, so the upgrade fails with the parse error and its position. The
   same way (a dialect leniency with a warning, fixed at the warning)
   could take more of them later.
 - **A rewrite that would make two keys of one mapping equal** (`yes:` and
@@ -258,13 +260,13 @@ tree in both orders.
    same value in all, the one the policy chose, except those reported,
    and no mapping may hold a key twice. A failure is an
    internal error (`OYL_ERR_PARSE` naming the place), never a wrong
-   file. Two more reads; the touch-up isn't on any hot path.
+   file. Two more reads; the upgrade isn't on any hot path.
 
-About 600 lines of C in `src/oyl_touchup.c`, plus tests.
+About 600 lines of C in `src/oyl_upgrade.c`, plus tests.
 
 ## Testing
 
-- `test/test_touchup.c`: each row of the table both ways, with and
+- `test/test_upgrade.c`: each row of the table both ways, with and
   without a dialect, the other fixes, the reported cases, multi-document
   streams, a document with `%YAML 1.2` left alone, bytes outside patches
   unchanged.
@@ -274,7 +276,7 @@ About 600 lines of C in `src/oyl_touchup.c`, plus tests.
 - Real readers: PyYAML on input and output must give the same data, and
   go-yaml v2 (the goyaml2-oracle) likewise.
 - The fuzzer: for each input the yaml11 or goyaml2 dialect reads, run the
-  touch-up; its own check traps on a mismatch.
+  upgrade; its own check traps on a mismatch.
 
 ## Other tools (searched 2026-10-29)
 

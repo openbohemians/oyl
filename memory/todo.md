@@ -5,7 +5,7 @@
 Small deferred tasks: each is agreed or obvious, but none is planned yet.
 Larger features go in ideas.md, and the order of work in roadmap.md.
 
-- **Touch-up: make a YAML 1.1 file YAML 1.2 in place** (**Open**; the
+- **Upgrade (first called the touch-up): make a YAML 1.1 file YAML 1.2 in place** (**Open**; the
   user put it on this list 2026-10-28, after the Oyl release and the
   bindings). Read the file once with the source dialect (yaml11 or
   goyaml2); where a scalar's value differs from what YAML 1.2 Core reads,
@@ -17,7 +17,7 @@ Larger features go in ideas.md, and the order of work in roadmap.md.
   Background, measurements and the merge-order case: ideas.md, "YAML 1.1
   → 1.2 converter". A full read and rewrite (`Oyl.parse(..., dialect:
   :yaml11).to_yaml` in oyl.cr 0.4.0) already works, but loses comments
-  and layout. **Design proposed 2026-10-29: touchup-design.md** (the
+  and layout. **Design proposed 2026-10-29: upgrade-design.md** (the
   user asked for it after the 1.3.0 release; agreed 2026-10-29 that it works
   without the reader named, and 2026-10-30 that values keep their
   meaning in standard 1.2 spelling); the other decisions wait on
