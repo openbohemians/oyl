@@ -3,8 +3,10 @@
 *Updated 2026-10-29*
 
 **Proposed 2026-10-29** (the user: "feel free to design the in place 1.1
--> 1.2 touch-up convertor"). Nothing built. The decisions for the user
-are at the end. Background and the 2026-10-10 measurements: ideas.md,
+-> 1.2 touch-up convertor"). Nothing built. **Settled:** it works
+without being told the reader, and does more when told ("Without a
+dialect"; the user's idea, agreed 2026-10-29). The open decisions are at
+the end. Background and the 2026-10-10 measurements: ideas.md,
 "YAML 1.1 → 1.2 converter"; the entry on todo.md.
 
 ## What it does
@@ -17,7 +19,9 @@ is reported. **The guarantee: afterwards the file reads the same in the
 source's rules and in YAML 1.2**, so it keeps working in the 1.1 tools
 that still read it while 1.2 tools read it the same way. That is what
 picks each new spelling (`493` for `0755`, not `0o755`, which PyYAML
-reads as a string).
+reads as a string). Without the reader named, the guarantee covers both
+1.1 readers it knows, except where they disagree with each other (see
+"Without a dialect").
 
 Input, read as PyYAML does:
 
@@ -86,8 +90,10 @@ enum {
                                                  (go-yaml v2 decodes one so) */
 };
 
-/* Touch up the stream of parser p, whose default dialect is the source's
- * (oyl_dialect_yaml11(), oyl_dialect_goyaml2(), or a program's). A
+/* Touch up the stream of parser p, whose default dialect names the
+ * source's reader (oyl_dialect_yaml11(), oyl_dialect_goyaml2(), or a
+ * program's). Left at YAML 1.2, the parser's default, the reader is
+ * unknown (touching up for a 1.2 reader would change nothing). A
  * document choosing YAML 1.2 by its directives is left alone. Output and
  * fixes are in the parser's arena. Errors as parse errors:
  * oyl_parser_error() and _mark(). */
@@ -95,11 +101,13 @@ OYL_API oyl_status oyl_touchup(oyl_parser *p, unsigned flags, oyl_str *out,
                                const oyl_fix **fixes, size_t *nfixes);
 ```
 
-Bindings, each a thin wrapper:
+Bindings, each a thin wrapper, the reader optional:
 - Crystal: `Oyl.touch_up(text, from: :yaml11) : {String, Array(Oyl::Fix)}`
+  (`from:` defaults to `nil`, unknown)
 - Rust: `oyl::touch_up(input, &TouchUp::from(Dialect::yaml11())) -> Result<(String, Vec<Fix>)>`
+  (`TouchUp::default()` for unknown)
 - Go: `oyl.TouchUp(in, oyl.WithDialect(oyl.GoYAML2)) ([]byte, []Fix, error)`,
-  setting `TIMESTAMPS_TEXT` for go-yaml v2.
+  setting `TIMESTAMPS_TEXT` for go-yaml v2 (no option for unknown).
 
 ## What changes
 
@@ -133,6 +141,38 @@ block scalars, `null` forms, `~`, `0x1F`, `.inf`, `+12`, `<<` (Oyl's
 YAML 1.2 dialect merges too), tags outside `!!` (`!Ref`, `!python/…`),
 `!!str`, `!!binary`, `!!set` and the like.
 
+## Without a dialect
+
+The user's idea, agreed 2026-10-29: "the ideal tool should do the best it
+can without being told what dialect of the yaml it is touching up, but
+would be more precise if given the dialect to expect." Without one, the
+touch-up reads the input as both 1.1 readers it knows (PyYAML, go-yaml
+v2) and:
+
+- **Fixes what they read alike and YAML 1.2 reads otherwise**, as with a
+  dialect: `on` `yes` `NO` `off`, `0755`, `0b101`, `1_000`, `1_000.5`,
+  `!!int 0755`, `!!bool yes`; `%YAML 1.1`, the chomping at the end, the
+  continuation lines. Most of what the 2026-10-10 corpus shows (88 of its
+  98 booleans are `on` keys).
+- **Fixes keys either way**: a key keeps its text, and quoting `y:` gives
+  every reader the string.
+- **Reports, and leaves, values they disagree on**: `y` `n`, `1:30`,
+  `1:30.5`, `1e3`, `0o17`, timestamps, merge overrides. YAML 1.2 already
+  reads each as one of them does, and picking would be a guess. The
+  report gives both readings: "PyYAML reads a string, go-yaml v2 1000.0:
+  name the dialect to fix this."
+- **Uses what the file proves**: `\'` is an error to PyYAML, so a file
+  with one is go-yaml v2's and is touched up as such.
+- **Suggests a likely reader, never assumes one**: `apiVersion` and
+  `kind` at the top suggest Kubernetes, so go-yaml v2, but a wrong guess
+  would change data, so the report only says so.
+
+Still one read: the two 1.1 dialects build the same tree (they differ in
+`\'`, `%YAML 1.2`, merge order and schema; src/oyl_dialect.c), so the
+input is read once with both dialects' leniencies, each scalar resolved
+in both 1.1 schemas and Core, and merge overrides worked out from the
+tree in both orders.
+
 ## Other fixes
 
 - **`%YAML 1.1` is removed** (decision 3): a YAML 1.2 reader would
@@ -156,9 +196,10 @@ YAML 1.2 dialect merges too), tags outside `!!` (`!Ref`, `!python/…`),
   enclosing block's. Four of the 16 suite cases: DK95/01 and Y79Y/03
   (tabs), 9C9N and QB6E (too little). The line's leading whitespace
   becomes enough spaces; it is stripped from a quoted scalar's value and
-  separates in flow, so the data stays (DK95/01 and Y79Y/03 with a space:
-  libyaml reads the same, all three of Oyl's dialects accept them;
-  measured 2026-10-29). Not a text pre-pass: a tab in a block scalar is
+  separates in flow, so the data stays (measured 2026-10-29: go-yaml v2
+  v2.4.4 reads all four, as libyaml does; DK95/01 and Y79Y/03 with a
+  space read the same in both, and all three of Oyl's dialects accept
+  them). Not a text pre-pass: a tab in a block scalar is
   content (`  \tcc -o x x.c` in a `|` scalar, a Makefile recipe), and
   only the scanner knows where block scalars are. Instead the yaml11 and
   goyaml2 dialects accept these lines with a leniency warning at the line
@@ -187,12 +228,14 @@ YAML 1.2 dialect merges too), tags outside `!!` (`!Ref`, `!python/…`),
 
 1. Read each document as a tree with the source dialect (the parser's
    default; a document's directives may choose another, and one choosing
-   YAML 1.2 is skipped). One read of the input, as the user asked.
+   YAML 1.2 is skipped), or without one as "Without a dialect" says. One
+   read of the input, as the user asked.
 2. For each scalar (not aliases: their anchor's node is the one
    written): its value in the document's dialect (`oyl_node_tag`,
    `oyl_node_value`), and in Core (`oyl_schema_resolve` and
-   `oyl_schema_value_of` on the same text, style and explicit tag). Equal:
-   nothing. Otherwise the policy picks the new text.
+   `oyl_schema_value_of` on the same text, style and explicit tag);
+   without a dialect, in both 1.1 schemas and Core. Equal: nothing.
+   Otherwise the policy picks the new text, or the scalar is reported.
 3. The text to replace: a plain scalar's own bytes, after any anchor and
    tag (a node's span includes those; the probe on 2026-10-29 showed
    `&x !!str 0755` as one span), found by skipping them from the node's
@@ -205,8 +248,9 @@ YAML 1.2 dialect merges too), tags outside `!!` (`!Ref`, `!python/…`),
    another node.
 5. Apply the patches (sorted, never overlapping) into one buffer.
 6. **Check the result**: read the output in YAML 1.2 and in the source
-   dialect; every scalar must have the same value in both, the one the
-   policy chose, and no mapping may hold a key twice. A failure is an
+   dialect (both 1.1 dialects without one); every scalar must have the
+   same value in all, the one the policy chose, except those reported,
+   and no mapping may hold a key twice. A failure is an
    internal error (`OYL_ERR_PARSE` naming the place), never a wrong
    file. Two more reads; the touch-up isn't on any hot path.
 
@@ -214,9 +258,10 @@ About 600 lines of C in `src/oyl_touchup.c`, plus tests.
 
 ## Testing
 
-- `test/test_touchup.c`: each row of the table both ways, the other
-  fixes, the reported cases, multi-document streams, a document with
-  `%YAML 1.2` left alone, bytes outside patches unchanged.
+- `test/test_touchup.c`: each row of the table both ways, with and
+  without a dialect, the other fixes, the reported cases, multi-document
+  streams, a document with `%YAML 1.2` left alone, bytes outside patches
+  unchanged.
 - The YAML test suite's valid cases and the 5,742-file local corpus from
   2026-10-10 (104 files differ): the check passes on every file the
   source dialect reads.
@@ -224,6 +269,19 @@ About 600 lines of C in `src/oyl_touchup.c`, plus tests.
   go-yaml v2 (the goyaml2-oracle) likewise.
 - The fuzzer: for each input the yaml11 or goyaml2 dialect reads, run the
   touch-up; its own check traps on a mismatch.
+
+## Other tools (searched 2026-10-29)
+
+None keeps the bytes, reads as PyYAML or go-yaml v2 do, and checks the
+data survived. yamllint flags `truthy` and `octal-values` but can't fix;
+ansible-lint's `--fix` reformats the file. yamlfix "corrects truthy
+strings" but reformats everything (ruyaml round trip). yamlfixer
+(opt-nc) patches the lines yamllint flags, truthy included, and turns
+tabs into spaces blindly, only in files libyaml already rejects.
+remarshal converts `yaml-1.1` to `yaml-1.2` but drops comments and lays
+the file out again. ruamel.yaml and the JS `yaml` package keep comments
+but re-emit. Kubernetes' KYAML is a quoted output subset for kubectl,
+not a fixer.
 
 ## Decisions for the user
 

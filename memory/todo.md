@@ -18,7 +18,8 @@ Larger features go in ideas.md, and the order of work in roadmap.md.
   → 1.2 converter". A full read and rewrite (`Oyl.parse(..., dialect:
   :yaml11).to_yaml` in oyl.cr 0.4.0) already works, but loses comments
   and layout. **Design proposed 2026-10-29: touchup-design.md** (the
-  user asked for it after the 1.3.0 release); six decisions wait on
+  user asked for it after the 1.3.0 release; agreed 2026-10-29 that it works
+  without the reader named); six decisions wait on
   the user.
 - **Build with MSVC** (**Done, merged into main 2026-10-28**; the user
   agreed 2026-10-26 and said "start on the MSVC build" 2026-10-27).
