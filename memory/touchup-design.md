@@ -306,7 +306,11 @@ not a fixer.
    date), and no change for go-yaml v2 (it hands them the text, as
    sigs.k8s.io/yaml's JSON shows: `"2001-12-14"`), by the
    `TIMESTAMPS_TEXT` flag, which the bindings set for go-yaml v2. Or
-   always quote.
+   always quote. Weighed against "a 1.2 standard fashion" (2026-10-30):
+   the same change list says 1.2 dropped `!!timestamp` (with `!!binary`,
+   `!!set`, `!!omap`, `!!pairs`), so a PyYAML date has no standard 1.2
+   spelling. The tag is still legal 1.2 (any tag is) and many readers
+   know it; quoting is standard but turns the date into a string.
 3. **`%YAML 1.1`.** Recommended: remove it. Or rewrite it to `%YAML 1.2`,
    which go-yaml v2 then rejects.
 4. **The check after rewriting.** Recommended: always on.
@@ -316,7 +320,12 @@ not a fixer.
    dialect leniency plus the fix above, in the first version. Or leave
    these files as parse errors.
 7. **`<<` merge keys** (added 2026-10-30). YAML 1.2 dropped them: to a
-   strict 1.2 reader `<<` is an ordinary key. Recommended: leave them,
+   strict 1.2 reader `<<` is an ordinary key. (The user remembered
+   otherwise; the spec's own change list, yaml.org/spec/1.2.2/ext/changes/,
+   "Changes in version 1.2 (revision 1.2.0) (2009-07-21)": "The merge
+   `<<` and value `=` special mapping keys have been removed." Merge was
+   only ever in the separate 1.1 types drafts, yaml.org/type/, which are
+   still up and don't mention 1.2.) Recommended: leave them,
    since several 1.2 readers keep them (Oyl's yaml12 dialect, go-yaml
    v3, ruamel.yaml), and writing the merged keys out would rewrite much
    of the file and lose the sharing. Or report each, or expand them.
