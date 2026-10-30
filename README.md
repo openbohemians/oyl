@@ -440,9 +440,11 @@ oyl_parser_add_dialect(p, my_dialect, NULL, "tag:acme.com,2026:");
 
 Built in: `oyl_dialect_yaml12()`, `oyl_dialect_yaml11()` and
 `oyl_dialect_goyaml2()` (go-yaml v2's types and merge order, with its
-leniencies: `\'` in double quotes, `%YAML` 1.1 only, and no line feed for a
-block scalar ending the input, as in libyaml). `oyl_dialect_new` builds one
-of any version from any schema.
+leniencies: `\'` in double quotes, `%YAML` 1.1 only, and as in libyaml no
+line feed for a block scalar ending the input, and quoted scalars' and
+flow collections' later lines indented less than YAML 1.2 asks, which
+the YAML 1.1 dialect takes on too). `oyl_dialect_new` builds one of any
+version from any schema.
 YAML 1.2 applies a `%TAG !!` prefix to explicit tags only; Oyl applies it
 to untagged values too, which is what `!!` was meant for in YAML 1.2's
 design: `!` for the application's types, `!!` for the underlying schema.

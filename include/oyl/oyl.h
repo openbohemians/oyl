@@ -551,8 +551,14 @@ enum {
     OYL_SYNTAX_YAML11_ONLY   = 1 << 2,  /**< %YAML other than 1.1 is an error, in the
                                              default dialect for every document but one
                                              choosing a registered dialect (go-yaml v2) */
+    OYL_SYNTAX_FLOW_INDENT   = 1 << 3,  /**< a quoted scalar's or flow collection's
+                                             later lines needn't be indented past the
+                                             block it sits in, and a tab may indent
+                                             them: [a,\nb] (libyaml, so PyYAML and
+                                             go-yaml v2) */
     /** go-yaml v2's */
-    OYL_SYNTAX_GOYAML2 = OYL_SYNTAX_SQUOTE_ESCAPE | OYL_SYNTAX_EOF_NO_BREAK | OYL_SYNTAX_YAML11_ONLY,
+    OYL_SYNTAX_GOYAML2 = OYL_SYNTAX_SQUOTE_ESCAPE | OYL_SYNTAX_EOF_NO_BREAK | OYL_SYNTAX_YAML11_ONLY
+                         | OYL_SYNTAX_FLOW_INDENT,
 };
 
 /** How << merge keys combine with the keys written in a mapping. */
@@ -585,12 +591,13 @@ OYL_API const oyl_dialect *oyl_dialect_yaml12(void);
  *  them, by tag and value, where Python's == also makes 1, 1.0 and true
  *  one key, and two timestamps of one instant written otherwise one key;
  *  and a base 60 float of more than 14 parts may differ in its last bits.
- *  The syntax is YAML 1.2's, but a block scalar ending the input gets no
- *  final line feed, as in libyaml. Malformed YAML that libyaml lets
- *  through stays an error, such as a comment touching a closing quote or
- *  bracket or a block scalar's header ("a"#c, [a]#c, |#c), or a quoted
- *  scalar or flow collection whose later lines aren't indented past the
- *  block it sits in. */
+ *  The syntax is YAML 1.2's, with two of libyaml's leniencies: a block
+ *  scalar ending the input gets no final line feed, and a quoted scalar's
+ *  or flow collection's later lines needn't be indented past the block it
+ *  sits in (OYL_SYNTAX_EOF_NO_BREAK, OYL_SYNTAX_FLOW_INDENT). Other
+ *  malformed YAML that libyaml lets through stays an error, such as a
+ *  comment touching a closing quote or bracket or a block scalar's header
+ *  ("a"#c, [a]#c, |#c). */
 OYL_API const oyl_dialect *oyl_dialect_yaml11(void);
 /** go-yaml v2, as Kubernetes reads YAML: its types, its syntax
  *  leniencies (OYL_SYNTAX_GOYAML2), and its merge order. A dialect of

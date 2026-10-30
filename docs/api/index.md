@@ -492,7 +492,8 @@ schema set), events are tagged by the document's dialect.
 | `OYL_SYNTAX_SQUOTE_ESCAPE` | `\'` in double quotes is `'` (go-yaml v2) |
 | `OYL_SYNTAX_EOF_NO_BREAK` | a block scalar ending the input gets no final line feed (libyaml, so PyYAML and go-yaml v2) |
 | `OYL_SYNTAX_YAML11_ONLY` | `%YAML` other than 1.1 is an error, in the default dialect for every document but one choosing a registered dialect (go-yaml v2) |
-| `OYL_SYNTAX_GOYAML2` | all three: go-yaml v2's |
+| `OYL_SYNTAX_FLOW_INDENT` | a quoted scalar's or flow collection's later lines needn't be indented past the block it sits in, and a tab may indent them: `[a,\nb]` (libyaml, so PyYAML and go-yaml v2) |
+| `OYL_SYNTAX_GOYAML2` | all four: go-yaml v2's |
 
 Warnings (`oyl_warning`): `OYL_WARN_YAML_VERSION`, `OYL_WARN_DIALECT` (a
 `%TAG !!` prefix with no dialect), `OYL_WARN_LENIENCY`,

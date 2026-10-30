@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`OYL_SYNTAX_FLOW_INDENT`**, a syntax leniency of libyaml's: a quoted
+  scalar's or flow collection's later lines needn't be indented past the
+  block it sits in, and a tab may indent them (`flow: [a,\nb]`,
+  `foo: "bar\n\tbaz"`). The YAML 1.1 and go-yaml v2 dialects take it on,
+  so they read such files as PyYAML and go-yaml v2 do, with an
+  `OYL_WARN_LENIENCY` warning at the start of each such line; YAML 1.2
+  still rejects them. Checked against both on 60,000 random documents:
+  every document they read, Oyl reads the same.
+
+### Fixed
+
+- **A tab after a plain scalar's line break counted as indentation**:
+  `a: b\n\tc` read as `{a: "b c"}`, and likewise in flow (`- [a\n\tb]`).
+  A tab may follow a line's indentation but isn't part of it, so these
+  are errors, as libyaml and the `yaml` package have them. At the top
+  level, where no indentation is needed, the tab is fine as before.
+- **A plain scalar in flow before empty lines and a `,`, `]` or `}`**
+  kept a line feed: `[a\n\n]` read as `["a\n"]`. Now `["a"]`.
+- **Empty lines after an escaped line break in double quotes** folded as
+  after an unescaped one: `"a\<LF><LF>b"` read as `"a b"`. Each is a line
+  feed (`"a\nb"`), as YAML 1.2's grammar, libyaml and libfyaml have it. A
+  document marker on the next line (`"a\<LF>--- b"`) is now an error, as
+  after any line break in quotes.
+
 ## 1.3.0 (2026-10-29)
 
 ### Added

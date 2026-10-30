@@ -602,6 +602,49 @@ static void test_scanner_error_through_parser(void) {
     }
 }
 
+/* A tab may follow a line's indentation but isn't part of it, so a plain
+ * scalar's later line needs as many spaces as any other (YAML 1.2, 6.1).
+ * Oyl counted the tab until 2026-10-30, reading "a: b\n\tc" as "b c";
+ * libyaml and the yaml package reject these three too. */
+static void test_tab_after_indent(void) {
+    printf("test_tab_after_indent:\n");
+    struct { const char *yaml, *msg; size_t line, col; } bad[] = {
+        { "a: b\n\tc\n",         "tabs are not allowed as indentation",            2, 2 },
+        { "a:\n  b: c\n  \td\n", "tabs are not allowed as indentation",            3, 4 },
+        { "- [a\n\tb]\n",        "must be indented more than the enclosing block", 2, 2 },
+    };
+    const char *good[] = { "1st\n\n\t3rd\n", "x:\n - x\n  \tx\n" };   /* HS5T, UV7Q */
+    for (int eager = 0; eager < 2; eager++) {
+        for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+            oyl_arena *a = oyl_arena_new(4096);
+            oyl_parser *p = oyl_parser_new(bad[i].yaml, strlen(bad[i].yaml), a);
+            if (eager) oyl_parser_set_merge(p, true);
+            const oyl_event *evt;
+            oyl_status st;
+            while ((st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_STREAM_END) {}
+            const char *msg = oyl_parser_error(p);
+            oyl_mark m = oyl_parser_error_mark(p);
+            char what[96];
+            snprintf(what, sizeof what, "%s: %s", eager ? "eager" : "incremental", bad[i].msg);
+            ASSERT(st == OYL_ERR_SCAN && msg && strstr(msg, bad[i].msg) &&
+                   m.line == bad[i].line && m.col == bad[i].col, what);
+            oyl_parser_free(p);
+            oyl_arena_free(a);
+        }
+        for (size_t i = 0; i < sizeof good / sizeof good[0]; i++) {
+            oyl_arena *a = oyl_arena_new(4096);
+            oyl_parser *p = oyl_parser_new(good[i], strlen(good[i]), a);
+            if (eager) oyl_parser_set_merge(p, true);
+            const oyl_event *evt;
+            oyl_status st;
+            while ((st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_STREAM_END) {}
+            ASSERT(st == OYL_OK, "a tab after enough spaces");
+            oyl_parser_free(p);
+            oyl_arena_free(a);
+        }
+    }
+}
+
 /* ── No-error tests ─────────────────────────────────────────── */
 
 static void test_no_scanner_error(void) {
@@ -954,6 +997,7 @@ int main(void) {
     test_missing_flow_seq_end();
     test_missing_flow_map_end();
     test_scanner_error_through_parser();
+    test_tab_after_indent();
 
     /* no error */
     test_no_scanner_error();

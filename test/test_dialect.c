@@ -73,6 +73,11 @@ static void goyaml2(oyl_parser *p, oyl_arena *a) {
     oyl_parser_set_dialect(p, oyl_dialect_goyaml2());
 }
 
+static void yaml11(oyl_parser *p, oyl_arena *a) {
+    (void)a;
+    oyl_parser_set_dialect(p, oyl_dialect_yaml11());
+}
+
 /* ── %YAML chooses the version of the standard schema ─────── */
 
 static void test_version(void) {
@@ -369,6 +374,57 @@ static void test_leniencies(void) {
     ASSERT(st == OYL_OK, "%YAML 1.1 under the go-yaml v2 default");
 }
 
+/* libyaml doesn't check how a quoted scalar's or flow collection's later
+ * lines are indented: both 1.1 dialects read them as it does, with a
+ * warning at each such line's start, where YAML 1.2 errs */
+static void test_flow_indent(void) {
+    printf("test_flow_indent:\n");
+    static const struct { const char *yaml, *got; int warnings; size_t line; } cases[] = {
+        { "foo: \"bar\n\tbaz\"\n",       "foo= bar baz=",  1, 2 },   /* DK95:1, a tab */
+        { "quoted: \"a\nb\nc\"\n",       "quoted= a b c=", 2, 3 },   /* QB6E */
+        { "a:\n  b: 'x\n y'\n",           "a= b= x y=",     1, 3 },
+        { "a:\n  b: \"x\\\n y\"\n",       "a= b= xy=",      1, 3 },   /* after an escaped break */
+        { "flow: [a,\nb,\nc]\n",         "flow= a= b= c=", 2, 3 },   /* 9C9N */
+        { "- [\n\tfoo,\n foo\n ]\n",     "foo= foo=",      1, 2 },   /* Y79Y:3, a tab */
+        { "- [a\nb]\n",                  "a b=",           1, 2 },   /* a plain scalar's line */
+        { "- {a: 1,\nb: 2}\n",           "a= 1= b= 2=",    1, 2 },
+    };
+    setup_fn dialects[] = { yaml11, goyaml2 };
+    char got[512], msg[128];
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        for (int d = 0; d < 2; d++) {
+            for (int eager = 0; eager <= 1; eager++) {
+                warnings w = { 0 };
+                oyl_status st = scalars(cases[i].yaml, dialects[d], eager, &w, got, sizeof got);
+                snprintf(msg, sizeof msg, "case %zu, %s%s", i, d ? "goyaml2" : "yaml11",
+                         eager ? " (eager)" : "");
+                ASSERT(st == OYL_OK && strcmp(got, cases[i].got) == 0, msg);
+                ASSERT(w.count[OYL_WARN_LENIENCY] == cases[i].warnings && w.total == cases[i].warnings &&
+                       w.last.line == cases[i].line && w.last.col == 1, "... a warning at each line");
+            }
+        }
+        oyl_status st = scalars(cases[i].yaml, NULL, false, NULL, got, sizeof got);
+        ASSERT(st == OYL_ERR_SCAN, "... an error in YAML 1.2");
+    }
+
+    /* libyaml reads a plain scalar on in flow, but not past a tab where the
+     * indentation would be */
+    oyl_status st = scalars("- [a\n\tb]\n", yaml11, false, NULL, got, sizeof got);
+    ASSERT(st == OYL_ERR_SCAN, "a tab before a plain scalar's line in flow");
+
+    /* a line starting with the closing quote or bracket may sit anywhere,
+     * in any dialect: no warning */
+    warnings w = { 0 };
+    st = scalars("key: [\n  a,\n]\nq: \"x\n\"\n", yaml11, false, &w, got, sizeof got);
+    ASSERT(st == OYL_OK && w.total == 0, "a closing bracket or quote: no warning");
+
+    /* each line warns once, though an anchor sends the parser back to read
+     * the document again */
+    memset(&w, 0, sizeof w);
+    st = scalars("flow: [a,\nb]\nx: &y 1\nz: *y\n", goyaml2, false, &w, got, sizeof got);
+    ASSERT(st == OYL_OK && w.count[OYL_WARN_LENIENCY] == 1, "one warning across the fallback");
+}
+
 /* ── oyl_parse_json with the document's dialect ────────────── */
 
 static void test_json_dialect(void) {
@@ -420,6 +476,7 @@ int main(void) {
     test_version_rule();
     test_tag_prefix();
     test_leniencies();
+    test_flow_indent();
     test_json_dialect();
     printf("\n--- Dialect tests: %d / %d passed ---\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;

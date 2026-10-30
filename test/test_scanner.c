@@ -312,6 +312,64 @@ static void test_continued_by_indicator(void) {
     PASS();
 }
 
+/* a plain scalar in flow ends before the empty lines that come before a
+ * flow indicator: they fold into it only to join a next line's text (Oyl
+ * read "[a\n\n]" as ["a\n"] until 2026-10-30) */
+static void test_flow_scalar_before_empty_lines(void) {
+    TEST("plain scalar in flow, empty lines, then , ] or }");
+    static const struct { const char *in, *value; int at; } cases[] = {
+        { "[foo,baz\n\n  ]",  "baz", 4 },
+        { "{a: baz\n\n  }",   "baz", 4 },
+        { "[foo\n\n  ,bar]",  "foo", 2 },
+        { "[foo\n\n  bar]",   "foo\nbar", 2 },
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        oyl_token toks[16];
+        int n = scan_all(cases[i].in, toks, 16);
+        int at = cases[i].at;
+        size_t len = strlen(cases[i].value);
+        if (!(n > at && toks[at].type == OYL_TOK_SCALAR && toks[at].value.len == len &&
+              memcmp(toks[at].value.data, cases[i].value, len) == 0 &&
+              toks[n - 1].type == OYL_TOK_STREAM_END)) {
+            char msg[64];
+            snprintf(msg, sizeof msg, "case %zu", i);
+            FAIL(msg);
+            return;
+        }
+    }
+    PASS();
+}
+
+/* each empty line after an escaped line break in double quotes is a line
+ * feed (YAML 1.2, s-double-escaped), as libyaml and libfyaml have it; Oyl
+ * folded them as unescaped breaks until 2026-10-30. A document marker
+ * there is an error, as after any break in quotes. */
+static void test_escaped_break_empty_lines(void) {
+    TEST("escaped line break, then empty lines");
+    static const struct { const char *in, *value; } cases[] = {
+        { "\"bar\\\n\n  qux\"",     "bar\nqux" },
+        { "\"bar\\\n\n\n  qux\"",   "bar\n\nqux" },
+        { "\"bar\\\n  \n\t\n qux\"", "bar\n\nqux" },
+        { "\"bar\\\n  qux\"",        "barqux" },
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        oyl_token toks[8];
+        int n = scan_all(cases[i].in, toks, 8);
+        size_t len = strlen(cases[i].value);
+        if (!(n == 3 && toks[1].type == OYL_TOK_SCALAR && toks[1].value.len == len &&
+              memcmp(toks[1].value.data, cases[i].value, len) == 0)) {
+            char msg[64];
+            snprintf(msg, sizeof msg, "case %zu", i);
+            FAIL(msg);
+            return;
+        }
+    }
+    oyl_token toks[8];
+    int n = scan_all("\"a\\\n--- b\"", toks, 8);
+    if (n > 0 && toks[n - 1].type == OYL_TOK_STREAM_END) { FAIL("a document marker"); return; }
+    PASS();
+}
+
 static void test_colon_in_scalar(void) {
     TEST("colon mid-word (http://example.com)");
     oyl_token toks[8];
@@ -519,6 +577,8 @@ int main(void) {
     test_tag();
     test_anchor_alias();
     test_continued_by_indicator();
+    test_flow_scalar_before_empty_lines();
+    test_escaped_break_empty_lines();
     test_colon_in_scalar();
     test_comment();
     test_yaml12_bool();
