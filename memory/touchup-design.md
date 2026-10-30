@@ -1,12 +1,14 @@
 # Touch-up: a YAML 1.1 file made YAML 1.2 in place — design for review
 
-*Updated 2026-10-29*
+*Updated 2026-10-30*
 
 **Proposed 2026-10-29** (the user: "feel free to design the in place 1.1
 -> 1.2 touch-up convertor"). Nothing built. **Settled:** it works
 without being told the reader, and does more when told ("Without a
-dialect"; the user's idea, agreed 2026-10-29). The open decisions are at
-the end. Background and the 2026-10-10 measurements: ideas.md,
+dialect"; the user's idea, agreed 2026-10-29). Values keep the source's
+meaning, written in standard YAML 1.2 (the user, 2026-10-30: "values keep
+the original meaning, they just need to be represented in a 1.2 standard
+fashion"). The open decisions are at the end. Background and the 2026-10-10 measurements: ideas.md,
 "YAML 1.1 → 1.2 converter"; the entry on todo.md.
 
 ## What it does
@@ -18,8 +20,8 @@ Every other byte stays: comments, layout, quoting, key order. Each change
 is reported. **The guarantee: afterwards the file reads the same in the
 source's rules and in YAML 1.2**, so it keeps working in the 1.1 tools
 that still read it while 1.2 tools read it the same way. That is what
-picks each new spelling (`493` for `0755`, not `0o755`, which PyYAML
-reads as a string). Without the reader named, the guarantee covers both
+picks each new spelling (`!!int 0o755` for `0755`, not a bare `0o755`,
+which PyYAML reads as a string). Without the reader named, the guarantee covers both
 1.1 readers it knows, except where they disagree with each other (see
 "Without a dialect").
 
@@ -43,7 +45,7 @@ Output, with the recommended defaults:
 "on":
   push: {}
 enabled: true
-mode: 493
+mode: !!int 0o755
 ratio: "1e3"
 released: !!timestamp 2001-12-14
 ```
@@ -54,7 +56,7 @@ The report:
 1:1   %YAML 1.1 removed (both readers read the file without it)
 3:1   key  on          → "on"    text kept: YAML 1.1 reads true
 5:10  value yes        → true    value kept: YAML 1.2 reads "yes"
-6:7   value 0755       → 493     value kept: YAML 1.2 reads 755
+6:7   value 0755       → !!int 0o755   value kept: YAML 1.2 reads 755
 7:8   value 1e3        → "1e3"   value kept: YAML 1.2 reads 1000.0
 8:11  value 2001-12-14 → !!timestamp 2001-12-14   YAML 1.2 reads a string
 ```
@@ -119,7 +121,7 @@ Oyl's dialects, 2026-10-29:
 |---|---|---|---|---|---|
 | `on` `yes` `NO` `off` | bool | bool | string | `true` / `false` | `"on"` |
 | `y` `n` | string | bool | string | (go-yaml v2) `true` | `"y"` |
-| `0755` | 493 | 493 | 755 | `493` | `755` |
+| `0755` | 493 | 493 | 755 | `!!int 0o755` | `755` |
 | `0b101`, `1_000`, `0x_1F` | int | int | string | `5`, `1000`, `0x1F` | quoted |
 | `1:30` (base 60) | 90 | string | string | (PyYAML) `90` | `"1:30"` |
 | `1_000.5` | float | float | string | `1000.5` | quoted |
@@ -127,14 +129,18 @@ Oyl's dialects, 2026-10-29:
 | `1e3`, `1E-12` | string | float | float | (PyYAML) `"1e3"` | `1.0e+3` |
 | `0o17` | string | 15 | 15 | (PyYAML) `"0o17"` | `15` |
 | `2001-12-14` | timestamp | string to programs | string | `!!timestamp 2001-12-14` | `"2001-12-14"` |
-| `!!int 0755` | 493 | 493 | 755 | `!!int 493` | `!!int 755` |
+| `!!int 0755` | 493 | 493 | 755 | `!!int 0o755` | `!!int 755` |
 | `!!bool yes` | true | true | error | `!!bool true` | `!!bool true` (1.2 has no reading to keep) |
 
-Every new spelling is one both readers take the same way: decimal ints
-(PyYAML has no `0o`, YAML 1.2 no `0`-octal or `0b`), floats with a dot
-and a signed exponent (PyYAML needs both), `true`/`false`, quotes. A
-string is quoted with `'…'` unless it holds a `'`, then `"…"`. A scalar
-spanning lines becomes one line.
+Every new spelling is standard YAML 1.2 that both readers take the same
+way: decimal ints (YAML 1.2 has no `0b`), floats with a dot and a signed
+exponent (PyYAML needs both), `true`/`false`, quotes. Octal stays octal
+as `!!int 0o755`: a bare `0o755` is a string to PyYAML, but with the tag
+it reads 493 in PyYAML (C and pure loaders: its int constructor passes
+`0o755` to Python's `int(…, 8)`), go-yaml v2 v2.4.4 and all three of
+Oyl's dialects (measured 2026-10-30). A negative one is decimal, since
+Core's `0o` form has no sign. A string is quoted with `'…'` unless it
+holds a `'`, then `"…"`. A scalar spanning lines becomes one line.
 
 Left alone, since both read them alike or they aren't types: quoted and
 block scalars, `null` forms, `~`, `0x1F`, `.inf`, `+12`, `<<` (Oyl's
@@ -285,13 +291,16 @@ not a fixer.
 
 ## Decisions for the user
 
-1. **Default policy.** Recommended: **values keep the source's value,
-   keys keep their text.** A 1.1 file's values were tested against a 1.1
-   reader (`enabled: yes` meant true there), while keys that disagree are
-   nearly all words meant as names (`on:` in GitHub workflows, `NO:` for
-   Norway: 88 of the 98 booleans measured). The flags flip either. The
-   cost: a 1.1 reading that was a bug is kept (docker-compose's
-   `22:22` → `1342`), but the report shows it.
+1. **Default policy.** **Values: settled 2026-10-30**, they keep the
+   source's meaning in standard 1.2 spelling (top of this note). Keys
+   keep their text, as recommended; the user's "yes" answered this
+   decision, so taken as agreed unless they say otherwise. Keys that
+   disagree are nearly all words meant as names (`on:` in GitHub
+   workflows, `NO:` for Norway: 88 of the 98 booleans measured). The
+   flags flip either. The cost: a 1.1 reading that was a bug is kept
+   (docker-compose's `22:22` → `1342`), but the report shows it.
+   **Open:** octal as `!!int 0o755` (recommended: octal shown, every
+   reader agrees, but a tag) or `493` (plain, octal lost).
 2. **Timestamps.** Recommended: keeping the value gives
    `!!timestamp 2001-12-14` for PyYAML sources (it hands programs a
    date), and no change for go-yaml v2 (it hands them the text, as
@@ -306,3 +315,8 @@ not a fixer.
 6. **Continuation-line indentation** (added 2026-10-29). Recommended: the
    dialect leniency plus the fix above, in the first version. Or leave
    these files as parse errors.
+7. **`<<` merge keys** (added 2026-10-30). YAML 1.2 dropped them: to a
+   strict 1.2 reader `<<` is an ordinary key. Recommended: leave them,
+   since several 1.2 readers keep them (Oyl's yaml12 dialect, go-yaml
+   v3, ruamel.yaml), and writing the merged keys out would rewrite much
+   of the file and lose the sharing. Or report each, or expand them.
