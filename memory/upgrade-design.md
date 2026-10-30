@@ -1,17 +1,18 @@
-# Upgrade: a YAML 1.1 file made YAML 1.2 in place — design for review
+# Upgrade: a YAML 1.1 file made YAML 1.2 in place — design, agreed
 
 *Updated 2026-10-30*
 
 **Proposed 2026-10-29** (the user: "feel free to design the in place 1.1
--> 1.2 touch-up convertor"). Nothing built. **Settled:** it works
-without being told the reader, and does more when told ("Without a
-dialect"; the user's idea, agreed 2026-10-29). Named "upgrade" (the user
-agreed 2026-10-30; first called the touch-up). Values keep the source's
+-> 1.2 touch-up convertor"); **agreed 2026-10-30**, every decision
+settled (the list at the end; the user on the last five: "I think those
+seem the most reasonable choices"). Nothing built. It works without
+being told the reader, and does more when told ("Without a dialect"; the
+user's idea, agreed 2026-10-29). Named "upgrade" (the user agreed
+2026-10-30; first called the touch-up). Values keep the source's
 meaning, written in standard YAML 1.2 (the user, 2026-10-30: "values keep
 the original meaning, they just need to be represented in a 1.2 standard
-fashion"). The open decisions are at the end. Background and the
-2026-10-10 measurements: ideas.md,
-"YAML 1.1 → 1.2 converter"; the entry on todo.md.
+fashion"). Background and the 2026-10-10 measurements: ideas.md, "YAML
+1.1 → 1.2 converter"; the entry on todo.md.
 
 ## What it does
 
@@ -291,18 +292,16 @@ the file out again. ruamel.yaml and the JS `yaml` package keep comments
 but re-emit. Kubernetes' KYAML is a quoted output subset for kubectl,
 not a fixer.
 
-## Decisions for the user
+## Decisions (all settled by the user, 2026-10-30)
 
-1. **Default policy.** **Values: settled 2026-10-30**, they keep the
-   source's meaning in standard 1.2 spelling (top of this note). Keys
-   keep their text, as recommended; the user's "yes" answered this
-   decision, so taken as agreed unless they say otherwise. Keys that
-   disagree are nearly all words meant as names (`on:` in GitHub
-   workflows, `NO:` for Norway: 88 of the 98 booleans measured). The
-   flags flip either. The cost: a 1.1 reading that was a bug is kept
-   (docker-compose's `22:22` → `1342`), but the report shows it.
-   **Open:** octal as `!!int 0o755` (recommended: octal shown, every
-   reader agrees, but a tag) or `493` (plain, octal lost).
+1. **Default policy. Settled**: values keep the source's meaning in
+   standard 1.2 spelling (top of this note); keys keep their text (the
+   user's "yes" to the recommendation). Keys that disagree are nearly all
+   words meant as names (`on:` in GitHub workflows, `NO:` for Norway: 88
+   of the 98 booleans measured). The flags flip either. The cost: a 1.1
+   reading that was a bug is kept (docker-compose's `22:22` → `1342`),
+   but the report shows it. Octal is `!!int 0o755`, not `493`: octal
+   shown, every reader agrees.
 2. **Timestamps. Settled 2026-10-30** (the user: "use the !!timestamp
    tag"): a PyYAML source's date becomes `!!timestamp 2001-12-14`. The
    1.2.0 change list dropped `!!timestamp` (with `!!binary`, `!!set`,
@@ -313,14 +312,14 @@ not a fixer.
    `"2001-12-14"`), as YAML 1.2 does, so the `TIMESTAMPS_TEXT` flag,
    which the bindings set for go-yaml v2, means no change. Without a
    dialect the readers disagree, so it's reported.
-3. **`%YAML 1.1`.** Recommended: remove it. Or rewrite it to `%YAML 1.2`,
-   which go-yaml v2 then rejects.
-4. **The check after rewriting.** Recommended: always on.
-5. **Where.** Recommended: the C function and all three bindings, then a
-   command-line tool if wanted (Oyl has none; oyl.cr could carry one).
-6. **Continuation-line indentation** (added 2026-10-29). Recommended: the
-   dialect leniency plus the fix above, in the first version. Or leave
-   these files as parse errors.
+3. **`%YAML 1.1`. Settled**: removed (rewriting it to `%YAML 1.2` would
+   make go-yaml v2 reject the file).
+4. **The check after rewriting. Settled**: always on.
+5. **Where. Settled**: the C function and all three bindings; a
+   command-line tool later if wanted (Oyl has none; oyl.cr could carry
+   one, `oyl upgrade file.yaml`).
+6. **Continuation-line indentation. Settled**: the dialect leniency plus
+   the fix (Other fixes), in the first version.
 7. **`<<` merge keys. Settled 2026-10-30** (the user: "leave << alone"):
    left as written. YAML 1.2 dropped them: to a
    strict 1.2 reader `<<` is an ordinary key. (The user remembered

@@ -17,11 +17,9 @@ Larger features go in ideas.md, and the order of work in roadmap.md.
   Background, measurements and the merge-order case: ideas.md, "YAML 1.1
   → 1.2 converter". A full read and rewrite (`Oyl.parse(..., dialect:
   :yaml11).to_yaml` in oyl.cr 0.4.0) already works, but loses comments
-  and layout. **Design proposed 2026-10-29: upgrade-design.md** (the
-  user asked for it after the 1.3.0 release; agreed 2026-10-29 that it works
-  without the reader named, and 2026-10-30 that values keep their
-  meaning in standard 1.2 spelling); the other decisions wait on
-  the user.
+  and layout. **Design agreed 2026-10-30: upgrade-design.md** (proposed
+  2026-10-29, after the 1.3.0 release; every decision settled by the
+  user). Not built: the next step is building it, when the user says.
 - **Build with MSVC** (**Done, merged into main 2026-10-28**; the user
   agreed 2026-10-26 and said "start on the MSVC build" 2026-10-27).
   oyl.rs's Windows CI job failed because MSVC, Rust's default C compiler
