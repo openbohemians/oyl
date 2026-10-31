@@ -162,6 +162,25 @@ Where the bindings fall after step 3 isn't decided.
   `PEEK` is a six-line closure (152 in the scanner), the input is read by
   `unsafe.Add` (722 in the scanner), messages are C strings through its
   runtime. A skeleton: making it maintainable Go is most of a hand port.
+  **Left: the service or a hand port; the user (2026-10-31): Go matters if
+  Kubernetes shops gain most.** A search (2026-10-31) found no published
+  profile of Helm templating, Kustomize or Argo CD by YAML share, but one
+  documented YAML cost: Helm repository indexes. helm/helm#12245 (3.13,
+  2023) added JSON indexes because Bitnami's YAML index took 2.7 s and
+  836 MiB per load; it only helps repositories that publish JSON. Flux's
+  source-controller (fluxcd/source-controller#303) was OOM-killed at
+  1-2 GB loading indexes ("constraints around the unmarshalling of
+  YAML"), worked around by caching. **Measured 2026-10-31** (Helm v4.3.1's
+  index types and `loadIndex` path, CPU 3, through cgo; Bitnami's index
+  now 27.6 MB, 19,133 versions): Helm (`sigs.k8s.io/yaml.UnmarshalStrict`)
+  1,131 ms, 576 MiB peak RSS; Oyl's `YAMLToJSONStrict` then the same
+  strict JSON decode 228 ms, 146 MiB; `oyl.Unmarshal` (GoYAML2,
+  KnownFields) 176 ms, 187 MiB; Helm's JSON index 82 ms, 70 MiB. Same
+  index from all four. Prometheus Community (6.6 MB) and Grafana
+  (4.1 MB): 4.8-6.2x, a quarter to a third of the memory. Found on the
+  way: `oyl.Unmarshal` inlines an embedded struct only with `,inline` (as
+  go-yaml), but encoding/json, so sigs.k8s.io/yaml, also inlines untagged
+  ones, which Helm's `ChartVersion` relies on (todo.md).
 - go-yaml (`gopkg.in/yaml.v3`) was archived on 2025-04-01; the YAML
   organization maintains `go.yaml.in/yaml/v3` (frozen) and v4 (release
   candidates in 2026). The ecosystem is mid-migration.

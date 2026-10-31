@@ -21,6 +21,15 @@ Larger features go in ideas.md, and the order of work in roadmap.md.
   2026-10-29, after the 1.3.0 release; every decision settled by the
   user). **Done: released in Oyl 1.4.0 (2026-10-30) and the bindings
   (2026-10-31).**
+- **oyl.go: inline untagged embedded structs, as encoding/json does**
+  (**Open**, found 2026-10-31 measuring Helm's index loading,
+  roadmap.md). `getStructInfo` (fields.go) inlines an embedded struct
+  only when tagged `,inline` (go-yaml's rule); encoding/json, and so
+  sigs.k8s.io/yaml, inlines untagged embedded structs too, and Helm's
+  `ChartVersion` embeds `*chart.Metadata` untagged, so `oyl.Unmarshal`
+  reads it as a key `metadata` (an unknown-field error with
+  `WithKnownFields`). Follow encoding/json's rule when the type is
+  json-tagged; check against sigs.k8s.io/yaml.
 - **Build with MSVC** (**Done, merged into main 2026-10-28**; the user
   agreed 2026-10-26 and said "start on the MSVC build" 2026-10-27).
   oyl.rs's Windows CI job failed because MSVC, Rust's default C compiler
