@@ -143,6 +143,25 @@ Where the bindings fall after step 3 isn't decided.
   getting the binary onto the machine, not speed. Not measured: decoding
   (the tree's arrays back over the pipe), several processes for
   concurrent callers.
+  **ccgo dropped** (2026-10-31): the user's gut was against it, and the
+  shim is about 80 names tied to ccgo's private conventions (VaList, TLS
+  frames, function pointers), on top of unreadable generated code.
+  **wazero's interpreter profiled** (the user doubted the 1.8 MB/s): no
+  hotspot, about 27% dispatch (`switch op.Kind`), most of the rest
+  `Pick`/`Set` (locals copied on its value stack) and push/pop; about 40
+  cycles per WebAssembly instruction. wazero's design, not our module.
+  **cxgo tried** (v0.5.2, March 2025, the latest; a migration tool whose
+  output is meant to be kept and edited, not regenerated) on
+  oyl_schema.c and oyl_scanner.c (SSE off): it needed four workarounds
+  (no `locale.h`; no C99 `NAN`/`INFINITY`/`isinf`; it can't fold
+  `(uint64_t)INT64_MAX + 1`; its own `stdint.h` writes `INT64_MIN` as
+  `-9223372036854775808`, which it then rejects, and makes `INT64_MAX`
+  unsigned, which can change comparisons silently). Output: 6,286 lines
+  of Go from 3,760 of C, same functions, names and control flow, but no
+  original comment survives (0 of the scanner's 359 comment lines), each
+  `PEEK` is a six-line closure (152 in the scanner), the input is read by
+  `unsafe.Add` (722 in the scanner), messages are C strings through its
+  runtime. A skeleton: making it maintainable Go is most of a hand port.
 - go-yaml (`gopkg.in/yaml.v3`) was archived on 2025-04-01; the YAML
   organization maintains `go.yaml.in/yaml/v3` (frozen) and v4 (release
   candidates in 2026). The ecosystem is mid-migration.
