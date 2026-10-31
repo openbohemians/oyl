@@ -181,6 +181,38 @@ Where the bindings fall after step 3 isn't decided.
   way: `oyl.Unmarshal` inlines an embedded struct only with `,inline` (as
   go-yaml), but encoding/json, so sigs.k8s.io/yaml, also inlines untagged
   ones, which Helm's `ChartVersion` relies on (todo.md).
+  **End to end, measured 2026-10-31** (the user: "let's do it"): Helm
+  v4.3.1 built twice from source, the second with `loadIndex`'s YAML
+  step replaced (build tag `oyl`) by `YAMLToJSONStrict` plus the same
+  strict JSON decode; a local server; peak RSS per process, median of 3,
+  CPU not pinned. Bitnami's index (its one nginx URL pointed at the
+  server): `helm repo add` 1.13 s / 635 MiB → 0.36 s / 272 MiB; `helm
+  pull r/nginx` 1.14 s / 554 → 0.33 s / 194; `helm pull --repo` (Argo
+  CD's way: a clean Helm home per chart; it parses the index twice) 2.26 s
+  / 625 → 0.66 s / 328. A virtual-repository index merged by Helm's own
+  `IndexFile.Merge` from 19 public indexes (64.5 MB, 935 charts, 57,307
+  versions; helm#9931's was 65.56 MB): add 2.81 s / 1,368 MiB → 0.82 s
+  / 556; pull 2.76 s / 1,043 → 0.75 s / 369; pull --repo 5.73 s / 1,446
+  → 1.54 s / 592. Same `helm search repo -l -o json` output; same full
+  index from all four loaders on the 64.5 MB file. A cgo Helm grew 24 MB,
+  all from Kustomize's Go-plugin loader (it imports `plugin`, so with cgo
+  on the linker exports all 200,000 Go symbols); with `-tags
+  kustomize_disable_go_plugin_support` Oyl adds 0.5 MB stripped (66.3 →
+  66.8 MB). Fully static with cgo works (`netgo osusergo`, `-linkmode
+  external -extldflags -static`), same speed. Also found: given a chart
+  URL, Helm loads added repositories' indexes one by one until one lists
+  it (`scanReposForURL`, marked FIXME in its source). Next: the inlining
+  fix would let Helm use `oyl.Unmarshal` (less memory again).
+  **purego, not tried** (`github.com/ebitengine/purego`, beta; fetching
+  it was blocked in auto mode): calls a shared library's C functions
+  with `CGO_ENABLED=0` (Tier 1: linux, darwin, windows on amd64/arm64),
+  so cross-compiling needs no C compiler. But liboyl must be found at run
+  time (prebuilt per platform, shipped or embedded), and on Linux
+  purego imports `dlopen` from `libdl.so.2` (`internal/fakecgo`), so no
+  static binary and no glibc-free image. Raised by Gemini's suggestion
+  (2026-10-31) to port Oyl to Rust for Go, Python, Node and Java: a Rust
+  library reaches Go through cgo or purego just as C does, so a port
+  alone doesn't close the Go gap.
 - go-yaml (`gopkg.in/yaml.v3`) was archived on 2025-04-01; the YAML
   organization maintains `go.yaml.in/yaml/v3` (frozen) and v4 (release
   candidates in 2026). The ecosystem is mid-migration.

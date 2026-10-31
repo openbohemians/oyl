@@ -87,11 +87,22 @@ a quarter of the memory, through cgo).
 7. **Rancher Fleet / SUSE.** rancher/fleet#4343, from a SUSE support case:
    fetching and parsing the same index per `fleet.yaml` was expensive;
    `sigs.k8s.io/yaml.Unmarshal` into Helm's IndexFile; cgo-off.
-8. **Kubernetes KYAML (migration tooling).** KEP-5295, stable in v1.37: an
-   unambiguous YAML subset for manifests (strings quoted, flow style),
-   against indentation mistakes and implicit typing; its converter may
-   misplace or lose comments. Oyl's comment-keeping rewriter fits a
-   KYAML or "quote the risky scalars" mode. Visibility, not a buyer.
+8. **Kubernetes KYAML (migration tooling).** KEP-5295 (Tim Hockin, Ben
+   Elder; alpha 1.34, beta 1.35, stable 1.37; read 2026-10-31): a YAML
+   subset kubectl prints with `-o kyaml`: value strings always
+   double-quoted, keys bare unless ambiguous, `{}` and `[]` everywhere
+   (flow style, so indentation can't change meaning), trailing commas,
+   comments allowed, a `---` header to tell it from JSON. Output only:
+   input is any YAML. Encoder `sigs.k8s.io/yaml/kyaml` (`FromYAML`,
+   `FromObject`, `Marshal`) works on go-yaml v3's node tree via JSON; the
+   KEP says comments may be misplaced or lost, numbers through Go's JSON
+   encoder and non-string keys can't convert, aliases are expanded.
+   Wanted elsewhere (open issues, 2026): KYAML output in CUE, Rancher's
+   dashboard, a Zig YAML library, Hyperfoil; KYAML formatting in a
+   Cluster API provider's CI. Oyl's fit: a KYAML emitter that keeps
+   comments (its upgrader already does) for any language, and a "is this
+   strict KYAML" check. Not to be confused with Kustomize's `kyaml`
+   library. Visibility, not a buyer.
 9. **Ansible, ROS (1.1 to 1.2 migration).** Ansible moved its docs to
    true/false and ansible-lint enforces it; ROS discussed moving to YAML
    1.2 and declined for now. Migration work; a speed pitch needs a Python
@@ -110,7 +121,11 @@ Codefresh and Harness (Argo CD's exposure, customer clusters), ChartMuseum
 
 - Oyl on Kargo's minimal-struct decode, against #7462, and a selective
   Oyl decode of one chart.
-- `helm pull` memory with Oyl's index loader on a 40 MB+ index.
+- ~~`helm pull` memory with Oyl's index loader on a 40 MB+ index.~~
+  **Done 2026-10-31** (roadmap.md, oyl.go): on a 64.5 MB merged index,
+  Argo CD's `helm pull --repo` 5.73 s / 1,446 MiB → 1.54 s / 592 MiB;
+  on Bitnami's 2.26 s / 625 MiB → 0.66 s / 328 MiB. No public index is
+  over 40 MB now (TrueCharts' is gone; Bitnami's is the largest).
 - Flux's `UnmarshalStrict` path: parity (duplicate keys, unknown
   fields) and memory.
 - An Argo CD repo-server profile rendering a large Helm app, to size
