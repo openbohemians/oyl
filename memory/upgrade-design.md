@@ -39,6 +39,43 @@ the bindings (asking before each tag).
   reading to keep). Oyl's yaml12 against eemeli's `yaml`: only its
   escaped-break bug and Oyl's documented closing-bracket leniency.
   test-all, sanitize clean; timing within layout noise.
+- **Steps 2-4 committed 2026-10-30: `0e66936` on `upgrade`**: `src/oyl_upgrade.c`
+  (~1,250 lines), the API in oyl.h as designed plus `OYL_FIX_INDENT`,
+  `test/test_upgrade.c` (67 checks), allocation-failure scenarios in
+  test_oom.c, the fuzzer hook (bits 6-7 of the option byte pick the
+  reader; traps when the output check fails or upgrading the output
+  changes it again). As built, beyond the design: octal is `0o755` plain
+  where every reader takes it (go-yaml v2), `!!int 0o755` otherwise;
+  strings are quoted `"…"` (the design's examples, not its `'…'` rule);
+  `TIMESTAMPS_TEXT` is implied by `oyl_dialect_goyaml2()`; a line is
+  indented one past the column where its quoted scalar or flow
+  collection starts; a block scalar's end: `|`/`|+` → `|-` when its last
+  line has content, the empty unterminated last line removed when the
+  value ends with a line feed (`|+`). The output check reads the output
+  in each reader and YAML 1.2, node by node against the plan, and
+  compares merged mappings' entries. Found and fixed on the way: the
+  scanner warned of the end-of-input leniency where dropping the line
+  feed changed nothing (`|\n z\n `), a plain scalar's end took in the
+  blanks before a comment, and (by fuzzing) Oyl took a block header with
+  two chomping indicators or digits (`|++`, `|11`), a 1.2 bug, fixed in
+  the scanner. Fork-mode fuzzing (`-fork=1 -ignore_crashes=1`, one worker,
+  keeps every finding) then found 415 inputs from two more 1.2 bugs in
+  the parser, both fixed: a key's `:` on the next line (`a: 1\nb\n: 2`)
+  was taken after a mapping's first pair, and a second tag or anchor on
+  the line before a block collection (`! !!null\n- l`) went to its first
+  entry; plus a go-yaml v2 override of a key written as an alias
+  (`*k : 2` before `<<`). Later runs: a block scalar's own tag dropped
+  under VALUES_KEEP_TEXT; overrides of keys with tags of their own (keys
+  now compared by tag and value through the source's entries); a `<<`
+  that can't merge is an ordinary key a later merge overrides; go-yaml v2
+  rejects merging an alias to a sequence (reported); and a scanner bug,
+  marks after an escaped lone CR. The output check caught each before
+  any wrong file came back. Fuzzing goes on: each run of 25 minutes
+  (8 of them replaying the 107k-file corpus) has found one exotic case. Checked: 10,784 local files in every mode and
+  policy, no failure; real PyYAML and go-yaml v2 read every upgraded file
+  as the original (KEYS_KEEP_VALUE, 621 and 596 files); PyYAML and the
+  `yaml` package read every default output alike (dates aside, both
+  timestamps); the suite's 312 valid cases; 264 end-of-input shapes.
 
 ## What it does
 
@@ -168,8 +205,9 @@ as `!!int 0o755`: a bare `0o755` is a string to PyYAML, but with the tag
 it reads 493 in PyYAML (C and pure loaders: its int constructor passes
 `0o755` to Python's `int(…, 8)`), go-yaml v2 v2.4.4 and all three of
 Oyl's dialects (measured 2026-10-30). A negative one is decimal, since
-Core's `0o` form has no sign. A string is quoted with `'…'` unless it
-holds a `'`, then `"…"`. A scalar spanning lines becomes one line.
+Core's `0o` form has no sign. A string is quoted with `"…"`, escaped
+as needed (as built: the design's examples, which the user saw, had
+`"on"`). A scalar spanning lines becomes one line.
 
 Left alone, since both read them alike or they aren't types: quoted and
 block scalars, `null` forms, `~`, `0x1F`, `.inf`, `+12`, `<<` (Oyl's
