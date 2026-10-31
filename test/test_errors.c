@@ -645,6 +645,100 @@ static void test_tab_after_indent(void) {
     }
 }
 
+/* A block scalar's header holds one chomping indicator and one
+ * indentation digit at most (Oyl took |++ and |11 until 2026-10-30) */
+static void test_block_header_repeats(void) {
+    printf("test_block_header_repeats:\n");
+    const char *bad[] = { "a: |++\n  x\n", "a: |--\n  x\n", "a: |+-\n  x\n", "a: |11\n  x\n" };
+    const char *good[] = { "a: |1+\n  x\n", "a: |+1\n  x\n", "a: |2-\n  x\n" };
+    for (int eager = 0; eager < 2; eager++) {
+        for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+            oyl_arena *a = oyl_arena_new(4096);
+            oyl_parser *p = oyl_parser_new(bad[i], strlen(bad[i]), a);
+            if (eager) oyl_parser_set_merge(p, true);
+            const oyl_event *evt;
+            oyl_status st;
+            while ((st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_STREAM_END) {}
+            const char *msg = oyl_parser_error(p);
+            ASSERT(st == OYL_ERR_SCAN && msg && strstr(msg, "invalid block scalar indicator"), bad[i]);
+            oyl_parser_free(p);
+            oyl_arena_free(a);
+        }
+        for (size_t i = 0; i < sizeof good / sizeof good[0]; i++) {
+            oyl_arena *a = oyl_arena_new(4096);
+            oyl_parser *p = oyl_parser_new(good[i], strlen(good[i]), a);
+            if (eager) oyl_parser_set_merge(p, true);
+            const oyl_event *evt;
+            oyl_status st;
+            while ((st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_STREAM_END) {}
+            ASSERT(st == OYL_OK, good[i]);
+            oyl_parser_free(p);
+            oyl_arena_free(a);
+        }
+    }
+}
+
+/* An implicit key's ':' is on its line: "b\n: c" is a scalar without
+ * one, then an empty key's pair (Oyl took b as the key until 2026-10-30,
+ * after a mapping's first pair; found by fuzzing oyl_upgrade) */
+static void test_key_colon_on_its_line(void) {
+    printf("test_key_colon_on_its_line:\n");
+    const char *bad[] = { "a: 1\nb\n: 2\n", ":\nb\n:\n", "a: 1\n*x\n: 2\n" };
+    for (int eager = 0; eager < 2; eager++)
+        for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+            oyl_arena *a = oyl_arena_new(4096);
+            oyl_parser *p = oyl_parser_new(bad[i], strlen(bad[i]), a);
+            if (eager) oyl_parser_set_merge(p, true);
+            const oyl_event *evt;
+            oyl_status st;
+            while ((st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_STREAM_END) {}
+            const char *msg = oyl_parser_error(p);
+            oyl_mark m = oyl_parser_error_mark(p);
+            ASSERT(st == OYL_ERR_PARSE && msg && strstr(msg, "could not find expected ':'") && m.line == 3,
+                   bad[i]);
+            oyl_parser_free(p);
+            oyl_arena_free(a);
+        }
+}
+
+/* Two tags or two anchors on one line are one node's, an error, even
+ * before a block collection on the next line (Oyl gave the second to its
+ * first entry until 2026-10-30; found by fuzzing oyl_upgrade) */
+static void test_two_props_one_line(void) {
+    printf("test_two_props_one_line:\n");
+    const char *bad[] = { "! !!null\n- l\n", "&a &b\n- l\n", "k: !!str !!null\n  - l\n",
+                          "&a !x &b\n- l\n",
+                          /* on two lines, the key after them not nested: still one node's */
+                          "a: !x\n !y\nb: 1\n", "a: &x\n &y\nb: 1\n" };
+    const char *good[] = { "! &a\n- l\n", "&a\n&b k: v\n", "a: !x\n  !y b: 1\n", "a: !x\n &y b: 1\n",
+                           "- !x\n  !y b: 1\n", "a: &x\n !y\nb: 1\n" };
+    for (int eager = 0; eager < 2; eager++) {
+        for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+            oyl_arena *a = oyl_arena_new(4096);
+            oyl_parser *p = oyl_parser_new(bad[i], strlen(bad[i]), a);
+            if (eager) oyl_parser_set_merge(p, true);
+            const oyl_event *evt;
+            oyl_status st;
+            while ((st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_STREAM_END) {}
+            const char *msg = oyl_parser_error(p);
+            ASSERT(st == OYL_ERR_PARSE && msg && strstr(msg, "two anchors or two tags"), bad[i]);
+            oyl_parser_free(p);
+            oyl_arena_free(a);
+        }
+        for (size_t i = 0; i < sizeof good / sizeof good[0]; i++) {
+            oyl_arena *a = oyl_arena_new(4096);
+            oyl_parser *p = oyl_parser_new(good[i], strlen(good[i]), a);
+            if (eager) oyl_parser_set_merge(p, true);
+            const oyl_event *evt;
+            oyl_status st;
+            while ((st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_STREAM_END) {}
+            ASSERT(st == OYL_OK, good[i]);
+            oyl_parser_free(p);
+            oyl_arena_free(a);
+        }
+    }
+}
+
 /* ── No-error tests ─────────────────────────────────────────── */
 
 static void test_no_scanner_error(void) {
@@ -998,6 +1092,9 @@ int main(void) {
     test_missing_flow_map_end();
     test_scanner_error_through_parser();
     test_tab_after_indent();
+    test_block_header_repeats();
+    test_key_colon_on_its_line();
+    test_two_props_one_line();
 
     /* no error */
     test_no_scanner_error();

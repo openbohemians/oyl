@@ -673,6 +673,52 @@ the schema gave `implicit`, and the tree keeps only the tags written, so
 
 ---
 
+## Upgrade
+
+```c
+oyl_parser *p = oyl_parser_new(yaml, len, arena);
+oyl_parser_set_dialect(p, oyl_dialect_yaml11());   // the file's reader; unset: unknown
+oyl_str out;
+const oyl_fix *fixes;
+size_t n;
+oyl_status st = oyl_upgrade(p, 0, &out, &fixes, &n);
+```
+
+`oyl_upgrade(p, flags, &out, &fixes, &n)` makes the rest of the parser's
+stream, a YAML 1.1 file, read the same in YAML 1.2, rewriting only what a
+1.2 reader would read otherwise and keeping every other byte. The
+parser's default dialect names the reader (`oyl_dialect_yaml11()` for
+PyYAML, `oyl_dialect_goyaml2()`, or a program's): afterwards the file reads
+the same in it and in 1.2. Left at YAML 1.2, the default, the reader is
+unknown: what PyYAML and go-yaml v2 read alike is fixed, what they read
+otherwise is reported, unless the file rules one out (`\'` is an error to
+PyYAML, `%YAML 1.2` to go-yaml v2). A document choosing YAML 1.2 by its
+directives is left alone. `out` and `fixes` are in the parser's arena;
+errors are reported as parse errors. The output is read again in each
+reader and in YAML 1.2: if any scalar reads otherwise than decided, the
+call fails (`OYL_ERR_PARSE`) instead of returning it.
+
+| Flag | Effect |
+|------|--------|
+| `OYL_UPGRADE_KEYS_KEEP_VALUE` | keys keep the reader's value too (default: their text, as YAML 1.2 reads it) |
+| `OYL_UPGRADE_VALUES_KEEP_TEXT` | values keep YAML 1.2's reading too (default: the reader's value) |
+| `OYL_UPGRADE_TIMESTAMPS_TEXT` | a timestamp's value is its text, as go-yaml v2 hands it over (implied by `oyl_dialect_goyaml2()`) |
+
+Each `oyl_fix` has its `kind`, the `mark` and text (`before`) in the
+input, what replaced it (`after`), whether it was `fixed` or only
+reported, and a `message` saying what each reader reads:
+
+| Kind | What |
+|------|------|
+| `OYL_FIX_SCALAR` | a scalar YAML 1.2 reads otherwise: `true`, `!!int 0o755`, `"on"`, `1.0e+30`, `!!timestamp 2001-12-14` |
+| `OYL_FIX_DIRECTIVE` | `%YAML 1.1`, removed |
+| `OYL_FIX_ESCAPE` | `\'` in double quotes (go-yaml v2's), the backslash removed |
+| `OYL_FIX_CHOMP` | a block scalar ending the input without a line break: `\|-` (or a line break added) |
+| `OYL_FIX_MERGE` | a key go-yaml v2's merge overrides, commented out |
+| `OYL_FIX_INDENT` | a quoted scalar's or flow collection's line not indented past its block, indented |
+
+---
+
 ## Scanner
 
 Low-level tokenizer. Most users should use the parser instead.

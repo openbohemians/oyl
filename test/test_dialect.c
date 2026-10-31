@@ -359,6 +359,13 @@ static void test_leniencies(void) {
         st = scalars("a: |\n  x\n", goyaml2, eager, &w, got, sizeof got);
         ASSERT(st == OYL_OK && strncmp(got, "a= x\n=", 6) == 0 && w.total == 0,
                "with a final line break, no change and no warning");
+
+        /* the last line ends, an empty one follows: clipping gives the
+         * line feed either way (found by fuzzing oyl_upgrade) */
+        memset(&w, 0, sizeof w);
+        st = scalars("|\n z\n ", goyaml2, eager, &w, got, sizeof got);
+        ASSERT(st == OYL_OK && strcmp(got, "z\n=") == 0 && w.total == 0,
+               "an empty last line without a break: no change and no warning");
     }
 
     /* the warning comes once, though the parser re-reads the document when

@@ -4,6 +4,23 @@
 
 ### Added
 
+- **`oyl_upgrade`: a YAML 1.1 file made YAML 1.2 in place.** It rewrites
+  only what a 1.2 reader would read otherwise, keeping comments, layout,
+  quoting and key order byte for byte, and reports each change. Name the
+  file's reader (`oyl_dialect_yaml11()` for PyYAML, `oyl_dialect_goyaml2()`)
+  and afterwards the file reads the same in it and in YAML 1.2; leave it
+  unset and what PyYAML and go-yaml v2 read alike is fixed, the rest
+  reported. Values keep their meaning in a spelling both read alike
+  (`yes` → `true`, `0755` → `!!int 0o755`, `1e3` → `"1e3"` for PyYAML,
+  dates → `!!timestamp`), keys their text (`on:` → `"on":`), flags flip
+  either. It also removes `%YAML 1.1` and libyaml's leniencies (`\'` in
+  double quotes, a block scalar ending the input without a line break,
+  lines not indented past their block), and comments out keys go-yaml
+  v2's merge order overrides. It then reads its output in the reader and
+  in YAML 1.2 and fails rather than return a file that reads otherwise.
+  On 10,784 local YAML files, real PyYAML and go-yaml v2 read every
+  upgraded file as they read the original.
+
 - **`OYL_SYNTAX_FLOW_INDENT`**, a syntax leniency of libyaml's: a quoted
   scalar's or flow collection's later lines needn't be indented past the
   block it sits in, and a tab may indent them (`flow: [a,\nb]`,
@@ -20,8 +37,25 @@
   A tab may follow a line's indentation but isn't part of it, so these
   are errors, as libyaml and the `yaml` package have them. At the top
   level, where no indentation is needed, the tab is fine as before.
+- **A block scalar's header with two chomping indicators or two
+  indentation digits** (`|++`, `|+-`, `|11`) was read, the last of each
+  winning. YAML allows one of each; these are errors now, as in libyaml
+  and the `yaml` package.
+- **A key's `:` on the next line** (`a: 1\nb\n: 2`) was taken for the
+  key's after a mapping's first pair; it was an error only for the first.
+  An implicit key's `:` is on its line, so this is an error, as in libyaml
+  and the `yaml` package.
+- **Two tags or two anchors before a block collection** (`! !!null\n- l`,
+  `&a &b\n- l`): the second went to the collection's first entry. On two
+  lines (`a: !x\n !y\nb: 1`) the next key was nested in `a` at `a`'s own
+  indentation. Both are one node's properties, an error, as in libyaml and
+  the `yaml` package; a key indented past its parent (`a: !x\n  !y b: 1`)
+  takes the second as before.
 - **A plain scalar in flow before empty lines and a `,`, `]` or `}`**
   kept a line feed: `[a\n\n]` read as `["a\n"]`. Now `["a"]`.
+- **Marks after an escaped lone CR in double quotes** (`"a\<CR>b"`)
+  counted on along the line before, since the CR wasn't counted as a line
+  break there, and the indentation check of the next line went by them.
 - **Empty lines after an escaped line break in double quotes** folded as
   after an unescaped one: `"a\<LF><LF>b"` read as `"a b"`. Each is a line
   feed (`"a\nb"`), as YAML 1.2's grammar, libyaml and libfyaml have it. A

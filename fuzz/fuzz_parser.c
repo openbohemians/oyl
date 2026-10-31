@@ -2,7 +2,8 @@
  * fuzz_parser.c — libFuzzer harness for the oyl parser.
  *
  * The first input byte selects options: bit 0 merge keys, bit 1 alias
- * resolution, bit 2 core schema, bits 3-4 emitter style. So both the
+ * resolution, bit 2 core schema, bits 3-4 emitter style, bit 5 go-yaml
+ * v2's dialect, bits 6-7 the upgrade's reader. So both the
  * default incremental parser and the eager path used by merge/resolve are
  * exercised. The remaining bytes are copied into an exact-size heap buffer
  * — not NUL-terminated — so any read past the end of the input is caught
@@ -21,7 +22,10 @@
  *    events (kinds, text, styles, tags, anchors, marks), its structure is
  *    inconsistent, its typed values differ from the schema's, its
  *    lookups disagree with its mappings' entries, or its lookups with the
- *    merges worked out disagree with those walking them.
+ *    merges worked out disagree with those walking them;
+ *  - oyl_upgrade's check of its output fails (a scalar reads otherwise in
+ *    a reader or YAML 1.2 than it decided, or its fixes overlap), or
+ *    upgrading its output changes anything more.
  *
  * Build (via `just fuzz`):
  *   clang -fsanitize=fuzzer,address,undefined -g -O1 -Iinclude \
@@ -485,6 +489,53 @@ static void check_tree(const char *yaml, size_t len, bool dialect, oyl_emit_styl
     oyl_arena_free(aw);
 }
 
+/* Upgrade `yaml` with the reader bits 6-7 pick (none, PyYAML's, go-yaml
+ * v2's, PyYAML's with both flags), as oyl_upgrade checks it; then upgrade
+ * the output, which must change nothing */
+static bool upgrade_once(const char *yaml, size_t len, int reader, unsigned flags, oyl_arena *a,
+                         oyl_str *out, size_t *fixed, bool *escapes) {
+    oyl_parser *p = oyl_parser_new(yaml, len, a);
+    if (!p) return false;
+    oyl_parser_set_max_events(p, MAX_EVENTS);
+    oyl_parser_set_warn(p, check_warning, NULL);
+    if (reader == 1 || reader == 3) oyl_parser_set_dialect(p, oyl_dialect_yaml11());
+    if (reader == 2) oyl_parser_set_dialect(p, oyl_dialect_goyaml2());
+    const oyl_fix *fx;
+    size_t nf;
+    oyl_status st = oyl_upgrade(p, flags, out, &fx, &nf);
+    if (st == OYL_ERR_PARSE && oyl_parser_error(p) && strstr(oyl_parser_error(p), "(a bug in oyl_upgrade)"))
+        __builtin_trap();   /* its check of its output failed */
+    *fixed = 0;
+    *escapes = false;
+    for (size_t i = 0; st == OYL_OK && i < nf; i++) {
+        if (!fx[i].message || fx[i].kind < OYL_FIX_SCALAR || fx[i].kind > OYL_FIX_INDENT)
+            __builtin_trap();
+        if (fx[i].fixed) (*fixed)++;
+        if (fx[i].fixed && fx[i].kind == OYL_FIX_ESCAPE) *escapes = true;
+    }
+    oyl_parser_free(p);
+    return st == OYL_OK;
+}
+
+static void check_upgrade(const char *yaml, size_t len, uint8_t opts) {
+    int reader = (opts >> 6) & 3;
+    unsigned flags = (reader == 3 ? OYL_UPGRADE_KEYS_KEEP_VALUE | OYL_UPGRADE_VALUES_KEEP_TEXT : 0) |
+                     (opts & 1 ? OYL_UPGRADE_KEYS_KEEP_VALUE : 0);
+    oyl_arena *a = oyl_arena_new(4096);
+    if (!a) return;
+    oyl_str out, again;
+    size_t fixed, more;
+    bool escapes, more_escapes;
+    /* the reader unknown, a \' made it go-yaml v2, which the output no
+     * longer shows: upgrade the output as go-yaml v2's */
+    if (upgrade_once(yaml, len, reader, flags, a, &out, &fixed, &escapes) && fixed &&
+        upgrade_once(out.data, out.len, reader == 0 && escapes ? 2 : reader, flags, a, &again, &more,
+                     &more_escapes) &&
+        (more || again.len != out.len || memcmp(again.data, out.data, out.len) != 0))
+        __builtin_trap();   /* upgrading the output changed it */
+    oyl_arena_free(a);
+}
+
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (size < 1) return 0;
     uint8_t flags = data[0];
@@ -534,6 +585,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     int style = (flags >> 3) & 3;
     check_tree(buf, size, flags & 32, style == 1 ? OYL_EMIT_FLOW
                                     : style == 2 ? OYL_EMIT_MINIMAL : OYL_EMIT_BLOCK);
+    check_upgrade(buf, size, flags);
 
     free(before);
     free(after);

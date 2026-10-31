@@ -26,14 +26,14 @@ sanitize:
     make CC=clang \
       CFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g -O1" \
       build/test_scanner build/test_schema build/test_emitter build/test_merge \
-      build/test_resolve build/test_errors build/test_flow build/test_json build/test_dialect build/test_tree build/test_hash build/test_yaml_suite \
+      build/test_resolve build/test_errors build/test_flow build/test_json build/test_dialect build/test_tree build/test_hash build/test_upgrade build/test_yaml_suite \
       $oom_targets >/dev/null
     # allocator_may_return_null: the arena tests request absurd sizes on purpose
     # and expect malloc to fail with NULL, as it does outside ASAN.
     export ASAN_OPTIONS='symbolize=1:halt_on_error=0:detect_leaks=1:strict_string_checks=1:allocator_may_return_null=1'
     export UBSAN_OPTIONS='print_stacktrace=1:halt_on_error=0'
     fail=0
-    for t in test_scanner test_schema test_emitter test_merge test_resolve test_errors test_flow test_json test_dialect test_tree test_hash test_yaml_suite $oom; do
+    for t in test_scanner test_schema test_emitter test_merge test_resolve test_errors test_flow test_json test_dialect test_tree test_hash test_upgrade test_yaml_suite $oom; do
         printf "── %s ──\n" "$t"
         # a test that fails (or that a sanitizer stops) still has its
         # output shown and counted

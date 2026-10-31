@@ -367,6 +367,15 @@ static void test_escaped_break_empty_lines(void) {
     oyl_token toks[8];
     int n = scan_all("\"a\\\n--- b\"", toks, 8);
     if (n > 0 && toks[n - 1].type == OYL_TOK_STREAM_END) { FAIL("a document marker"); return; }
+    /* a lone CR escaped is a line break: the next token's line and column
+     * count from it (found by fuzzing oyl_upgrade) */
+    oyl_token cr[12];
+    n = scan_all("a: \"x\\\r  y\"\nb: 1\n", cr, 12);
+    bool marks = false;
+    for (int i = 0; i < n; i++)
+        if (cr[i].type == OYL_TOK_SCALAR && cr[i].value.len == 1 && cr[i].value.data[0] == 'b')
+            marks = cr[i].start.line == 3 && cr[i].start.col == 1;
+    if (!marks) { FAIL("marks after a lone CR escaped"); return; }
     PASS();
 }
 

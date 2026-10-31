@@ -531,6 +531,58 @@ Each call reads one document; at the end of the stream the tree is NULL.
 `oyl_emit_tree` writes a tree back out as YAML, as emitting its
 document's events would.
 
+## Upgrading YAML 1.1 to 1.2
+
+`oyl_upgrade` makes a YAML 1.1 file read the same in YAML 1.2, rewriting
+only what a 1.2 reader would read otherwise. Comments, layout, quoting and
+key order stay byte for byte, and each change is reported. Name the
+file's reader, and afterwards the file reads the same in it and in 1.2:
+
+```c
+oyl_parser *p = oyl_parser_new(yaml, len, arena);
+oyl_parser_set_dialect(p, oyl_dialect_yaml11());   /* PyYAML reads it (Ansible, ...) */
+oyl_str out;
+const oyl_fix *fixes;
+size_t n;
+if (oyl_upgrade(p, 0, &out, &fixes, &n) == OYL_OK)
+    fwrite(out.data, 1, out.len, stdout);
+```
+
+```yaml
+%YAML 1.1                        ---
+---                              "on":
+on:                                push: {}
+  push: {}                       enabled: true
+enabled: yes             ==>     mode: !!int 0o755
+mode: 0755                       ratio: "1e3"
+ratio: 1e3                       released: !!timestamp 2001-12-14
+released: 2001-12-14
+```
+
+Values keep the meaning the reader gave them (`yes` was true), in a
+spelling both read alike: PyYAML reads a plain `0o755` as text, hence
+`!!int 0o755`, and `1e3` as text, hence `"1e3"`. Keys keep their text,
+since a key that changes meaning is nearly always a word meant as a name
+(`on:` in a GitHub workflow, `NO:` for Norway); `OYL_UPGRADE_KEYS_KEEP_VALUE`
+and `OYL_UPGRADE_VALUES_KEEP_TEXT` flip either. With
+`oyl_dialect_goyaml2()` (Kubernetes manifests), `y` and `n` are booleans
+too, a date stays as it is (go-yaml v2 hands programs its text), and a key
+written before a `<<` whose merge overrides it is commented out, keeping
+what go-yaml v2 read. Leave the dialect unset when the reader is unknown:
+what PyYAML and go-yaml v2 read alike is fixed, and what they read
+otherwise (`1e3`, `1:30`, `y`, dates) is reported for you to decide.
+
+It also removes `%YAML 1.1`, the backslash of `\'` in double quotes, and
+libyaml's other leniencies: a block scalar ending the input without a line
+break gets `|-`, and a quoted scalar's or flow collection's line not
+indented past its block is indented. What can't be fixed is reported and
+left: a rewrite that would make two keys equal, YAML 1.1's `=` key, a
+merge override in a flow mapping. `<<` itself stays, as YAML 1.2 readers
+commonly keep it.
+
+The output is then read in the reader and in YAML 1.2, and if any value
+reads otherwise than decided, `oyl_upgrade` fails rather than return it.
+
 ## Architecture
 
 ```

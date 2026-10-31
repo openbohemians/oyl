@@ -181,9 +181,9 @@ static void test_flow_keys(void) {
     check("?\n: x\n", "{ ~ x }");
     /* a ':' starting its line isn't an implicit key's, so a flow key may
      * follow it, wherever it sits (as the scanner decides); the first is
-     * malformed (the key "0" ends on the line before) but both parse paths
-     * must agree on it */
-    check(":\n0\n : []:", "{ ~ ~ 0 { [ ] ~ } }");
+     * malformed, the key "0" having no ':' on its line, an error since
+     * 2026-10-30 */
+    check(":\n0\n : []:", "{ ~ ~ ERR");
     check("\xEF\xBB\xBF: [g]: x\n", "{ ~ { [ g ] x } }");   /* after a byte order mark */
     /* after a quoted key, blanks may come before the value ':', and the
      * quote that follows opens a scalar: the lookahead must not take it

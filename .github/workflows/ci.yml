@@ -55,7 +55,7 @@ jobs:
           lib /nologo /OUT:build\oyl.lib (Get-ChildItem build\*.obj).FullName
           if ($LASTEXITCODE) { exit 1 }
           $tests = 'scanner', 'yaml_suite', 'schema', 'emitter', 'merge', 'resolve', 'errors',
-                   'flow', 'json', 'dialect', 'tree', 'hash', 'port'
+                   'flow', 'json', 'dialect', 'tree', 'hash', 'port', 'upgrade'
           foreach ($t in $tests) {
             cl @cflags /Isrc test\test_$t.c build\oyl.lib /Fobuild\ /Febuild\test_$t.exe
             if ($LASTEXITCODE) { exit 1 }

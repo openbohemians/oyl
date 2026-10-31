@@ -511,6 +511,38 @@ static outcome json_k8s(void) {
     return st == OYL_OK ? DONE : failed(st);
 }
 
+/* A YAML 1.1 file made YAML 1.2, by each reader */
+static const char UPGRADE_IN[] =
+    "%YAML 1.1\n---\non:\n  push: {}\nenabled: yes  # mine\nmode: 0755\nratio: 1e3\n"
+    "released: 2001-12-14\nyes: 1\n\"yes\": 2\nflow: [a,\nb]\nq: \"x\n\ty\"\n"
+    "base: &b {host: x}\ndev:\n  host: y\n  <<: *b\nblock: |\n  text";
+
+static outcome upgrade_by(int reader) {
+    oyl_arena *a = oyl_arena_new(4096);
+    if (!a) return OUT_OF_MEMORY;
+    oyl_parser *p = oyl_parser_new(UPGRADE_IN, strlen(UPGRADE_IN), a);
+    if (!p) { oyl_arena_free(a); return OUT_OF_MEMORY; }
+    if (reader == 1) oyl_parser_set_dialect(p, oyl_dialect_yaml11());
+    if (reader == 2) oyl_parser_set_dialect(p, oyl_dialect_goyaml2());
+    oyl_str o;
+    const oyl_fix *fx;
+    size_t nf;
+    oyl_status st = oyl_upgrade(p, 0, &o, &fx, &nf);
+    if (st == OYL_OK) {
+        put_str(o);
+        for (size_t i = 0; i < nf; i++) {
+            put_str(fx[i].after);
+            put_str((oyl_str){ fx[i].message, strlen(fx[i].message) });
+        }
+    }
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+    return st == OYL_OK ? DONE : failed(st);
+}
+static outcome upgrade_unknown(void) { return upgrade_by(0); }
+static outcome upgrade_pyyaml(void) { return upgrade_by(1); }
+static outcome upgrade_goyaml2(void) { return upgrade_by(2); }
+
 /* Events fed to the emitter, in each style */
 static outcome emit(const char *yaml) {
     oyl_arena *a = oyl_arena_new(4096);
@@ -767,6 +799,9 @@ int main(void) {
     run("emitting", emit_rich);
     run("emitting, deep", emit_deep);
     run("emitting, built", emit_built);
+    run("upgrading", upgrade_pyyaml);
+    run("upgrading, go-yaml v2", upgrade_goyaml2);
+    run("upgrading, by both", upgrade_unknown);
     run("schema and dialect", schema_and_dialect);
     run("schema, many rules", schema_many_rules);
     run("tokens", tokens);
