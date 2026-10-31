@@ -77,6 +77,19 @@ the bindings (asking before each tag).
   `yaml` package read every default output alike (dates aside, both
   timestamps); the suite's 312 valid cases; 264 end-of-input shapes.
 
+- **Step 5 built 2026-10-30**: each binding on an `upgrade` branch,
+  vendoring Oyl `800da1b` (`upgrade`, with the key-clash fix found by
+  fuzzing): oyl.cr `7719b95` `Oyl.upgrade(data, from:, keys_keep_value:,
+  values_keep_text:) : {String, Array(Oyl::Fix)}`; oyl.rs `01f8f86`
+  `oyl::upgrade(&str, &Upgrade) -> Result<(String, Vec<Fix>)>`, `Upgrade`
+  from a `Dialect` or `default()`, oyl-sys `oyl_fix` in the layout test,
+  `Syntax::FLOW_INDENT`; oyl.go `e0b13c5` `oyl.Upgrade(in, opts...)
+  ([]byte, []Fix, error)` with `WithDialect`, `UpgradeKeysKeepValue()`,
+  `UpgradeValuesKeepText()`. Each with tests and a README section; all
+  pass locally (crystal spec 93, cargo test + clippy -D warnings + doc,
+  go vet + test). Pushed for CI 2026-10-30.
+- **Next: step 6**, Oyl 1.4.0 (merge `upgrade` into main, bump, ask the
+  user before tagging), then each binding vendors v1.4.0 and releases.
 ## What it does
 
 It takes a file written for a YAML 1.1 reader (PyYAML and everything on
