@@ -1,11 +1,12 @@
 # Upgrade: a YAML 1.1 file made YAML 1.2 in place — design, agreed
 
-*Updated 2026-10-30*
+*Updated 2026-10-31*
 
 **Proposed 2026-10-29** (the user: "feel free to design the in place 1.1
 -> 1.2 touch-up convertor"); **agreed 2026-10-30**, every decision
 settled (the list at the end; the user on the last five: "I think those
-seem the most reasonable choices"). Nothing built. It works without
+seem the most reasonable choices"). **Built and released**: Oyl 1.4.0
+(2026-10-30) and the three bindings (2026-10-31). It works without
 being told the reader, and does more when told ("Without a dialect"; the
 user's idea, agreed 2026-10-29). Named "upgrade" (the user agreed
 2026-10-30; first called the touch-up). Values keep the source's
@@ -88,8 +89,10 @@ the bindings (asking before each tag).
   `UpgradeValuesKeepText()`. Each with tests and a README section; all
   pass locally (crystal spec 93, cargo test + clippy -D warnings + doc,
   go vet + test). Pushed for CI 2026-10-30.
-- **Next: step 6**, Oyl 1.4.0 (merge `upgrade` into main, bump, ask the
-  user before tagging), then each binding vendors v1.4.0 and releases.
+- **Step 6 done**: `upgrade` merged into main, Oyl v1.4.0 released
+  2026-10-30 (`e8f1230`); the bindings vendor it and were released
+  2026-10-31: oyl.cr 0.6.0, oyl.rs 0.4.0, oyl.go v0.3.0 (release.md,
+  Status). The `upgrade` branches are deleted.
 ## What it does
 
 It takes a file written for a YAML 1.1 reader (PyYAML and everything on

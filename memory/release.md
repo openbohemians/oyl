@@ -1,6 +1,6 @@
 # Release 1.0
 
-*Updated 2026-10-30*
+*Updated 2026-10-31*
 
 ## Status
 
@@ -15,10 +15,11 @@
   final code. Only `oyl_upgrade` is a new export. Bindings re-vendored at
   the tag the same day, each with its upgrade function: oyl.cr `3796835`
   (0.6.0), oyl.rs `cfb7070` (0.4.0, oyl-sys 0.4.0+1.4.0), oyl.go
-  `c11e4e2`; CI green on all three, Windows included. **Their releases
-  wait on the user**: crates.io (oyl-sys then oyl), oyl.cr tag `v0.6.0`,
-  oyl.go tag `v0.3.0` with a GitHub release. The `upgrade` branches (all
-  four repositories) can go once those are out.
+  `c11e4e2`; CI green on all three, Windows included. **Released
+  2026-10-31** (the user: "go ahead"): oyl-sys 0.4.0+1.4.0 and oyl 0.4.0
+  on crates.io, oyl.cr tag `v0.6.0`, oyl.go tag `v0.3.0` with a GitHub
+  release (on the module proxy). The `upgrade` branches are deleted in
+  all four repositories, local and remote.
 - **v1.3.0 is released** (2026-10-29, tag on `c131bc0`; the user said
   "go" and pushed the tag and release): Windows with MSVC, parsing up to
   2.8x as fast, block properties without the eager parser, exact long

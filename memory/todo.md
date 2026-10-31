@@ -1,11 +1,11 @@
 # TODO
 
-*Updated 2026-10-29*
+*Updated 2026-10-31*
 
 Small deferred tasks: each is agreed or obvious, but none is planned yet.
 Larger features go in ideas.md, and the order of work in roadmap.md.
 
-- **Upgrade (first called the touch-up): make a YAML 1.1 file YAML 1.2 in place** (**Open**; the
+- **Upgrade (first called the touch-up): make a YAML 1.1 file YAML 1.2 in place** (**Done**; the
   user put it on this list 2026-10-28, after the Oyl release and the
   bindings). Read the file once with the source dialect (yaml11 or
   goyaml2); where a scalar's value differs from what YAML 1.2 Core reads,
@@ -19,7 +19,8 @@ Larger features go in ideas.md, and the order of work in roadmap.md.
   :yaml11).to_yaml` in oyl.cr 0.4.0) already works, but loses comments
   and layout. **Design agreed 2026-10-30: upgrade-design.md** (proposed
   2026-10-29, after the 1.3.0 release; every decision settled by the
-  user). Not built: the next step is building it, when the user says.
+  user). **Done: released in Oyl 1.4.0 (2026-10-30) and the bindings
+  (2026-10-31).**
 - **Build with MSVC** (**Done, merged into main 2026-10-28**; the user
   agreed 2026-10-26 and said "start on the MSVC build" 2026-10-27).
   oyl.rs's Windows CI job failed because MSVC, Rust's default C compiler
