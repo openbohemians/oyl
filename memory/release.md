@@ -1,9 +1,24 @@
 # Release 1.0
 
-*Updated 2026-10-29*
+*Updated 2026-10-30*
 
 ## Status
 
+- **v1.4.0 is released** (2026-10-30, tag on `e8f1230`; the user said "go
+  ahead"): `oyl_upgrade` (upgrade-design.md), the 1.1 dialects reading
+  libyaml's loosely indented lines (`OYL_SYNTAX_FLOW_INDENT`), seven YAML
+  1.2 parsing fixes found while building and fuzzing it. Notes: the
+  changelog's 1.4.0 section. The Package workflow (run 41161436475)
+  attached the 9 files. Tagged after main's CI, the Package dry run
+  (41159002185), the fuzz build and CodeQL passed, and two clean local
+  25-minute fuzz runs in a row (about a million inputs each) on the
+  final code. Only `oyl_upgrade` is a new export. Bindings re-vendored at
+  the tag the same day, each with its upgrade function: oyl.cr `3796835`
+  (0.6.0), oyl.rs `cfb7070` (0.4.0, oyl-sys 0.4.0+1.4.0), oyl.go
+  `c11e4e2`; CI green on all three, Windows included. **Their releases
+  wait on the user**: crates.io (oyl-sys then oyl), oyl.cr tag `v0.6.0`,
+  oyl.go tag `v0.3.0` with a GitHub release. The `upgrade` branches (all
+  four repositories) can go once those are out.
 - **v1.3.0 is released** (2026-10-29, tag on `c131bc0`; the user said
   "go" and pushed the tag and release): Windows with MSVC, parsing up to
   2.8x as fast, block properties without the eager parser, exact long
