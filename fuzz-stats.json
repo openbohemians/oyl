@@ -3,12 +3,12 @@
   "runs_counted": 270,
   "first_run": "2026-09-24T14:28:34Z",
   "release": {
-    "tag": "v1.3.0",
-    "published": "2026-10-29T09:27:04Z"
+    "tag": "v1.4.0",
+    "published": "2026-10-31T02:45:45Z"
   },
-  "release_executions": 83165087,
-  "release_runs": 10,
-  "updated": "2026-10-30T23:41:23Z",
+  "release_executions": 0,
+  "release_runs": 0,
+  "updated": "2026-10-31T02:46:00Z",
   "runs": {
     "37105328217": {
       "executions": 75464518,
