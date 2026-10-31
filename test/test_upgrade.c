@@ -167,6 +167,12 @@ static void test_reported(void) {
            !r.fixes[0].fixed && strstr(r.texts[0][2], "two keys equal"), "two keys made equal: left");
 
     /* YAML 1.1's = key */
+    /* two keys the source already read as one are rewritten alike (found
+     * by fuzzing) */
+    r = upgrade("m: {on: 1, yes: 2}\n", PYYAML, OYL_UPGRADE_KEYS_KEEP_VALUE);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "m: {true: 1, true: 2}\n") == 0 && r.fixed == 2,
+           "two keys PyYAML read as one: rewritten alike");
+
     r = upgrade("=: v\n", PYYAML, 0);
     ASSERT(r.status == OYL_OK && r.nfixes == 1 && !r.fixes[0].fixed, "= : left");
 

@@ -607,7 +607,21 @@ static void decide(upgrade *u, doc *d, uint32_t i) {
     pl->expect = target->key;
 }
 
-/* Undo the rewrite of keys that would equal another key of their mapping */
+/* Do the source's readers all read scalars a and b as one key? */
+static bool same_in_source(upgrade *u, const oyl_tree *t, uint32_t a, uint32_t b) {
+    for (int r = 0; r < u->nsrc; r++) {
+        reading x = read_as(&u->src[r], oyl_node_text(t, a), (oyl_scalar_style)t->nodes[a].style,
+                            explicit_tag(t, a));
+        reading y = read_as(&u->src[r], oyl_node_text(t, b), (oyl_scalar_style)t->nodes[b].style,
+                            explicit_tag(t, b));
+        if (!x.ok || !y.ok || !same(&x, &y)) return false;
+    }
+    return true;
+}
+
+/* Undo the rewrite of keys that would equal another key of their mapping,
+ * one the source read as another key (two keys the source already read as
+ * one stay one, rewritten alike) */
 static void key_clashes(upgrade *u, doc *d, uint32_t m) {
     const oyl_tree *t = d->tree;
     const oyl_node *nodes = t->nodes;
@@ -620,7 +634,8 @@ static void key_clashes(upgrade *u, doc *d, uint32_t m) {
             uint32_t o = m + 1;
             for (uint32_t pj = 0; pj < npairs && !clash; pj++) {
                 uint32_t ov = o + nodes[o].span;
-                if (o != k && nodes[o].kind == OYL_NODE_SCALAR && d->plan[o].what != N_REMOVED) {
+                if (o != k && nodes[o].kind == OYL_NODE_SCALAR && d->plan[o].what != N_REMOVED &&
+                    !same_in_source(u, t, k, o)) {
                     oyl_str text = oyl_node_text(t, o), own = explicit_tag(t, o);
                     oyl_scalar_style st = (oyl_scalar_style)nodes[o].style;
                     reading want = { true, d->plan[k].expect };
