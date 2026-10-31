@@ -113,8 +113,22 @@ Where the bindings fall after step 3 isn't decided.
   `oyl_node_props`, `oyl_go_aux`, pairs, pool) hold no pointers, so Go can
   read them in the module's memory in place; oyl.go makes seven C calls
   (`oyl_go_open/next/mark/close`, `emit`, `upgrade`, `yaml_to_json`).
-  Not measured: ccgo (C translated to Go, as modernc.org/sqlite): the
-  auto-mode classifier blocked installing it; asked the user.
+  With wazero's disk cache (`NewCompilationCacheWithDir`, 1.1 MB) later
+  runs load it in 3 ms, but the library would have to write it somewhere.
+  **ccgo** (the user: "yes, try ccgo"; ccgo v4.38.0, modernc.org/libc
+  v1.79.0): Oyl's C with the SSE paths and `HOT_ALIGNED` off translates
+  to one Go file per target, 35,658 lines, 1.4 MB. Output equals cgo's on
+  all 855; **149 MB/s** (2.9x sigs.k8s.io/yaml, 1.5x wazero; cgo 384 in
+  that run), no start-up cost, +1.6 MB to a stripped binary; modernc's
+  libc covers linux amd64/arm64/386/arm/ppc64le/s390x/riscv64/loong64,
+  darwin, windows, the BSDs. **But modernc.org/libc is 95 MB in the module
+  cache and 71 MB vendored** (plus mathutil, memory, uuid, go-humanize,
+  go-isatty, go-strftime, bigfft). ccgo's `-libc` names another library:
+  the translated Oyl calls about 40 C functions (malloc family, mem/str,
+  strtod, snprintf, qsort, errno, overflow builtins; fopen/fstat only for
+  `oyl_arena`'s file reading, time/clock/getrandom only for the hash key),
+  so a small one of our own is possible. Translating needs ccgo run inside
+  a module requiring modernc.org/libc, with `TMPDIR` outside it.
 - go-yaml (`gopkg.in/yaml.v3`) was archived on 2025-04-01; the YAML
   organization maintains `go.yaml.in/yaml/v3` (frozen) and v4 (release
   candidates in 2026). The ecosystem is mid-migration.
