@@ -1,6 +1,6 @@
 # Outreach and sponsorship
 
-*Updated 2026-10-10*
+*Updated 2026-10-31*
 
 The user means Oyl to be a pillar of Open Bohemians, funded by people and
 companies who use it.
@@ -24,6 +24,14 @@ changed 2026-10-10, see [roadmap.md](roadmap.md)).
 
 Contacting people reaches beyond the agent network: draft, and send nothing
 without the user's go-ahead.
+
+## A business around Oyl (the user's idea, 2026-10-31; not decided)
+
+The user floated selling maintenance and support for "ultra high speed
+YAML", around the YAML service. Also the user's stance that day: don't
+wait for someone to ask; find the need, fill it, promote it. The first
+documented need found: Helm repository index loading (roadmap.md, oyl.go:
+5-6x faster, a quarter of the memory, on Bitnami's index).
 
 ## To weigh when the time comes (not decided)
 
