@@ -129,6 +129,20 @@ Where the bindings fall after step 3 isn't decided.
   `oyl_arena`'s file reading, time/clock/getrandom only for the hash key),
   so a small one of our own is possible. Translating needs ccgo run inside
   a module requiring modernc.org/libc, with `TMPDIR` outside it.
+  **A YAML service on a pipe** (the user's idea, 2026-10-31, "taking a
+  page out of Elixir's handbook": an Erlang Port rather than a NIF; also
+  weighing a hand port to Go, Oyl's C being 13,300 lines of code). Trial:
+  a C program with Oyl linked in (353 KB) reading length-framed requests
+  on stdin, replying on stdout; a Go client over `os/exec` pipes. Output
+  equals cgo's on all 855 and the 12 small manifests. Client on CPU 3,
+  service on CPU 1 / both on CPU 3: an empty round trip 3.4 / 2.4 µs,
+  8.5 KB each way 9.9 / 4.7 µs; starting the process plus a first round
+  trip 0.27 ms. YAMLToJSON on the 855: **277 / 320 MB/s** (cgo 390,
+  sigs.k8s.io/yaml 50: 5.5x / 6.4x); on the small manifests (348 bytes
+  each) 36 / 53 MB/s (cgo 96, sigs 16: 2.2x / 3.5x). The open question is
+  getting the binary onto the machine, not speed. Not measured: decoding
+  (the tree's arrays back over the pipe), several processes for
+  concurrent callers.
 - go-yaml (`gopkg.in/yaml.v3`) was archived on 2025-04-01; the YAML
   organization maintains `go.yaml.in/yaml/v3` (frozen) and v4 (release
   candidates in 2026). The ecosystem is mid-migration.
