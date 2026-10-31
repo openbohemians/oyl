@@ -31,7 +31,8 @@ The user floated selling maintenance and support for "ultra high speed
 YAML", around the YAML service. Also the user's stance that day: don't
 wait for someone to ask; find the need, fill it, promote it. The first
 documented need found: Helm repository index loading (roadmap.md, oyl.go:
-5-6x faster, a quarter of the memory, on Bitnami's index).
+5-6x faster, a quarter of the memory, on Bitnami's index). Who has that
+pain, and who might pay: [prospects.md](prospects.md).
 
 ## To weigh when the time comes (not decided)
 

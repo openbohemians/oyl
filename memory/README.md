@@ -34,6 +34,7 @@ was split from that history. Older citations such as
 | [review.md](review.md) | The pre-1.2.0 code review: static analysis, CodeQL and coverage results (layer 1), open findings |
 | [todo.md](todo.md) | Small deferred tasks: the YAML 1.1 → 1.2 upgrade, public `oyl_tree_json`, an emitter whitespace nit |
 | [outreach.md](outreach.md) | GitHub Sponsors, and the plan to reach heavy YAML users |
+| [prospects.md](prospects.md) | Who pays for YAML at scale: ranked prospects with public evidence (Helm index pain first) |
 | [perdoc-fallback-prototype.patch](perdoc-fallback-prototype.patch) | Prototype of per-document eager fallback (release.md issue 3), against `d6b8afb` |
 
 Keep each note short and dated (`*Updated YYYY-MM-DD*`), with absolute
