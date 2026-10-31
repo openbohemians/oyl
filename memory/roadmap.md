@@ -1,6 +1,6 @@
 # Roadmap after 1.0
 
-*Updated 2026-10-28*
+*Updated 2026-10-31*
 
 The order the user agreed on 2026-10-11 (revised from 2026-10-10, when the
 tree came first; YAMLToJSON needs no tree, so it moved ahead):
@@ -95,7 +95,26 @@ Where the bindings fall after step 3 isn't decided.
   toolchain), where a cgo-only package doesn't build. Plan a fallback
   behind a build tag with the same API: go-yaml, or Oyl compiled to
   WebAssembly and run by wazero (as `ncruces/go-sqlite3` ships SQLite).
-  Only once cgo benchmarks justify it.
+  Only once cgo benchmarks justify it. **Chosen next by the user
+  (2026-10-31, "Go gap"), after 1.4.0's bindings. Measured 2026-10-31**
+  (scratchpad trial, YAMLToJSON on the 855 Kubernetes documents, CPU 3):
+  Oyl builds for `wasm32-wasip1` with the local clang 23 and
+  `/usr/share/wasi-sysroot` unchanged except `clock` (the hash key's
+  fallback; a port would use `getentropy` under `__wasi__`): 246 KB, 87 KB
+  gzipped. Under wazero v1.12.0 its output equals cgo's on all 855.
+  Speed: cgo 372 MB/s, wazero's compiler 96 (sigs.k8s.io/yaml 52: 1.9x),
+  wazero's interpreter 1.8 (its only mode off amd64/arm64: unusable);
+  `-msimd128` changes nothing. Native C with Oyl's SIMD off runs 307
+  against 396, so wazero's code is about 3.2x slower than clang's on the
+  same C, and WebAssembly SIMD kernels could reach about 120 at most.
+  Costs: 106 ms to compile the module once per process (a CLI pays it on
+  every run), +3.9 MB to a stripped binary (wazero plus the module;
+  wazero needs only `golang.org/x/sys`). The decoder's arrays (`oyl_node`,
+  `oyl_node_props`, `oyl_go_aux`, pairs, pool) hold no pointers, so Go can
+  read them in the module's memory in place; oyl.go makes seven C calls
+  (`oyl_go_open/next/mark/close`, `emit`, `upgrade`, `yaml_to_json`).
+  Not measured: ccgo (C translated to Go, as modernc.org/sqlite): the
+  auto-mode classifier blocked installing it; asked the user.
 - go-yaml (`gopkg.in/yaml.v3`) was archived on 2025-04-01; the YAML
   organization maintains `go.yaml.in/yaml/v3` (frozen) and v4 (release
   candidates in 2026). The ecosystem is mid-migration.
