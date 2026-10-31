@@ -1,3 +1,24 @@
+oyl (1.4.0-1) unstable; urgency=medium
+
+  * oyl_upgrade: a YAML 1.1 file made YAML 1.2 in place. Only what a
+    1.2 reader reads otherwise is rewritten, the rest kept byte for byte,
+    and each change reported; the output is checked in the file's reader
+    and in YAML 1.2 before it is returned.
+  * The YAML 1.1 and go-yaml v2 dialects read a quoted scalar's or flow
+    collection's lines not indented past their block, as libyaml does,
+    with a warning (OYL_SYNTAX_FLOW_INDENT).
+  * Seven fixes to YAML 1.2 parsing, found by comparing with PyYAML,
+    go-yaml v2 and the yaml package and by fuzzing the upgrade: a tab
+    after a line break counted as indentation, a key's ':' on the next
+    line, two tags or anchors on one node, a repeated block header
+    indicator, empty lines in flow and after an escaped line break, and
+    marks after an escaped lone CR. Input Oyl read wrongly is now an
+    error, or read right.
+  * API and ABI compatible with 1.0: the runtime library is still
+    liboyl.so.1.
+
+ -- Thomas Sawyer <transfire@gmail.com>  Fri, 30 Oct 2026 21:52:08 -0400
+
 oyl (1.3.0-1) unstable; urgency=medium
 
   * Windows: builds with MSVC on x64, 32-bit x86 and ARM64, tested in CI.

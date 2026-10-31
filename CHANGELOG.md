@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 1.4.0 (2026-10-30)
+
+`oyl_upgrade` makes a YAML 1.1 file read the same in YAML 1.2 in place,
+and seven fixes to YAML 1.2 parsing, found by comparing with PyYAML,
+go-yaml v2 and the `yaml` package and by fuzzing the upgrade, make input
+Oyl read wrongly an error, or read it right. Programs built against 1.0
+keep compiling and working: the API only grows (`oyl_upgrade`,
+`OYL_SYNTAX_FLOW_INDENT`), and the ABI is unchanged (`liboyl.so.1`).
 
 ### Added
 
@@ -56,6 +63,10 @@
 - **Marks after an escaped lone CR in double quotes** (`"a\<CR>b"`)
   counted on along the line before, since the CR wasn't counted as a line
   break there, and the indentation check of the next line went by them.
+- **The end-of-input leniency's warning** (`OYL_SYNTAX_EOF_NO_BREAK`) came
+  where dropping the line feed changed nothing (`|\n z\n `, whose last
+  line ends, an empty one after it): clipping gives the line feed either
+  way.
 - **Empty lines after an escaped line break in double quotes** folded as
   after an unescaped one: `"a\<LF><LF>b"` read as `"a b"`. Each is a line
   feed (`"a\nb"`), as YAML 1.2's grammar, libyaml and libfyaml have it. A
