@@ -23,6 +23,8 @@
  *    inconsistent, its typed values differ from the schema's, its
  *    lookups disagree with its mappings' entries, or its lookups with the
  *    merges worked out disagree with those walking them;
+ *  - the output taken after each document (oyl_emitter_take) isn't,
+ *    joined, the output written without taking it;
  *  - oyl_upgrade's check of its output fails (a scalar reads otherwise in
  *    a reader or YAML 1.2 than it decided, or its fixes overlap), or
  *    upgrading its output changes anything more.
@@ -423,17 +425,41 @@ static void check_one_tree(oyl_parser *pe, oyl_emitter *ee, oyl_status *est, oyl
     (void)yaml; (void)len;
 }
 
+/* Append what `e` hands over to the buffer at *buf: a piece ends with a
+ * line break */
+static oyl_status take_append(oyl_emitter *e, char **buf, size_t *len, size_t *cap) {
+    oyl_str piece;
+    oyl_status st = oyl_emitter_take(e, &piece);
+    if (st != OYL_OK) return st;
+    if (piece.len && piece.data[piece.len - 1] != '\n') __builtin_trap();
+    if (piece.len > *cap - *len) {
+        size_t c = 2 * (*len + piece.len);
+        char *b = realloc(*buf, c);
+        if (!b) return OYL_ERR_MEMORY;
+        *buf = b;
+        *cap = c;
+    }
+    if (piece.len) memcpy(*buf + *len, piece.data, piece.len);
+    *len += piece.len;
+    return OYL_OK;
+}
+
 /* Trees for every document, against the events; emitted in `style`,
- * they must write what the events write */
+ * they must write what the events write, and the same again with the
+ * output taken after each */
 static void check_tree(const char *yaml, size_t len, bool dialect, oyl_emit_style style) {
     oyl_arena *ae = oyl_arena_new(4096), *at = oyl_arena_new(4096), *aw = oyl_arena_new(4096);
     oyl_parser *pe = ae ? oyl_parser_new(yaml, len, ae) : NULL;
     oyl_parser *pt = at ? oyl_parser_new(yaml, len, at) : NULL;
     oyl_emitter *ee = ae ? oyl_emitter_new(ae) : NULL, *et = at ? oyl_emitter_new(at) : NULL;
-    if (pe && pt && aw && ee && et) {
+    oyl_emitter *ek = at ? oyl_emitter_new(at) : NULL;
+    char *taken = NULL;
+    size_t taken_len = 0, taken_cap = 0;
+    if (pe && pt && aw && ee && et && ek) {
         oyl_emitter_set_style(ee, style);
         oyl_emitter_set_style(et, style);
-        oyl_status est = OYL_OK, tst = oyl_emit_stream_start(et);
+        oyl_emitter_set_style(ek, style);
+        oyl_status est = OYL_OK, tst = oyl_emit_stream_start(et), kst = oyl_emit_stream_start(ek);
         bool done = false;
         oyl_parser_set_max_events(pe, MAX_EVENTS);
         oyl_parser_set_max_events(pt, MAX_EVENTS);
@@ -470,16 +496,27 @@ static void check_tree(const char *yaml, size_t len, bool dialect, oyl_emit_styl
             if (!t || e->type != OYL_EVT_DOC_START) __builtin_trap();
             check_one_tree(pe, ee, &est, t, yaml, len, lines, aw);
             if (tst == OYL_OK) tst = oyl_emit_tree(et, t);
+            if (kst == OYL_OK) kst = oyl_emit_tree(ek, t);
+            if (kst == OYL_OK) kst = take_append(ek, &taken, &taken_len, &taken_cap);
             oyl_tree_free(t);
         }
         if (tst == OYL_OK) tst = oyl_emit_stream_end(et);
+        if (kst == OYL_OK) kst = oyl_emit_stream_end(ek);
+        if (kst == OYL_OK) kst = take_append(ek, &taken, &taken_len, &taken_cap);
         if (est != OYL_OK) __builtin_trap();   /* the parser's events didn't emit */
         if (done) {
             if (tst != OYL_OK && tst != OYL_ERR_MEMORY) __builtin_trap();   /* the tree didn't emit */
             oyl_str x = oyl_emitter_output(ee), y = oyl_emitter_output(et);
             if (tst == OYL_OK && !same_str(x, y)) __builtin_trap();   /* it wrote something else */
+            /* taken after each document: the same output, or the same error */
+            if (kst != tst && kst != OYL_ERR_MEMORY && tst != OYL_ERR_MEMORY) __builtin_trap();
+            if (tst == OYL_OK && kst == OYL_OK && y.data &&
+                !same_str(y, (oyl_str){ taken ? taken : "", taken_len }))
+                __builtin_trap();   /* taking the output changed it */
         }
     }
+    free(taken);
+    if (ek) oyl_emitter_free(ek);
     if (ee) oyl_emitter_free(ee);
     if (et) oyl_emitter_free(et);
     if (pe) oyl_parser_free(pe);

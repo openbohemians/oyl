@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`oyl_emitter_take`: the output handed over between documents.** The
+  emitter kept a stream's whole output until the end; a program can now
+  take it after each document and write it out, so a stream of many
+  documents is held one document at a time. The output is the same,
+  byte for byte, taken or not. Inside a document it is `OYL_ERR_EMIT`,
+  and the emitter goes on. The piece points into the emitter's buffer,
+  valid until the next call on it: no copy, nothing to free.
+
 ## 1.4.0 (2026-10-30)
 
 `oyl_upgrade` makes a YAML 1.1 file read the same in YAML 1.2 in place,

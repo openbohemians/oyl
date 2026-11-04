@@ -1267,6 +1267,179 @@ static void test_directives(void) {
     oyl_arena_free(a);
 }
 
+/* Emit the events of `yaml` in `style` into `buf`, taking the output after
+ * each document and at the end, or (!take) all at once. `*left` is what
+ * oyl_emitter_output() still gives after the last take. */
+static oyl_status emit_pieces(const char *yaml, oyl_emit_style style, bool take,
+                              char *buf, size_t cap, size_t *len, size_t *left) {
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_parser *p = oyl_parser_new(yaml, strlen(yaml), a);
+    oyl_emitter *e = oyl_emitter_new(a);
+    oyl_emitter_set_style(e, style);
+    const oyl_event *evt;
+    oyl_status st;
+    oyl_str piece;
+    *len = *left = 0;
+    while ((st = oyl_parse_next(p, &evt)) == OYL_OK) {
+        if (evt->type == OYL_EVT_DOC_START) {
+            int major, minor;
+            oyl_str h, pf;
+            if (oyl_parser_yaml_version(p, &major, &minor)) oyl_emit_yaml_directive(e, major, minor);
+            for (int i = 0; oyl_parser_tag_directive(p, i, &h, &pf); i++) oyl_emit_tag_directive(e, h, pf);
+        }
+        if ((st = oyl_emit(e, evt)) != OYL_OK) break;
+        if (take && (evt->type == OYL_EVT_DOC_END || evt->type == OYL_EVT_STREAM_END)) {
+            if ((st = oyl_emitter_take(e, &piece)) != OYL_OK) break;
+            if (piece.len && piece.data[piece.len - 1] != '\n') st = OYL_ERR_INPUT;   /* no line break */
+            if (*len + piece.len > cap) st = OYL_ERR_LIMIT;
+            if (st != OYL_OK) break;
+            memcpy(buf + *len, piece.data, piece.len);
+            *len += piece.len;
+        }
+        if (evt->type == OYL_EVT_STREAM_END) break;
+    }
+    if (st == OYL_OK) {
+        oyl_str rest = oyl_emitter_output(e);
+        *left = rest.len;
+        if (*len + rest.len > cap) st = OYL_ERR_LIMIT;
+        else if (rest.len) memcpy(buf + *len, rest.data, rest.len), *len += rest.len;
+    }
+    oyl_emitter_free(e);
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+    return st;
+}
+
+/* The output taken between documents: joined, the pieces are the output
+ * written without them, in every style; inside a document a take is
+ * refused and changes nothing */
+static void test_take(void) {
+    printf("test_take:\n");
+    static const char *streams[] = {
+        "a: 1\n--- b\n--- |\n c\n...\n--- [d]\n",
+        "%YAML 1.2\n---\na\n...\n%TAG !e! tag:e.com,2000:\n--- !e!x\nb\n",
+        "---\n---\n...\n- x\n--- >\n folded\n\n--- 'q'\n--- \"d\"\n",
+        "k: &a v\nl: *a\n--- {a: [b, {c: d}]}\n--- !!str 1\n...\n",
+        "a:\n- \n---\n? [x]\n: y\n--- |-\n  no break\n",
+        "# nothing\n",
+        "",
+        "plain\n",
+    };
+    static char x[8192], y[8192];
+    size_t xn, yn, left;
+    for (size_t i = 0; i < sizeof streams / sizeof *streams; i++) {
+        for (int style = OYL_EMIT_BLOCK; style <= OYL_EMIT_MINIMAL; style++) {
+            oyl_status sx = emit_pieces(streams[i], (oyl_emit_style)style, false, x, sizeof x, &xn, &left);
+            oyl_status sy = emit_pieces(streams[i], (oyl_emit_style)style, true, y, sizeof y, &yn, &left);
+            bool same = sx == OYL_OK && sy == OYL_OK && xn == yn && memcmp(x, y, xn) == 0 && left == 0;
+            if (!same)
+                printf("    stream %zu, style %d: %s / %s\n      all:   \"%.*s\"\n      taken: \"%.*s\"\n", i, style,
+                       oyl_status_str(sx), oyl_status_str(sy), (int)xn, x, (int)yn, y);
+            ASSERT(same, "the pieces joined are the output");
+        }
+    }
+
+    /* by hand: a document that ends inside its line, directives after it */
+    oyl_arena *a = oyl_arena_new(4096);
+    for (int take = 0; take < 2; take++) {
+        oyl_emitter *e = oyl_emitter_new(a);
+        oyl_str p;
+        size_t n = 0;
+#define TAKE(want) do { \
+        if (take) { \
+            ASSERT(oyl_emitter_take(e, &p) == OYL_OK, "a take between documents"); \
+            ASSERT(p.len == strlen(want) && memcmp(p.data, want, p.len) == 0, "takes " #want); \
+            memcpy(y + n, p.data, p.len); \
+            n += p.len; \
+        } \
+    } while (0)
+        TAKE("");                              /* before the stream: nothing */
+        oyl_emit_stream_start(e);
+        TAKE("");
+        oyl_emit_document_start(e, true);
+        if (take) {
+            ASSERT(oyl_emitter_take(e, &p) == OYL_ERR_EMIT && p.len == 0, "refused inside a document");
+        }
+        scalar(e, S("a"));
+        if (take) {
+            ASSERT(oyl_emitter_take(e, &p) == OYL_ERR_EMIT && p.len == 0, "refused after the root too");
+        }
+        oyl_emit_document_end(e, true);
+        TAKE("a\n");                           /* the line break the next would write */
+        TAKE("");                              /* twice: nothing more */
+        if (take) {
+            ASSERT(str_eq(oyl_emitter_output(e), ""), "the output since the take: none");
+        }
+        oyl_emit_yaml_directive(e, 1, 2);
+        TAKE("");                              /* a directive waits for its document */
+        oyl_emit_document_start(e, false);
+        scalar(e, S("b"));
+        oyl_emit_document_end(e, true);
+        if (take) {
+            ASSERT(str_eq(oyl_emitter_output(e), "...\n%YAML 1.2\n---\nb"), "the output since the take");
+        }
+        TAKE("...\n%YAML 1.2\n---\nb\n");
+        oyl_emit_document_start(e, true);
+        oyl_emit_sequence_start(e, N, N, false);
+        scalar(e, S("c"));
+        oyl_emit_sequence_end(e);
+        oyl_emit_document_end(e, false);
+        TAKE("---\n- c\n...\n");
+        oyl_emit_document_start(e, true);
+        scalar(e, S(""));
+        oyl_emit_document_end(e, true);
+        ASSERT(oyl_emit_stream_end(e) == OYL_OK, "the stream ends");
+        TAKE("---\n");
+        TAKE("");                              /* after the end: nothing */
+        if (take) {
+            ASSERT(n == xn && memcmp(x, y, n) == 0, "by hand, the pieces joined are the output");
+        } else {
+            oyl_str all = oyl_emitter_output(e);
+            memcpy(x, all.data, all.len);
+            xn = all.len;
+            ASSERT(str_eq(all, "a\n...\n%YAML 1.2\n---\nb\n---\n- c\n...\n---\n"), "the whole output");
+        }
+#undef TAKE
+        oyl_emitter_free(e);
+    }
+
+    /* trees, taken one by one */
+    const char *docs[] = { "a: 1\n", "--- b\n", "%TAG !e! tag:e.com,2000:\n--- !e!x [c]\n" };
+    oyl_emitter *et = oyl_emitter_new(a), *ek = oyl_emitter_new(a);
+    oyl_emit_stream_start(et);
+    oyl_emit_stream_start(ek);
+    oyl_str p;
+    size_t n = 0;
+    for (int i = 0; i < 3; i++) {
+        oyl_parser *ps = oyl_parser_new(docs[i], strlen(docs[i]), a);
+        oyl_tree *t = NULL;
+        if (oyl_parse_tree(ps, &t) == OYL_OK && t) {
+            oyl_emit_tree(et, t);
+            oyl_emit_tree(ek, t);
+            if (oyl_emitter_take(ek, &p) == OYL_OK) memcpy(y + n, p.data, p.len), n += p.len;
+            oyl_tree_free(t);
+        }
+        oyl_parser_free(ps);
+    }
+    ASSERT(oyl_emit_stream_end(et) == OYL_OK && oyl_emit_stream_end(ek) == OYL_OK, "trees");
+    if (oyl_emitter_take(ek, &p) == OYL_OK) memcpy(y + n, p.data, p.len), n += p.len;
+    oyl_str all = oyl_emitter_output(et);
+    ASSERT(all.len == n && memcmp(all.data, y, n) == 0, "trees taken one by one write the same");
+    oyl_emitter_free(et);
+    oyl_emitter_free(ek);
+
+    /* a failed emitter keeps its error; no emitter, nowhere to put it */
+    oyl_emitter *e = oyl_emitter_new(a);
+    oyl_emit_stream_start(e);
+    ASSERT(oyl_emit_scalar(e, S("x"), OYL_SCALAR_PLAIN, N, N) == OYL_ERR_EMIT, "a scalar outside a document");
+    p = S("junk");
+    ASSERT(oyl_emitter_take(e, &p) == OYL_ERR_EMIT && p.len == 0, "a failed emitter: its error");
+    ASSERT(oyl_emitter_take(NULL, &p) == OYL_ERR_INPUT && p.len == 0, "no emitter");
+    ASSERT(oyl_emitter_take(e, NULL) == OYL_ERR_INPUT, "nowhere to put it");
+    oyl_emitter_free(e);
+    oyl_arena_free(a);
+}
+
 #undef S
 #undef N
 
@@ -1325,6 +1498,7 @@ int main(void) {
     test_flow_indicator_starts();
     test_invalid_events();
     test_directives();
+    test_take();
 
     printf("\n--- Emitter tests: %d / %d passed ---\n", tests_passed, tests_run);
     if (tests_failed > 0) printf("    %d FAILED\n", tests_failed);

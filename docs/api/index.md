@@ -284,6 +284,32 @@ What the emitter writes reads back as the events it was given:
 - In flow collections, plain text starting with `?` or `:` is quoted, as
   libyaml and libfyaml would read `[:x]` as a mapping.
 
+### Writing as you go
+
+The emitter keeps its output until asked for it. To write a stream of
+many documents as it is made, holding one document at a time, take the
+output between documents with `oyl_emitter_take`:
+
+```c
+oyl_str piece;
+oyl_emit_stream_start(e);
+for (...) {
+    // emit one document, from oyl_emit_document_start to _end
+    if (oyl_emitter_take(e, &piece) != OYL_OK) break;
+    fwrite(piece.data, 1, piece.len, f);   // before the next call on e
+}
+if (oyl_emit_stream_end(e) == OYL_OK && oyl_emitter_take(e, &piece) == OYL_OK)
+    fwrite(piece.data, 1, piece.len, f);
+```
+
+The pieces joined are exactly what `oyl_emitter_output` would give
+without them; each ends with a line break. A piece points into the
+emitter's own buffer, which the next call on the emitter writes over, so
+write it out first. Inside a document, `oyl_emitter_take` is
+`OYL_ERR_EMIT` and changes nothing: what the emitter writes there can
+still change (a trailing space trimmed, a key made explicit). After a
+take, `oyl_emitter_output` gives only what came after it.
+
 ### Styles
 
 | Style | Description |
@@ -309,7 +335,8 @@ What the emitter writes reads back as the events it was given:
 | `oyl_emit_mapping_start(e, anchor, tag, flow)` / `oyl_emit_mapping_end(e)` | Mapping; `flow` forces `{...}`. |
 | `oyl_emit_sequence_start(e, anchor, tag, flow)` / `oyl_emit_sequence_end(e)` | Sequence; `flow` forces `[...]`. |
 | `oyl_status oyl_emit_tree(e, tree)` | A tree as one document (see [Trees](#trees)). |
-| `oyl_str oyl_emitter_output(e)` | Get output buffer. |
+| `oyl_str oyl_emitter_output(e)` | The output so far (since the last take), copied into the arena. |
+| `oyl_status oyl_emitter_take(e, &out)` | Between documents: the output since the last take, valid until the next call on the emitter. |
 | `void oyl_emitter_free(e)` | Free emitter (not the arena). |
 
 ---

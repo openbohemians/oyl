@@ -1049,6 +1049,73 @@ static bool tree_emits(const test_case *tc, oyl_emit_style style, bool verbose) 
     return ok;
 }
 
+/* ── Output taken between documents ──────────────────────── */
+
+static int take_passed = 0, take_failed = 0;
+
+/* Append what `e` hands over to `buf` */
+static bool take_into(oyl_emitter *e, char *buf, size_t cap, size_t *n) {
+    oyl_str piece;
+    if (oyl_emitter_take(e, &piece) != OYL_OK || *n + piece.len > cap) return false;
+    if (piece.len) memcpy(buf + *n, piece.data, piece.len);
+    *n += piece.len;
+    return true;
+}
+
+/* The output taken after each document, from the events and from the
+ * trees, must be exactly what the emitter writes without taking it */
+static bool takes_same(const test_case *tc, oyl_emit_style style, bool verbose) {
+    static char events[65536], trees[65536];
+    size_t len = strlen(tc->yaml), ne = 0, nt = 0;
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_emitter *ee = oyl_emitter_new(a), *ek = oyl_emitter_new(a), *et = oyl_emitter_new(a);
+    oyl_emitter_set_style(ee, style);
+    oyl_emitter_set_style(ek, style);
+    oyl_emitter_set_style(et, style);
+
+    oyl_parser *p = oyl_parser_new(tc->yaml, len, a);
+    const oyl_event *evt;
+    oyl_status st;
+    bool ok = true;
+    while (ok && (st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_NONE) {
+        ok = emit_event(ee, p, evt) == OYL_OK && emit_event(ek, p, evt) == OYL_OK;
+        if (ok && (evt->type == OYL_EVT_DOC_END || evt->type == OYL_EVT_STREAM_END))
+            ok = take_into(ek, events, sizeof events, &ne);
+        if (evt->type == OYL_EVT_STREAM_END) break;
+    }
+    ok = ok && st == OYL_OK;
+    oyl_parser_free(p);
+
+    p = oyl_parser_new(tc->yaml, len, a);
+    oyl_tree *t;
+    st = oyl_emit_stream_start(et);
+    while (ok && st == OYL_OK && (st = oyl_parse_tree(p, &t)) == OYL_OK && t) {
+        st = oyl_emit_tree(et, t);
+        oyl_tree_free(t);
+        if (st == OYL_OK && !take_into(et, trees, sizeof trees, &nt)) st = OYL_ERR_LIMIT;
+    }
+    if (st == OYL_OK) st = oyl_emit_stream_end(et);
+    if (st == OYL_OK && !take_into(et, trees, sizeof trees, &nt)) st = OYL_ERR_LIMIT;
+    oyl_parser_free(p);
+
+    oyl_str x = oyl_emitter_output(ee);
+    bool same_events = x.data && x.len == ne && memcmp(x.data, events, ne) == 0;
+    bool same_trees = x.data && x.len == nt && memcmp(x.data, trees, nt) == 0;
+    ok = ok && st == OYL_OK && same_events && same_trees;
+    if (!ok && verbose) {
+        printf("    taken (%s): %s\n", style_name(style), st != OYL_OK ? oyl_status_str(st)
+               : !same_events ? "events differ" : "trees differ");
+        printf("      all:    %.*s\n", (int)(x.len > 300 ? 300 : x.len), x.data ? x.data : "");
+        printf("      events: %.*s\n", (int)(ne > 300 ? 300 : ne), events);
+        printf("      trees:  %.*s\n", (int)(nt > 300 ? 300 : nt), trees);
+    }
+    oyl_emitter_free(ee);
+    oyl_emitter_free(ek);
+    oyl_emitter_free(et);
+    oyl_arena_free(a);
+    return ok;
+}
+
 /* ── Main ────────────────────────────────────────────────── */
 
 int main(int argc, char **argv) {
@@ -1175,6 +1242,13 @@ int main(int argc, char **argv) {
                         printf("  %-8s tree emit %-8s " RED "DIFFERS" RESET "  %s\n", label,
                                style_name(styles[si]), tc->name);
                     }
+                    if (takes_same(tc, styles[si], verbose)) {
+                        take_passed++;
+                    } else {
+                        take_failed++;
+                        printf("  %-8s taken %-8s " RED "DIFFERS" RESET "  %s\n", label,
+                               style_name(styles[si]), tc->name);
+                    }
                 }
             }
 
@@ -1220,9 +1294,11 @@ int main(int argc, char **argv) {
            trees_passed, trees_failed);
     printf("\n  Trees emit as their events do: " GREEN "Pass: %d  " RESET RED "Fail: %d" RESET,
            temit_passed, temit_failed);
+    printf("\n  Output taken between documents, the same: " GREEN "Pass: %d  " RESET RED "Fail: %d" RESET,
+           take_passed, take_failed);
     printf("\n\n");
 
     return (failed > 0 || errors > 0 || xpassed > 0 ||
             rt_failed > 0 || rt_xpassed > 0 || paths_failed > 0 || trees_failed > 0 ||
-            temit_failed > 0) ? 1 : 0;
+            temit_failed > 0 || take_failed > 0) ? 1 : 0;
 }

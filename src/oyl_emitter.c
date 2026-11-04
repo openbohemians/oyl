@@ -1515,6 +1515,28 @@ oyl_str oyl_emitter_output(oyl_emitter *e) {
     return (oyl_str){copy, e->len};
 }
 
+/* Between documents, what the emitter writes next looks back no further
+ * than whether its output ends with a line break, and an empty buffer
+ * reads as one (where it would indent after the break, the root's
+ * indentation is 0). The trailing space it trims and a key it makes
+ * explicit ("? key") are in the document still open, so a take inside
+ * one is refused. */
+oyl_status oyl_emitter_take(oyl_emitter *e, oyl_str *out) {
+    if (out) *out = (oyl_str){ "", 0 };
+    if (!e || !out) return OYL_ERR_INPUT;
+    if (e->error) return e->error;
+    if (e->doc_open) return OYL_ERR_EMIT;
+    /* a document that ended without "..." may end inside its last line:
+     * whatever comes next writes this line break first */
+    if (e->len > 0 && e->buf[e->len - 1] != '\n') {
+        oyl_status st = buf_put(e, '\n');
+        if (st != OYL_OK) return st;
+    }
+    *out = (oyl_str){ e->buf, e->len };
+    e->len = 0;
+    return OYL_OK;
+}
+
 void oyl_emitter_free(oyl_emitter *e) {
     if (!e) return;
     free(e->buf);

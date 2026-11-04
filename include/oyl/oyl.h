@@ -1033,10 +1033,21 @@ OYL_API oyl_status   oyl_emit_sequence_end(oyl_emitter *e);
  *  events tag every node, and the tree keeps only the tags written. */
 OYL_API oyl_status   oyl_emit_tree(oyl_emitter *e, const oyl_tree *t);
 
-/** The emitter's output so far, copied into the emitter's arena and valid
- *  until that is freed. Its data is NULL only when the copy can't be
- *  allocated (or for a NULL emitter). */
+/** The emitter's output so far (since the last oyl_emitter_take()),
+ *  copied into the emitter's arena and valid until that is freed. Its
+ *  data is NULL only when the copy can't be allocated (or for a NULL
+ *  emitter). */
 OYL_API oyl_str      oyl_emitter_output(oyl_emitter *e);
+
+/** Take the output so far, between documents, to write it out while the
+ *  emitter goes on: a stream written so is held one document at a time.
+ *  @p out is set to the output since the last take (empty, or ending with
+ *  a line break), valid until the next call on the emitter, which then
+ *  writes into its buffer from the start. Taking changes nothing the
+ *  emitter writes: the pieces joined are its output without them. Inside
+ *  a document it is OYL_ERR_EMIT, and the emitter goes on; a failed
+ *  emitter returns its error. @p out is empty on any error. */
+OYL_API oyl_status   oyl_emitter_take(oyl_emitter *e, oyl_str *out);
 
 /** Free the emitter (does not free the arena). */
 OYL_API void         oyl_emitter_free(oyl_emitter *e);

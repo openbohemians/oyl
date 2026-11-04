@@ -576,8 +576,9 @@ static outcome emit_rich(void) { return emit(RICH); }
 static outcome emit_deep(void) { return emit(deep); }
 
 /* Output built with the event functions: documents without "---" one
- * after another, keys too long to be implicit, characters escaped */
-static outcome emit_built(void) {
+ * after another, keys too long to be implicit, characters escaped; all
+ * at once, or (take) taken after each document */
+static outcome emit_built_by(bool take) {
     static char key[1100];
     memset(key, 'k', sizeof key);
     oyl_arena *a = oyl_arena_new(4096);
@@ -597,13 +598,45 @@ static outcome emit_built(void) {
         oyl_emit_mapping_end(em);
         oyl_emit_sequence_end(em);
         oyl_emit_document_end(em, true);
+        oyl_str piece;
+        if (take && oyl_emitter_take(em, &piece) == OYL_OK) put_str(piece);
     }
     oyl_status st = oyl_emit_stream_end(em);   /* the first error, if any */
-    if (st == OYL_OK) {
+    if (st == OYL_OK && take) {
+        oyl_str piece;
+        st = oyl_emitter_take(em, &piece);
+        if (st == OYL_OK) put_str(piece);
+    } else if (st == OYL_OK) {
         oyl_str o = oyl_emitter_output(em);
         if (o.data) put_str(o);
         else st = OYL_ERR_MEMORY;
     }
+    oyl_emitter_free(em);
+    oyl_arena_free(a);
+    return st == OYL_OK ? DONE : failed(st);
+}
+static outcome emit_built(void) { return emit_built_by(false); }
+static outcome emit_taken(void) { return emit_built_by(true); }
+
+/* A take that grows the buffer: a document that fills it exactly and
+ * ends inside its line, so its line break needs room */
+static outcome emit_taken_full(void) {
+    static char x[4096];   /* the emitter's first buffer */
+    memset(x, 'x', sizeof x);
+    oyl_arena *a = oyl_arena_new(4096);
+    if (!a) return OUT_OF_MEMORY;
+    oyl_emitter *em = oyl_emitter_new(a);
+    if (!em) { oyl_arena_free(a); return OUT_OF_MEMORY; }
+    oyl_str piece;
+    oyl_emit_stream_start(em);
+    oyl_emit_document_start(em, true);
+    oyl_emit_scalar(em, (oyl_str){ x, sizeof x }, OYL_SCALAR_PLAIN, OYL_STR_NULL, OYL_STR_NULL);
+    oyl_emit_document_end(em, true);
+    oyl_status st = oyl_emitter_take(em, &piece);
+    if (st == OYL_OK) put_str(piece);
+    if (st == OYL_OK) st = oyl_emit_stream_end(em);
+    if (st == OYL_OK) st = oyl_emitter_take(em, &piece);
+    if (st == OYL_OK) put_str(piece);
     oyl_emitter_free(em);
     oyl_arena_free(a);
     return st == OYL_OK ? DONE : failed(st);
@@ -799,6 +832,8 @@ int main(void) {
     run("emitting", emit_rich);
     run("emitting, deep", emit_deep);
     run("emitting, built", emit_built);
+    run("emitting, taken", emit_taken);
+    run("emitting, taken, full", emit_taken_full);
     run("upgrading", upgrade_pyyaml);
     run("upgrading, go-yaml v2", upgrade_goyaml2);
     run("upgrading, by both", upgrade_unknown);
