@@ -35,6 +35,25 @@
 - **`oyl_upgrade` leaves a key a `?` holds.** Commenting out a key that
   go-yaml v2's merge overrides left a `?` above it behind, or let a `?`
   without a `:` take the next pair's `:`. Such a key is reported and left.
+- **`oyl_upgrade` reads merges as trees do.** It kept its own idea of a
+  merge, and that had drifted. With `&m\na: 1\n<<: *m\n` it commented out
+  `a`, the only `a` there is: a mapping can't merge itself, so that `<<`
+  is an ordinary key and overrides nothing. It missed the merges `! <<`
+  and `!!merge "<<"`, so the keys they override stayed. It missed a
+  collection key a merge overrides, which it can meet again through an
+  alias, and failed its own check. It now comments out such a key, or
+  reports it if it can't.
+- **A mapping that merges one left as it is isn't a bug.** `m` in
+  `b: &b {a: 1, <<: {a: 2}}\nm:\n  <<: *b\n` reads as `b` does, and `b`'s
+  readers disagree, which is reported. That failed with "a bug in
+  oyl_upgrade".
+- **`oyl_upgrade` looks across merges for keys a rewrite would make
+  equal.** `"n": 1\n<<: {n: 2}\n` has two keys in go-yaml v2, and keeping
+  the text of `n` made them one, which go-yaml v2 merges otherwise than
+  YAML 1.2. The rewrite is now left and reported, as within one mapping.
+- **`oyl_upgrade` checks it commented out only what go-yaml v2 doesn't
+  read.** It compared its readers with each other, so a key lost to all
+  of them passed.
 
 ## 1.4.0 (2026-10-30)
 

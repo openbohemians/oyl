@@ -518,7 +518,7 @@ uint32_t oyl_node_at(const oyl_tree *t, uint32_t seq, uint32_t k) {
 /* Is key node k a merge key? << untagged and plain, tagged !!merge, or
  * tagged ! in any style, which leaves it to be resolved as if plain
  * (libyaml's reading, which PyYAML and go-yaml v2 share) */
-static bool is_merge_key(const oyl_tree *t, uint32_t k) {
+bool oyl_tree_merge_key(const oyl_tree *t, uint32_t k) {
     const oyl_node *n = &t->nodes[k];
     if (n->kind != OYL_NODE_SCALAR || n->len != 2 || memcmp(oyl_tree_text(t, n).data, "<<", 2) != 0)
         return false;
@@ -825,7 +825,7 @@ static uint32_t get_merged(const getter *g, uint32_t m) {
             next = NONE;
             for (uint32_t c = 0; c < n[s].len && ok; c++) {
                 uint32_t v = k + n[k].span;
-                int merges = !ordered && is_merge_key(t, k) ? walk_mergeable(t, &sn, s, v, &note) : 0;
+                int merges = !ordered && oyl_tree_merge_key(t, k) ? walk_mergeable(t, &sn, s, v, &note) : 0;
                 if (merges < 0) {
                     ok = false;
                 } else if (!ordered && !merges) {
@@ -853,7 +853,7 @@ static uint32_t get_merged(const getter *g, uint32_t m) {
             if (oyl_nmap_get(&seen, x) == NONE && (ok = oyl_nmap_put(&seen, x, 0))) next = x;
         } else if (f->at > f->lo) {
             uint32_t k = list[--f->at], v = k + n[k].span, note;
-            int merges = is_merge_key(t, k) ? walk_mergeable(t, &sn, f->map, v, &note) : 0;
+            int merges = oyl_tree_merge_key(t, k) ? walk_mergeable(t, &sn, f->map, v, &note) : 0;
             if (merges < 0) {
                 ok = false;
             } else if (merges) {
@@ -895,7 +895,7 @@ static uint32_t get_key(const oyl_tree *t, uint32_t map, const oyl_key *key, oyl
     uint32_t found = NONE, last_merge = NONE, k = map + 1;
     for (uint32_t c = 0; c < n[map].len; c++) {
         uint32_t v = k + n[k].span;
-        if (merging && is_merge_key(t, k) && mergeable(t, map, v)) last_merge = k;
+        if (merging && oyl_tree_merge_key(t, k) && mergeable(t, map, v)) last_merge = k;
         else if (matches(&g, k)) found = k;
         k = v + n[v].span;
     }
@@ -1089,7 +1089,7 @@ static bool collect(collector *c, uint32_t m) {
     uint32_t k = m + 1;
     for (uint32_t i = 0; i < n[m].len; i++) {
         uint32_t v = k + n[k].span;
-        if (merging && is_merge_key(t, k) && mergeable(t, m, v)) {
+        if (merging && oyl_tree_merge_key(t, k) && mergeable(t, m, v)) {
             c->status = OYL_ERR_LIMIT;
             return false;
         }
@@ -1218,7 +1218,7 @@ static bool gather(worker *wk, uint32_t m) {
     uint32_t k = m + 1, own = 0;
     for (uint32_t i = 0; i < n[m].len; i++) {
         uint32_t v = k + n[k].span;
-        if (is_merge_key(t, k) && mergeable(t, m, v)) {
+        if (oyl_tree_merge_key(t, k) && mergeable(t, m, v)) {
             uint32_t item, count = merge_items(t, v, &item);
             if (!grow((void **)&wk->mrg, &wk->mrg_cap, wk->nmrg, 1, sizeof *wk->mrg) ||
                 !grow((void **)&wk->items, &wk->items_cap, wk->nitems, count, sizeof *wk->items))
@@ -1493,7 +1493,7 @@ static bool work_out(worker *wk, uint32_t m) {
     uint32_t k = m + 1, own = 0;
     for (uint32_t i = 0; i < n[m].len; i++) {
         uint32_t v = k + n[k].span;
-        bool merge = is_merge_key(t, k);
+        bool merge = oyl_tree_merge_key(t, k);
         if (merge) {   /* its items, gone through here and in gather, may bring no pairs */
             uint32_t item, count = merge_items(t, v, &item);
             if (count > wk->left) {

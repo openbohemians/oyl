@@ -484,6 +484,8 @@ struct oyl_tree {
 oyl_status oyl_parse_tree_as_written(oyl_parser *p, oyl_tree **tree);
 /* For tests: forget tree t's merges worked out, as if too costly */
 void       oyl_tree_forget_merges(oyl_tree *t);
+/* Is key node k a merge key? (oyl_upgrade.c must read them as trees do) */
+bool       oyl_tree_merge_key(const oyl_tree *t, uint32_t k);
 
 /* A scalar's or alias's text */
 static inline oyl_str oyl_tree_text(const oyl_tree *t, const oyl_node *n) {

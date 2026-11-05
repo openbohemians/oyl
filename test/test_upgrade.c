@@ -244,6 +244,84 @@ static void test_merges(void) {
 
     r = upgrade("b: &b {a: 1}\nm:\n  a: &x 2\n  <<: *b\no: *x\n", GOYAML2, 0);
     ASSERT(r.status == OYL_OK && r.nfixes == 1 && !r.fixes[0].fixed, "holding an anchor: reported");
+
+    /* A collection is one key through an alias: a merge can override it */
+    r = upgrade("x: &a [z]\n*a : 1\n<<: {*a : 2}\n", GOYAML2, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "x: &a [z]\n# *a : 1\n<<: {*a : 2}\n") == 0,
+           "a collection key a merge overrides: commented out (found by fuzzing)");
+    r = upgrade("x: &a {z: 1}\n*a : 1\n<<: [{*a : 2}]\n", GOYAML2, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "x: &a {z: 1}\n# *a : 1\n<<: [{*a : 2}]\n") == 0,
+           "... a mapping, through a sequence's merge");
+    const char *keys[] = { "? &a [z]\n: 1\n<<: {*a : 2}\n", "x: &a [z]\n? *a\n: 1\n<<: {*a : 2}\n",
+                           "&m\n? *m\n: 1\n<<: {*m : 2}\n",
+                           "&m\n? *m\n?\n<<:\n- b:\n  ? *m\n" };
+    for (size_t i = 0; i < sizeof keys / sizeof *keys; i++) {
+        r = upgrade(keys[i], GOYAML2, 0);
+        ASSERT(r.status == OYL_OK && strcmp(r.out, keys[i]) == 0 && r.nfixes == 1 && !r.fixes[0].fixed,
+               "... one that can't be, reported (found by fuzzing)");
+    }
+    r = upgrade("x: &a [z]\n*a : 1\n<<: {*a : 2}\n", UNKNOWN, 0);
+    ASSERT(r.status == OYL_OK && r.nfixes == 1 && !r.fixes[0].fixed && strstr(r.texts[0][2], "name the dialect"),
+           "... the reader unknown: reported");
+    r = upgrade("x: &a [z]\n? [z]\n: 1\n<<: {*a : 2}\n", GOYAML2, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "x: &a [z]\n? [z]\n: 1\n<<: {*a : 2}\n") == 0 && !r.nfixes,
+           "... two collections alike are two keys, as trees have it");
+
+    /* What merges a mapping left reads as that one does: not a bug */
+    const char *inherit[] = { "b: &b {a: 1, <<: {a: 2}}\nm:\n  <<: *b\n",
+                              "b: &b {a: 1, <<: {a: 2}}\nm:\n  <<: [*b]\n",
+                              "b: &b {a: 1, <<: {a: 2}}\nc: &c {<<: *b}\nm: {<<: *c}\n",
+                              "m: {<<: {<<: {a: 1, <<: {a: 2}}}}\n" };
+    for (size_t i = 0; i < sizeof inherit / sizeof *inherit; i++) {
+        r = upgrade(inherit[i], GOYAML2, 0);
+        ASSERT(r.status == OYL_OK && strcmp(r.out, inherit[i]) == 0 && r.nfixes == 1 && !r.fixes[0].fixed,
+               "a merge of a mapping left: left, reported once");
+    }
+    r = upgrade("b: &b\n  a: 1\n  <<: {a: 2}\nm:\n  <<: *b\n", GOYAML2, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "b: &b\n  # a: 1\n  <<: {a: 2}\nm:\n  <<: *b\n") == 0,
+           "... of one fixed: as fixed");
+
+    /* A mapping can't merge itself, or what holds it: then << is a key,
+     * and overrides nothing */
+    const char *self[] = { "&m\na: 1\n<<: *m\n", "&m\na: 1\nb: 2\n<<: [*m]\n", "&m {a: 1, <<: *m}\n",
+                           "&m\na: 1\n<<: [{a: 2}, *m]\n", "&p\nq:\n  q: 1\n  <<: *p\n" };
+    for (size_t i = 0; i < sizeof self / sizeof *self; i++) {
+        r = upgrade(self[i], GOYAML2, 0);
+        ASSERT(r.status == OYL_OK && strcmp(r.out, self[i]) == 0 && !r.nfixes, "a merge of itself: nothing lost");
+    }
+
+    /* Keys the source had apart, a rewrite would make one, where the readers'
+     * merges differ: left. (`n` is false to go-yaml v2, its text to YAML 1.2.) */
+    const char *joined[] = { "\"n\": 1\n<<: {n: 2}\n", "n: 1\n<<: {\"n\": 2}\n", "b: &c {n: 2}\nm:\n  \"n\": 1\n  <<: *c\n",
+                             "b: &c {n: 2}\nm: {\"n\": 1, <<: *c}\n", "\"n\": 1\n<<: [{a: 2}, {n: 3}]\n" };
+    for (size_t i = 0; i < sizeof joined / sizeof *joined; i++) {
+        r = upgrade(joined[i], GOYAML2, 0);
+        ASSERT(r.status == OYL_OK && strcmp(r.out, joined[i]) == 0 && r.nfixes == 1 && !r.fixes[0].fixed &&
+               strstr(r.texts[0][2], "two keys equal"), "a rewrite joining a key and one merged: left");
+    }
+    r = upgrade("\"n\": 1\n<<: {<<: [{no: 2}, {n: 3}]}\n", GOYAML2, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "\"n\": 1\n<<: {<<: [{\"no\": 2}, {n: 3}]}\n") == 0,
+           "... one overridden on the way in too");
+    r = upgrade("\"n\": 1\n<<: {n: 2}\n", GOYAML2, OYL_UPGRADE_KEYS_KEEP_VALUE);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "\"n\": 1\n<<: {false: 2}\n") == 0, "... not keeping the value");
+    const char *settled[][2] = { { "<<: {\"n\": 1}\n<<: {n: 2}\n", "<<: {\"n\": 1}\n<<: {\"n\": 2}\n" },
+                                 { "<<: [{n: 2}, {\"n\": 1}]\n", "<<: [{\"n\": 2}, {\"n\": 1}]\n" },
+                                 { "<<: {n: 2}\n\"n\": 1\n", "<<: {\"n\": 2}\n\"n\": 1\n" } };
+    for (size_t i = 0; i < sizeof settled / sizeof *settled; i++) {
+        r = upgrade(settled[i][0], GOYAML2, 0);
+        ASSERT(r.status == OYL_OK && strcmp(r.out, settled[i][1]) == 0, "... not where every reader settles them alike");
+    }
+    /* `n` and `no` are one key to go-yaml v2 and, their text kept, two */
+    r = upgrade("?\nn:\n<<:\n no:\n", GOYAML2, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "?\n\"n\":\n<<:\n \"no\":\n") == 0, "keys the text policy parts");
+
+    /* Every spelling trees merge */
+    r = upgrade("a: 0\n! <<: {a: 1}\n", GOYAML2, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "# a: 0\n! <<: {a: 1}\n") == 0, "! << merges");
+    r = upgrade("a: 0\n!!merge \"<<\": {a: 1}\n", GOYAML2, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "# a: 0\n!!merge \"<<\": {a: 1}\n") == 0, "!!merge \"<<\" merges");
+    r = upgrade("a: 0\n\"<<\": {a: 1}\n", GOYAML2, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "a: 0\n\"<<\": {a: 1}\n") == 0 && !r.nfixes, "\"<<\" doesn't");
 }
 
 /* ── libyaml's leniencies, and %YAML 1.1 ─────────────────── */

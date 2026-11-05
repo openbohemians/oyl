@@ -619,9 +619,36 @@ static bool same_in_source(upgrade *u, const oyl_tree *t, uint32_t a, uint32_t b
     return true;
 }
 
-/* Undo the rewrite of keys that would equal another key of their mapping,
- * one the source read as another key (two keys the source already read as
- * one stay one, rewritten alike) */
+/* Would scalar k, rewritten, equal scalar o, a key the source reads as
+ * another? (Two keys the source already read as one stay one, rewritten
+ * alike.) */
+static bool clashes(upgrade *u, const doc *d, uint32_t k, uint32_t o) {
+    const oyl_tree *t = d->tree;
+    if (same_in_source(u, t, k, o)) return false;
+    reading want = { true, d->plan[k].expect };
+    if (d->plan[o].what == N_CHANGED) {
+        reading x = { true, d->plan[o].expect };
+        return same(&x, &want);
+    }
+    oyl_str text = oyl_node_text(t, o), own = explicit_tag(t, o);
+    oyl_scalar_style st = (oyl_scalar_style)t->nodes[o].style;
+    for (int r = 0; r <= u->nsrc; r++) {
+        reading x = read_as(r < u->nsrc ? &u->src[r] : &u->core, text, st, own);
+        if (x.ok && same(&x, &want)) return true;
+    }
+    return false;
+}
+
+/* Undo k's rewrite, which would make two keys equal */
+static void undo_rewrite(upgrade *u, doc *d, uint32_t k) {
+    fix_rec *r = &u->fixes[d->plan[k].fix - 1];
+    r->fix.fixed = false;
+    r->fix.after = (oyl_str){ "", 0 };
+    r->fix.message = keepf(u, "%s; left, as the rewrite would make two keys equal", r->fix.message);
+    d->plan[k].what = N_SKIP;
+}
+
+/* Undo the rewrite of keys that would equal another key of their mapping */
 static void key_clashes(upgrade *u, doc *d, uint32_t m) {
     const oyl_tree *t = d->tree;
     const oyl_node *nodes = t->nodes;
@@ -634,31 +661,11 @@ static void key_clashes(upgrade *u, doc *d, uint32_t m) {
             uint32_t o = m + 1;
             for (uint32_t pj = 0; pj < npairs && !clash; pj++) {
                 uint32_t ov = o + nodes[o].span;
-                if (o != k && nodes[o].kind == OYL_NODE_SCALAR && d->plan[o].what != N_REMOVED &&
-                    !same_in_source(u, t, k, o)) {
-                    oyl_str text = oyl_node_text(t, o), own = explicit_tag(t, o);
-                    oyl_scalar_style st = (oyl_scalar_style)nodes[o].style;
-                    reading want = { true, d->plan[k].expect };
-                    if (d->plan[o].what == N_CHANGED) {
-                        reading x = { true, d->plan[o].expect };
-                        clash = same(&x, &want);
-                    } else {
-                        for (int r = 0; r <= u->nsrc && !clash; r++) {
-                            reading x = read_as(r < u->nsrc ? &u->src[r] : &u->core, text, st, own);
-                            clash = x.ok && same(&x, &want);
-                        }
-                    }
-                }
+                clash = o != k && nodes[o].kind == OYL_NODE_SCALAR && d->plan[o].what != N_REMOVED &&
+                        clashes(u, d, k, o);
                 o = ov + nodes[ov].span;
             }
-            if (clash) {
-                fix_rec *r = &u->fixes[d->plan[k].fix - 1];
-                r->fix.fixed = false;
-                r->fix.after = (oyl_str){ "", 0 };
-                r->fix.message = keepf(u, "%s; left, as the rewrite would make two keys equal",
-                                       r->fix.message);
-                d->plan[k].what = N_SKIP;
-            }
+            if (clash) undo_rewrite(u, d, k);
         }
         k = v + nodes[v].span;
     }
@@ -666,24 +673,24 @@ static void key_clashes(upgrade *u, doc *d, uint32_t m) {
 
 /* ── Merges ──────────────────────────────────────────────── */
 
-static bool is_merge_key(const oyl_tree *t, uint32_t k) {
-    const oyl_node *n = &t->nodes[k];
-    if (n->kind != OYL_NODE_SCALAR || n->style != OYL_SCALAR_PLAIN) return false;
-    oyl_str own = explicit_tag(t, k);
-    return str_is(oyl_node_text(t, k), "<<") && (!own.len || oyl_key_tag_eq(own, OYL_TAG_MERGE));
+/* What a << with value v merges: the first of its items, and how many */
+static uint32_t merge_items(const oyl_tree *t, uint32_t v, uint32_t *first) {
+    v = oyl_node_target(t, v);
+    bool seq = t->nodes[v].kind == OYL_NODE_SEQUENCE;
+    *first = seq ? v + 1 : v;
+    return seq ? t->nodes[v].len : 1;
 }
 
-/* Can value v be merged: a mapping, or a sequence of them (through
- * aliases)? A << whose value can't is an ordinary key. */
-static bool mergeable(const oyl_tree *t, uint32_t v) {
-    v = oyl_node_target(t, v);
-    const oyl_node *n = &t->nodes[v];
-    if (n->kind == OYL_NODE_MAPPING) return true;
-    if (n->kind != OYL_NODE_SEQUENCE) return false;
-    uint32_t c = v + 1;
-    for (uint32_t i = 0; i < n->len; i++) {
-        if (t->nodes[oyl_node_target(t, c)].kind != OYL_NODE_MAPPING) return false;
-        c += t->nodes[c].span;
+/* Can value v of a << in mapping m be merged: a mapping, or a sequence of
+ * them (through aliases), none of them m or a mapping holding it? As a
+ * tree has it, but for an alias to a sequence, which merges() settles. A
+ * << whose value can't is an ordinary key. */
+static bool mergeable(const oyl_tree *t, uint32_t m, uint32_t v) {
+    const oyl_node *nodes = t->nodes;
+    uint32_t c, count = merge_items(t, v, &c);
+    for (uint32_t i = 0; i < count; i++, c += nodes[c].span) {
+        uint32_t s = oyl_node_target(t, c);
+        if (nodes[s].kind != OYL_NODE_MAPPING || (s <= m && m < s + nodes[s].span)) return false;
     }
     return true;
 }
@@ -700,8 +707,9 @@ static oyl_key key_of(const oyl_tree *t, uint32_t n) {
     return k;
 }
 
-/* Has mapping m, its merges applied, key `key`? */
-static bool has_key(upgrade *u, const oyl_tree *t, uint32_t m, const oyl_key *key) {
+/* Has mapping m, its merges applied, the key `key`, or if that's NULL the
+ * collection `coll`? */
+static bool has_key(upgrade *u, const oyl_tree *t, uint32_t m, const oyl_key *key, uint32_t coll) {
     const oyl_pair *pairs;
     size_t n;
     oyl_arena_reset(u->tmp);
@@ -709,25 +717,32 @@ static bool has_key(upgrade *u, const oyl_tree *t, uint32_t m, const oyl_key *ke
     if (st == OYL_ERR_MEMORY) u->oom = true;
     if (st != OYL_OK) return false;
     for (size_t i = 0; i < n; i++) {
-        if (t->nodes[oyl_node_target(t, pairs[i].key)].kind != OYL_NODE_SCALAR) continue;
-        oyl_key k = key_of(t, pairs[i].key);
-        if (oyl_key_cmp(&k, key) == 0) return true;
+        uint32_t s = oyl_node_target(t, pairs[i].key);
+        if (!key) {
+            if (s == coll) return true;
+        } else if (t->nodes[s].kind == OYL_NODE_SCALAR) {
+            oyl_key k = key_of(t, s);
+            if (oyl_key_cmp(&k, key) == 0) return true;
+        }
     }
     return false;
 }
 
-/* Is key k (a scalar, or an alias to one) found in what merge value v
- * merges in? */
+/* Is key k found in what merge value v merges in? As trees compare keys:
+ * scalars by tag and value, collections by node, so a collection is met
+ * again only through an alias. */
 static bool merged_in(upgrade *u, const oyl_tree *t, uint32_t v, uint32_t k) {
-    oyl_key key = key_of(t, k);
-    v = oyl_node_target(t, v);
-    const oyl_node *n = &t->nodes[v];
-    if (n->kind == OYL_NODE_MAPPING) return has_key(u, t, v, &key);
-    if (n->kind != OYL_NODE_SEQUENCE) return false;
-    uint32_t c = v + 1;
-    for (uint32_t i = 0; i < n->len; i++) {
+    uint32_t target = oyl_node_target(t, k);
+    oyl_key form;
+    const oyl_key *key = NULL;
+    if (t->nodes[target].kind == OYL_NODE_SCALAR) {
+        form = key_of(t, target);
+        key = &form;
+    }
+    uint32_t c, count = merge_items(t, v, &c);
+    for (uint32_t i = 0; i < count; i++) {
         uint32_t s = oyl_node_target(t, c);
-        if (t->nodes[s].kind == OYL_NODE_MAPPING && has_key(u, t, s, &key)) return true;
+        if (t->nodes[s].kind == OYL_NODE_MAPPING && has_key(u, t, s, key, target)) return true;
         c += t->nodes[c].span;
     }
     return false;
@@ -810,7 +825,7 @@ static void merges(upgrade *u, doc *d, uint32_t m) {
     bool many = false;
     for (uint32_t pi = 0, k = m + 1; pi < npairs; pi++) {
         uint32_t v = k + nodes[k].span;
-        if (is_merge_key(t, k) && mergeable(t, v)) {
+        if (oyl_tree_merge_key(t, k) && mergeable(t, m, v)) {
             /* go-yaml v2 rejects the merge of an alias to a sequence, which
              * YAML's merge takes: nothing to keep, left */
             if (nodes[v].kind == OYL_NODE_ALIAS && nodes[oyl_node_target(t, v)].kind == OYL_NODE_SEQUENCE) {
@@ -829,7 +844,7 @@ static void merges(upgrade *u, doc *d, uint32_t m) {
     for (uint32_t pi = 0; pi < npairs && k < last_mk; pi++) {
         uint32_t v = k + nodes[k].span;
         uint32_t next = v + nodes[v].span;
-        if (!(is_merge_key(t, k) && mergeable(t, v)) && nodes[oyl_node_target(t, k)].kind == OYL_NODE_SCALAR) {
+        if (!(oyl_tree_merge_key(t, k) && mergeable(t, m, v))) {
             bool over = false;
             if (!many) {
                 for (uint32_t j = 0; j < nmk && !over; j++)
@@ -838,7 +853,7 @@ static void merges(upgrade *u, doc *d, uint32_t m) {
                 uint32_t o = next;
                 for (uint32_t pj = pi + 1; pj < npairs && !over; pj++) {
                     uint32_t ov = o + nodes[o].span;
-                    if (is_merge_key(t, o) && mergeable(t, ov)) over = merged_in(u, t, ov, k);
+                    if (oyl_tree_merge_key(t, o) && mergeable(t, m, ov)) over = merged_in(u, t, ov, k);
                     o = ov + nodes[ov].span;
                 }
             }
@@ -862,6 +877,78 @@ static void merges(upgrade *u, doc *d, uint32_t m) {
         }
         k = next;
     }
+}
+
+/* The mappings mapping m merges and not yet seen: onto the stack, each once.
+ * Returns the last << of m that merges. */
+static uint32_t push_merged(const oyl_tree *t, uint32_t m, uint32_t walk, uint32_t *seen, uint32_t *stack,
+                            uint32_t *sp) {
+    const oyl_node *nodes = t->nodes;
+    uint32_t last = 0;
+    for (uint32_t pi = 0, k = m + 1; pi < nodes[m].len; pi++) {
+        uint32_t v = k + nodes[k].span;
+        if (oyl_tree_merge_key(t, k) && mergeable(t, m, v)) {
+            uint32_t c, count = merge_items(t, v, &c);
+            for (uint32_t i = 0; i < count; i++, c += nodes[c].span) {
+                uint32_t s = oyl_node_target(t, c);
+                if (seen[s] != walk) {
+                    seen[s] = walk;
+                    stack[(*sp)++] = s;
+                }
+            }
+            last = k;
+        }
+        k = v + nodes[v].span;
+    }
+    return last;
+}
+
+/* Undo the rewrite of a key written before a merge, or of one merged, that
+ * would make them equal: go-yaml v2's merge would then override the first
+ * and YAML 1.2's wouldn't, where the source had two keys (`"n": 1` before
+ * `<<: {n: 2}`). Elsewhere every reader settles them alike. Every key
+ * merged counts, in the end, those overridden on the way too: they're
+ * rewritten as well. */
+static void merge_clashes(upgrade *u, doc *d, uint32_t m, uint32_t *seen, uint32_t *stack) {
+    const oyl_tree *t = d->tree;
+    const oyl_node *nodes = t->nodes;
+    uint32_t walk = m + 1, sp = 0, last = push_merged(t, m, walk, seen, stack, &sp);
+    while (sp) {
+        uint32_t s = stack[--sp];
+        push_merged(t, s, walk, seen, stack, &sp);
+        for (uint32_t pi = 0, p = s + 1; pi < nodes[s].len; pi++) {
+            uint32_t pv = p + nodes[p].span, b = oyl_node_target(t, p);
+            if (nodes[b].kind == OYL_NODE_SCALAR && d->plan[p].what != N_REMOVED &&
+                !(oyl_tree_merge_key(t, p) && mergeable(t, s, pv))) {
+                for (uint32_t o = m + 1; o < last;) {
+                    uint32_t ov = o + nodes[o].span, a = oyl_node_target(t, o);
+                    if (a != b && nodes[a].kind == OYL_NODE_SCALAR && d->plan[o].what != N_REMOVED &&
+                        !(oyl_tree_merge_key(t, o) && mergeable(t, m, ov))) {
+                        if (d->plan[a].what == N_CHANGED && clashes(u, d, a, b)) undo_rewrite(u, d, a);
+                        else if (d->plan[b].what == N_CHANGED && clashes(u, d, b, a)) undo_rewrite(u, d, b);
+                    }
+                    o = ov + nodes[ov].span;
+                }
+            }
+            p = pv + nodes[pv].span;
+        }
+    }
+}
+
+/* merge_clashes for each mapping of a document */
+static void all_merge_clashes(upgrade *u, doc *d) {
+    const oyl_tree *t = d->tree;
+    uint32_t *seen = calloc(t->len ? t->len : 1, sizeof *seen);
+    uint32_t *stack = malloc((t->len ? t->len : 1) * sizeof *stack);
+    if (!seen || !stack) {
+        u->oom = true;
+    } else {
+        for (uint32_t i = 0; i < t->len; i++)
+            if (t->nodes[i].kind == OYL_NODE_MAPPING && d->plan[i].what != N_REMOVED)
+                merge_clashes(u, d, i, seen, stack);
+    }
+    free(seen);
+    free(stack);
 }
 
 /* ── Libyaml's leniencies, and %YAML 1.1 ─────────────────── */
@@ -1088,29 +1175,74 @@ static oyl_status check_one(upgrade *u, oyl_str out, const oyl_dialect *dl, cons
     return OYL_OK;
 }
 
-/* Every mapping as a program reads it (merges applied) alike in each tree */
+/* Mapping m, not yet left: is it? Yes if a key of it was left, or it merges
+ * a mapping left: it reads as that one does, which is reported there. */
+static void left_too(doc *d, uint32_t m) {
+    const oyl_tree *t = d->tree;
+    const oyl_node *nodes = t->nodes;
+    if (d->plan[m].what != N_SAME) return;
+    uint32_t k = m + 1;
+    for (uint32_t pi = 0; pi < nodes[m].len; pi++) {
+        uint32_t v = k + nodes[k].span;
+        if (oyl_tree_merge_key(t, k) && mergeable(t, m, v)) {
+            uint32_t c, count = merge_items(t, v, &c);
+            for (uint32_t i = 0; i < count; i++, c += nodes[c].span)
+                if (d->plan[oyl_node_target(t, c)].what == N_SKIP) d->plan[m].what = N_SKIP;
+        } else if (d->plan[oyl_node_target(t, k)].what == N_SKIP) {
+            d->plan[m].what = N_SKIP;
+        }
+        k = v + nodes[v].span;
+    }
+}
+
+/* What a mapping merges ends before it does (trees see to that), so going
+ * through them by where they end sees each left before what merges it */
+static oyl_status spread_left(doc *d) {
+    const oyl_tree *t = d->tree;
+    uint32_t *open = malloc((t->len ? t->len : 1) * sizeof *open), sp = 0;
+    if (!open) return OYL_ERR_MEMORY;
+    for (uint32_t i = 0; i <= t->len; i++) {
+        while (sp && i >= open[sp - 1] + t->nodes[open[sp - 1]].span) left_too(d, open[--sp]);
+        if (i < t->len && t->nodes[i].kind == OYL_NODE_MAPPING) open[sp++] = i;
+    }
+    free(open);
+    return OYL_OK;
+}
+
+/* Every mapping that merges as a program reads it: nothing commented out
+ * that go-yaml v2 reads, and, unless reported, alike in each tree */
 static oyl_status check_merges(upgrade *u, oyl_tree **trees[], int n, oyl_arena *a) {
     for (size_t k = 0; k < u->ndocs; k++) {
         doc *d = &u->docs[k];
         if (d->left) continue;
+        oyl_status left = spread_left(d);
+        if (left != OYL_OK) return left;
         /* output node j's input node, for the mappings whose merges disagree */
         const oyl_tree *it = d->tree;
         uint32_t j = 0;
         for (uint32_t i = 0; i < it->len; i++) {
             if (d->plan[i].what == N_REMOVED) continue;
-            bool merging = false, checked = d->plan[i].what != N_SKIP;
+            bool merging = false;
             if (it->nodes[i].kind == OYL_NODE_MAPPING) {
                 uint32_t c = i + 1;
                 for (uint32_t pi = 0; pi < it->nodes[i].len; pi++) {
-                    if (is_merge_key(it, c)) merging = true;
-                    if (d->plan[c].what == N_SKIP) checked = false;
+                    if (oyl_tree_merge_key(it, c)) merging = true;
                     c += it->nodes[c].span;
                     c += it->nodes[c].span;
                 }
             }
-            if (merging && checked) {
-                const oyl_pair *p0, *pr;
-                size_t n0, nr;
+            const oyl_pair *p0, *pr;
+            size_t n0, nr;
+            if (merging && it->merge == OYL_MERGE_ORDERED) {
+                oyl_status st = oyl_node_entries(it, i, 0, a, &p0, &n0);
+                if (st == OYL_ERR_MEMORY) return st;
+                for (size_t e = 0; st == OYL_OK && e < n0; e++)
+                    if (d->plan[p0[e].key].what == N_REMOVED || d->plan[p0[e].value].what == N_REMOVED)
+                        return fail(u, it->base + it->nodes[i].start,
+                                    "oyl_upgrade commented out a key go-yaml v2 reads "
+                                    "(a bug in oyl_upgrade)");
+            }
+            if (merging && d->plan[i].what != N_SKIP) {
                 oyl_status st = oyl_node_entries(trees[0][k], j, 0, a, &p0, &n0);
                 if (st == OYL_ERR_MEMORY) return st;
                 for (int r = 1; r < n && st == OYL_OK; r++) {
@@ -1267,6 +1399,7 @@ static oyl_status run(upgrade *u, oyl_str *out) {
         for (uint32_t i = 0; i < d->tree->len; i++)
             if (d->tree->nodes[i].kind == OYL_NODE_MAPPING && d->plan[i].what != N_REMOVED)
                 key_clashes(u, d, i);
+        if (u->ordered || u->merge_disagree) all_merge_clashes(u, d);
     }
     if (u->oom) return OYL_ERR_MEMORY;
     /* the rest, outside what those replaced */
