@@ -12,6 +12,23 @@
   and the emitter goes on. The piece points into the emitter's buffer,
   valid until the next call on it: no copy, nothing to free.
 
+### Fixed
+
+- **A tag needs a blank before its node.** `!<x>a`, `!<x>|` and `!x[a]`
+  were read as a tag and a node with nothing between them, where YAML 1.2,
+  libyaml and libfyaml all refuse them. They are errors now. A tag on an
+  empty node can still meet what follows: `[!x]`, `[!x, a]`, `{!<x>: 1}`.
+  Fuzzing found it through `oyl_upgrade`, which wrote such a file back and
+  then failed its own check, because PyYAML can't read it.
+- **A block entry starts its own line.** `- a: {b\n }c: 1` read `c` as the
+  next key, because it happened to sit at the mapping's column on the line
+  where the flow collection ended. YAML 1.2, libyaml and libfyaml refuse
+  that, and now Oyl does, after a multi-line quoted scalar too.
+- **`oyl_upgrade` indents a line that starts with a rewritten scalar.**
+  `a: [\n9_]\n`, a file PyYAML reads, failed with "a bug in oyl_upgrade":
+  with `9_` at column 0 its rewrite seemed to take in the line's
+  indentation, so the line wasn't indented. It now gives `a: [\n    9]\n`.
+
 ## 1.4.0 (2026-10-30)
 
 `oyl_upgrade` makes a YAML 1.1 file read the same in YAML 1.2 in place,

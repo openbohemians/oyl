@@ -1053,6 +1053,21 @@ NOINLINE oyl_status scan_double_quoted_slow(oyl_scanner *s, oyl_token *tok, oyl_
     return OYL_OK;
 }
 
+/* Does a tag end here? A blank, a line break or the end follows it, unless
+ * its node is empty: then a flow entry's closing indicator or a key's ':'
+ * can come at once (outside a flow collection the parser refuses the
+ * indicator). In !<x>a and !x[a] nothing separates the tag from its node,
+ * which YAML's productions don't allow. */
+static bool tag_ended(const oyl_scanner *s) {
+    if (AT_END(s) || oyl_is_blank_or_break(PEEK(s))) return true;
+    uint8_t c = PEEK(s);
+    if (c == ',' || c == ']' || c == '}') return true;
+    if (c != ':') return false;
+    uint8_t next = PEEK_AT(s, 1);
+    return s->pos + 1 >= s->len || oyl_is_blank_or_break(next) ||
+           (s->flow_level > 0 && oyl_is_flow(next));
+}
+
 static oyl_status scan_tag(oyl_scanner *s, oyl_token *tok) {
     oyl_mark start = mark(s);
     const char *tag_start = BUF_AT(s);
@@ -1072,6 +1087,7 @@ static oyl_status scan_tag(oyl_scanner *s, oyl_token *tok) {
         if (PEEK(s) != '>' || s->pos == uri_start)
             SCAN_ERROR(s, "invalid verbatim tag");
         advance(s, 1);
+        if (!tag_ended(s)) SCAN_ERROR(s, "tag must be separated from its node by whitespace");
         size_t len = BUF_AT(s) - tag_start;
         s->last_token_col = (ptrdiff_t)start.col - 1;
         note_props(s, start, s->pos);
@@ -1085,6 +1101,7 @@ static oyl_status scan_tag(oyl_scanner *s, oyl_token *tok) {
         if (PEEK(s) < 0x20 || PEEK(s) == 0x7F) SCAN_ERROR(s, "control character in tag");
         advance(s, 1);
     }
+    if (!tag_ended(s)) SCAN_ERROR(s, "tag must be separated from its node by whitespace");
 
     size_t len = BUF_AT(s) - tag_start;
     s->last_token_col = (ptrdiff_t)start.col - 1;
@@ -1596,6 +1613,13 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
 
     oyl_mark start = mark(s);
     uint8_t c = PEEK(s);
+
+    /* A block entry starts its own line, so nothing but a ':' can follow a
+     * multi-line quoted scalar or flow collection on its last line, even
+     * at the column of an entry */
+    if (s->last_was_quoted && s->flow_level == 0 && c != ':' && s->node_line != s->line &&
+        only_blanks_between(s, s->node_end, s->pos))
+        SCAN_ERROR(s, "unexpected content after a multi-line value");
 
     /* most tokens start with a byte none of the checks below take (a
      * letter or digit): those are plain scalars */

@@ -253,6 +253,9 @@ static void test_leniencies(void) {
     r = upgrade(": \"\\\r&\"", UNKNOWN, 0);
     ASSERT(r.status == OYL_OK && strcmp(r.out, ": \"\\\r   &\"") == 0,
            "a line after a lone CR escaped: indented (found by fuzzing)");
+    r = upgrade("a: [\n9_]\n", PYYAML, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "a: [\n    9]\n") == 0,
+           "a line at column 0 starting with a rewritten scalar: indented (found by fuzzing)");
     r = upgrade("block: |\n  text\n", PYYAML, 0);
     ASSERT(r.status == OYL_OK && r.nfixes == 0, "with a line break: nothing");
     r = upgrade("|\n z\n ", UNKNOWN, 0);

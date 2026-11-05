@@ -296,6 +296,47 @@ static void test_flow_empty_props(void) {
     check("&a\n*b\n", "ERR");      /* anchor on an alias, next line */
     check("[&a\n *b]", "[ ERR");    /* same, in flow */
     check("!<> x", "ERR");         /* empty verbatim tag */
+    /* a tag needs a blank before its node */
+    check("!<x>a", "ERR");
+    check("!<x>\"a\"", "ERR");
+    check("!<x>|\n  a\n", "ERR");
+    check("!<x>:a", "ERR");
+    check("!<x>&a b", "ERR");
+    check("!x[a]", "ERR");
+    check("!x{a: 1}", "ERR");
+    check("[!<x>a]", "[ ERR");
+    check("[!x[a]]", "[ ERR");
+    check("{!<x>:a}", "{ ERR");
+}
+
+/* A tag with an empty node can meet the indicator after it */
+static void test_tag_before_indicator(void) {
+    printf("test_tag_before_indicator:\n");
+    check("!<x> a", "<x> a");
+    check("!<x>\na\n", "<x> a");
+    check("[!<x>, !y, !<z>]", "[ <x> ~ <!y> ~ <z> ~ ]");
+    check("{a: !<x>}", "{ a <x> ~ }");
+    check("{!<x>: 1}", "{ <x> ~ 1 }");
+    check("{!<x>:, a}", "{ <x> ~ ~ a ~ }");
+    check("!<x>: 1\n", "{ <x> ~ 1 }");
+}
+
+/* A block entry can't start where a multi-line value ended, even at the
+ * column of an entry (found by fuzzing) */
+static void test_entry_after_multiline_value(void) {
+    printf("test_entry_after_multiline_value:\n");
+    check("a:\n  b: [\n ]c: 1\n", "{ a { b [ ] ERR");
+    check("- a: {b\n }c: 1\n", "[ { a { b ~ } ERR");
+    check("- - [\n ]- b\n", "[ [ [ ] ERR");
+    check("- a: \"x\n \"c: 1\n", "[ { a ERR");
+    check("- a: 'x\n 'c: 1\n", "[ { a ERR");
+    check("[\n] b\n", "[ ] ERR");
+    /* the line can end, in a comment too, and the next entry follow */
+    check("- a: {b\n } # c\n  d: 1\n", "[ { a { b ~ } d 1 } ]");
+    check("- a: [b,\n   c]\n  d: 1\n", "[ { a [ b c ] d 1 } ]");
+    check("- a: \"x\n   y\"\n  b: 1\n", "[ { a x y b 1 } ]");
+    /* on one line, the column can't match: refused as before */
+    check("- a: {b}c: 1\n", "[ { a { b ~ } } ERR");
 }
 
 /* ── %TAG directives ───────────────────────────────────────── */
@@ -824,6 +865,8 @@ int main(void) {
     test_event_limit_documents();
     test_documents_before_error();
     test_stray_flow_indicators();
+    test_tag_before_indicator();
+    test_entry_after_multiline_value();
     test_continuation_indent();
     test_props_across_lines();
 #if defined(MEMORY_TESTS)

@@ -905,7 +905,9 @@ static void indent_lines(upgrade *u, const size_t *at, size_t n) {
             stack[sp++] = next;
         }
         while (sp && t->base + t->nodes[stack[sp - 1]].end <= c) sp--;
-        if (!sp || u->oom || covered(u, from, c)) continue;
+        /* from - 1: a rewrite starting this line, as of 9_ at column 0,
+         * doesn't take in the indentation added before it */
+        if (!sp || u->oom || covered(u, from ? from - 1 : 0, c)) continue;
         size_t s = t->base + t->nodes[stack[sp - 1]].start;
         size_t col = s - line_start(u, s) + 1;
         u->slen = 0;
