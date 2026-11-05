@@ -331,6 +331,11 @@ static void test_entry_after_multiline_value(void) {
     check("- a: \"x\n \"c: 1\n", "[ { a ERR");
     check("- a: 'x\n 'c: 1\n", "[ { a ERR");
     check("[\n] b\n", "[ ] ERR");
+    /* a ':' with text after it isn't a value indicator */
+    check("? [\n ]::\n", "{ [ ] ERR");
+    check("a:\n  b: [\n  ]:c: 1\n", "{ a { b [ ] ERR");
+    check("- [\n]:a\n", "[ [ ] ERR");
+    check("- a: \"x\n \":c: 1\n", "[ { a ERR");
     /* the line can end, in a comment too, and the next entry follow */
     check("- a: {b\n } # c\n  d: 1\n", "[ { a { b ~ } d 1 } ]");
     check("- a: [b,\n   c]\n  d: 1\n", "[ { a [ b c ] d 1 } ]");

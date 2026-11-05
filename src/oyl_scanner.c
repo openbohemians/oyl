@@ -1614,11 +1614,13 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
     oyl_mark start = mark(s);
     uint8_t c = PEEK(s);
 
-    /* A block entry starts its own line, so nothing but a ':' can follow a
-     * multi-line quoted scalar or flow collection on its last line, even
-     * at the column of an entry */
-    if (s->last_was_quoted && s->flow_level == 0 && c != ':' && s->node_line != s->line &&
-        only_blanks_between(s, s->node_end, s->pos))
+    /* A block entry starts its own line, so nothing but a value indicator
+     * can follow a multi-line quoted scalar or flow collection on its last
+     * line, even at the column of an entry (a ':' with text after it starts
+     * a plain scalar) */
+    if (s->last_was_quoted && s->flow_level == 0 && s->node_line != s->line &&
+        only_blanks_between(s, s->node_end, s->pos) &&
+        !(c == ':' && (s->pos + 1 >= s->len || oyl_is_blank_or_break(PEEK_AT(s, 1)))))
         SCAN_ERROR(s, "unexpected content after a multi-line value");
 
     /* most tokens start with a byte none of the checks below take (a

@@ -733,14 +733,37 @@ static bool merged_in(upgrade *u, const oyl_tree *t, uint32_t v, uint32_t k) {
     return false;
 }
 
+/* Was key k of mapping m's `?` on an earlier line? From the last node with
+ * text to the key are only indicators and comments. */
+static bool question_above(const upgrade *u, const oyl_tree *t, uint32_t m, uint32_t k, size_t from) {
+    uint32_t p = k - 1;
+    while (p > m && t->nodes[p].start == t->nodes[p].end) p--;
+    for (size_t i = t->base + (p == m ? t->nodes[m].start : t->nodes[p].end); i < from; i++) {
+        if (u->in[i] == '?') return true;
+        if (u->in[i] == '#') i = line_end(u, i);
+    }
+    return false;
+}
+
+static bool empty_key(const oyl_tree *t, uint32_t k) {
+    const oyl_node *n = &t->nodes[k];
+    return n->kind == OYL_NODE_SCALAR && n->style == OYL_SCALAR_PLAIN && !oyl_node_text(t, k).len;
+}
+
 /* Comment out pair (k, v) of block mapping m, line by line, if it has its
- * lines to itself and no anchor; false if it can't be */
-static bool comment_out(upgrade *u, doc *d, uint32_t k, uint32_t v) {
+ * lines to itself and no anchor; false if it can't be. A `?` stays with its
+ * pair, and one without a `:` mustn't get the next pair's: an empty key
+ * may have a `?` above it, and one after this pair may be that `:`. So
+ * those are never commented out, and upgrading again finds the same. A pair
+ * follows this one, the `<<` at the latest. */
+static bool comment_out(upgrade *u, doc *d, uint32_t m, uint32_t k, uint32_t v) {
     const oyl_tree *t = d->tree;
     size_t base = t->base;
     size_t from = line_start(u, base + t->nodes[k].start);
     for (size_t i = from; i < base + t->nodes[k].start; i++)
         if (u->in[i] != ' ') return false;
+    if (empty_key(t, k) || empty_key(t, v + t->nodes[v].span) || question_above(u, t, m, k, from))
+        return false;
     size_t last = base + t->nodes[v].end;
     if (base + t->nodes[k].end > last) last = base + t->nodes[k].end;
     /* a block scalar's end takes in the empty lines after it */
@@ -827,12 +850,12 @@ static void merges(upgrade *u, doc *d, uint32_t m) {
                             "PyYAML reads this key, go-yaml v2 the value its merge brings: "
                             "name the dialect to fix this");
                     d->plan[m].what = N_SKIP;
-                } else if (!(nodes[m].flags & OYL_NODE_FLOW) && comment_out(u, d, k, v)) {
+                } else if (!(nodes[m].flags & OYL_NODE_FLOW) && comment_out(u, d, m, k, v)) {
                     /* done */
                 } else if (!u->oom) {
                     add_fix(u, OYL_FIX_MERGE, at, to, (oyl_str){ NULL, 0 }, false,
                             "go-yaml v2's merge overrides this key, YAML 1.2's doesn't, and it "
-                            "can't be commented out (it shares a line or holds an anchor): left");
+                            "can't be commented out (it shares a line, holds an anchor or hangs on a ?): left");
                     d->plan[m].what = N_SKIP;
                 }
             }
@@ -880,11 +903,17 @@ static bool holder(const oyl_node *n) {
            ((n->kind == OYL_NODE_SEQUENCE || n->kind == OYL_NODE_MAPPING) && (n->flags & OYL_NODE_FLOW));
 }
 
+static size_t column_of(const upgrade *u, const oyl_tree *t, uint32_t i) {
+    size_t s = t->base + t->nodes[i].start;
+    return s - line_start(u, s);
+}
+
 /* Lines of quoted scalars or flow collections not indented past their
  * block (the warnings at `at`, in order): each indented one past the
- * column where the innermost such scalar or collection starts. One sweep
- * of each document's nodes, the scalars and collections that hold the
- * line on a stack. */
+ * column where the innermost such scalar or collection starts, and past
+ * the outermost's: the inner one may start on a line this moved, the
+ * outermost never does. One sweep of each document's nodes, the scalars
+ * and collections that hold the line on a stack. */
 static void indent_lines(upgrade *u, const size_t *at, size_t n) {
     uint32_t *stack = NULL;
     size_t sp = 0, scap = 0;
@@ -908,10 +937,10 @@ static void indent_lines(upgrade *u, const size_t *at, size_t n) {
         /* from - 1: a rewrite starting this line, as of 9_ at column 0,
          * doesn't take in the indentation added before it */
         if (!sp || u->oom || covered(u, from ? from - 1 : 0, c)) continue;
-        size_t s = t->base + t->nodes[stack[sp - 1]].start;
-        size_t col = s - line_start(u, s) + 1;
+        size_t col = column_of(u, t, stack[sp - 1]), outer = column_of(u, t, stack[0]);
+        if (outer > col) col = outer;
         u->slen = 0;
-        for (size_t k = 0; k < col; k++) sputs(u, " ");
+        for (size_t k = 0; k <= col; k++) sputs(u, " ");
         if (u->oom) break;
         add_fix(u, OYL_FIX_INDENT, from, c, keep(u, u->scratch, u->slen), true,
                 "a line not indented past its block, or with a tab, which libyaml reads and YAML 1.2 "

@@ -216,6 +216,25 @@ static void test_merges(void) {
     ASSERT(r.status == OYL_OK && strcmp(r.out, "# <<: ~\n<<:\n  <<: 1\n") == 0,
            "a << that can't merge is a key, a later merge overrides it (found by fuzzing)");
 
+    /* a ? above the pair stays with it, or would take the next pair's : */
+    static const char *const held[] = {
+        "?\n  x\n: 1\n<<: {x: 2}\n", "a: 1\n?\n  # c\n  x\n: 1\n<<: {x: 2}\n", "?\n: 1\nb: 2\n<<: {~: 3}\n",
+        "?\nx:\n: 1\n<<: {x: 2}\n", "? a\nx:\n: 1\n<<: {x: 2}\n", "?\nx:\n!!null : 1\n<<: {x: 2}\n",
+    };
+    for (size_t i = 0; i < sizeof held / sizeof *held; i++) {
+        r = upgrade(held[i], GOYAML2, 0);
+        ASSERT(r.status == OYL_OK && strcmp(r.out, held[i]) == 0 && r.nfixes == 1 && !r.fixes[0].fixed &&
+               strstr(r.texts[0][2], "hangs on a ?"), "an overridden key a ? holds: left (found by fuzzing)");
+    }
+    r = upgrade(": 1\n: 2\nb: 3\n<<: {~: 4}\n", GOYAML2, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, ": 1\n: 2\nb: 3\n<<: {~: 4}\n") == 0 && r.nfixes == 2,
+           "... the next pair's : too, or upgrading again would change it (found by fuzzing)");
+    r = upgrade("# why?\nx: 1\n<<: {x: 2}\n", GOYAML2, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "# why?\n# x: 1\n<<: {x: 2}\n") == 0, "... not a ? in a comment");
+    r = upgrade("a: b?\nc: 1 # ?\nx: 1\n<<: {x: 2}\n", GOYAML2, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "a: b?\nc: 1 # ?\n# x: 1\n<<: {x: 2}\n") == 0,
+           "... or in a scalar");
+
     r = upgrade("s: &s [{x: 1}]\nm:\n  x: 2\n  <<: *s\n", GOYAML2, 0);
     ASSERT(r.status == OYL_OK && r.nfixes == 1 && !r.fixes[0].fixed && strstr(r.texts[0][2], "rejects"),
            "go-yaml v2 rejects merging an alias to a sequence: reported (found by fuzzing)");
@@ -256,6 +275,9 @@ static void test_leniencies(void) {
     r = upgrade("a: [\n9_]\n", PYYAML, 0);
     ASSERT(r.status == OYL_OK && strcmp(r.out, "a: [\n    9]\n") == 0,
            "a line at column 0 starting with a rewritten scalar: indented (found by fuzzing)");
+    r = upgrade(" : [\n[a,\nb,\nc]]\n", PYYAML, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, " : [\n    [a,\n    b,\n    c]]\n") == 0,
+           "lines of a flow collection on a line indented: past the block (found by fuzzing)");
     r = upgrade("block: |\n  text\n", PYYAML, 0);
     ASSERT(r.status == OYL_OK && r.nfixes == 0, "with a line break: nothing");
     r = upgrade("|\n z\n ", UNKNOWN, 0);

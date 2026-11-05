@@ -23,11 +23,18 @@
 - **A block entry starts its own line.** `- a: {b\n }c: 1` read `c` as the
   next key, because it happened to sit at the mapping's column on the line
   where the flow collection ended. YAML 1.2, libyaml and libfyaml refuse
-  that, and now Oyl does, after a multi-line quoted scalar too.
+  that, and now Oyl does, after a multi-line quoted scalar too, and for a
+  key that starts with `:`, as in `- [\n]:a: 1`.
 - **`oyl_upgrade` indents a line that starts with a rewritten scalar.**
   `a: [\n9_]\n`, a file PyYAML reads, failed with "a bug in oyl_upgrade":
   with `9_` at column 0 its rewrite seemed to take in the line's
   indentation, so the line wasn't indented. It now gives `a: [\n    9]\n`.
+- **`oyl_upgrade` indents the lines of a flow collection it moved.** With
+  ` : [\n[a,\nb]]\n`, the third line went one past the column the inner `[`
+  had before its own line moved, and failed its own check.
+- **`oyl_upgrade` leaves a key a `?` holds.** Commenting out a key that
+  go-yaml v2's merge overrides left a `?` above it behind, or let a `?`
+  without a `:` take the next pair's `:`. Such a key is reported and left.
 
 ## 1.4.0 (2026-10-30)
 
