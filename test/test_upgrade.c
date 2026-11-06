@@ -281,6 +281,17 @@ static void test_merges(void) {
     ASSERT(r.status == OYL_OK && strcmp(r.out, "b: &b\n  # a: 1\n  <<: {a: 2}\nm:\n  <<: *b\n") == 0,
            "... of one fixed: as fixed");
 
+    /* A DEL can be quoted, and can't be in a comment: left */
+    const char *del[] = { "x: \"\x7f\"\n<<: {x: 1}\n", "\"\x7f\": 1\n<<: {\"\x7f\": 2}\n",
+                          "x: '\x7f'\n<<: {x: 1}\n", "x: \"a\x7f\n  b\"\n<<: {x: 1}\n" };
+    for (size_t i = 0; i < sizeof del / sizeof *del; i++) {
+        r = upgrade(del[i], GOYAML2, 0);
+        ASSERT(r.status == OYL_OK && strcmp(r.out, del[i]) == 0 && r.nfixes == 1 && !r.fixes[0].fixed &&
+               strstr(r.texts[0][2], "a DEL"), "a pair holding a DEL: left, reported");
+    }
+    r = upgrade("x: \"a\tb\"\n<<: {x: 1}\n", GOYAML2, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "# x: \"a\tb\"\n<<: {x: 1}\n") == 0, "... a tab can be");
+
     /* A mapping can't merge itself, or what holds it: then << is a key,
      * and overrides nothing */
     const char *self[] = { "&m\na: 1\n<<: *m\n", "&m\na: 1\nb: 2\n<<: [*m]\n", "&m {a: 1, <<: *m}\n",
@@ -395,9 +406,45 @@ static void test_evidence(void) {
     r = upgrade("s: \"it\\'s\"\n...\n%YAML 1.2\n---\nb: c\n", UNKNOWN, 0);
     ASSERT(r.status == OYL_ERR_PARSE && strstr(r.error, "neither PyYAML nor go-yaml v2") &&
            r.error_mark.line == 1, "both: an error");
+    /* \' settles go-yaml v2, so its keys and merges, as naming it does */
+    r = upgrade("a: \"\\'\"\nn: 1\n<<: {no: 2}\n", UNKNOWN, OYL_UPGRADE_KEYS_KEEP_VALUE);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "a: \"'\"\n# n: 1\n<<: {false: 2}\n") == 0,
+           "\\': n and no are one key");
+    static const char *const named[] = {
+        "a: \"\\'\"\nn: 1\n<<: {no: 2}\n",
+        "no: 1\n<<: {n: 2}\na: \"\\'\"\n",
+        "\"\\'\": x\nm:\n  y: 1\n  <<: {yes: 2}\n",
+        "n: 1\nno: 2\ns: \"\\'\"\n",
+        "a: \"\\'\"\n---\n?\nn:\n<<:\n no:\n",
+        "a: \"\\'\"\n<<: [{n: 1}, {no: 2}]\n",
+    };
+    static const unsigned key_flags[] = { 0, OYL_UPGRADE_KEYS_KEEP_VALUE };
+    for (size_t i = 0; i < sizeof named / sizeof named[0]; i++)
+        for (size_t f = 0; f < 2; f++) {
+            r = upgrade(named[i], GOYAML2, key_flags[f]);
+            char want[2048] = "";
+            oyl_status want_status = r.status;
+            if (r.status == OYL_OK) snprintf(want, sizeof want, "%s", r.out);
+            r = upgrade(named[i], UNKNOWN, key_flags[f]);
+            ASSERT(r.status == want_status && (r.status != OYL_OK || strcmp(r.out, want) == 0),
+                   "\\': reads as naming go-yaml v2");
+        }
 }
 
 /* ── Arguments ───────────────────────────────────────────── */
+
+/* What the parser refuses isn't a bug in oyl_upgrade, as these were when it
+ * gave a sequence's second set of properties to its first entry */
+static void test_refused(void) {
+    printf("test_refused:\n");
+    const char *refused[] = { "!\n!&\n- >\n &a[", "- !\n &m - n\n- n\n" };
+    const int readers[] = { UNKNOWN, PYYAML, GOYAML2 };
+    for (size_t i = 0; i < sizeof refused / sizeof refused[0]; i++)
+        for (size_t k = 0; k < sizeof readers / sizeof readers[0]; k++) {
+            result r = upgrade(refused[i], readers[k], OYL_UPGRADE_KEYS_KEEP_VALUE);
+            ASSERT(r.status == OYL_ERR_PARSE && !strstr(r.error, "a bug in"), refused[i]);
+        }
+}
 
 static void test_arguments(void) {
     printf("test_arguments:\n");
@@ -420,6 +467,7 @@ int main(void) {
     test_leniencies();
     test_documents();
     test_evidence();
+    test_refused();
     test_arguments();
     printf("\n--- Upgrade tests: %d / %d passed ---\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;

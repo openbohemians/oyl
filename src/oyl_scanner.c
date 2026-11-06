@@ -1850,7 +1850,11 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
     case '|': case '>':
         s->last_was_quoted = false;
         if (s->flow_level == 0) return scan_block_scalar(s, tok, start, c);
-        goto plain;
+        /* read as text, "{a: |\n  text\n}" would hide a block scalar that
+         * can't be here. '@', '`' and '%', which YAML 1.2 forbids here too,
+         * are read as text on purpose: they can't be mistaken for anything
+         * (README, "deliberate leniencies") */
+        SCAN_ERROR(s, "a block scalar cannot be inside a flow collection");
     }
 
     /* reset quoted-key tracker — the : check above already consumed it */

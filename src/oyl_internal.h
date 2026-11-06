@@ -425,6 +425,8 @@ const oyl_schema *oyl_parser_schema(const oyl_parser *p);       /* NULL: none */
  * the warning callback, for oyl_upgrade.c */
 const oyl_dialect *oyl_parser_default_dialect(oyl_parser *p);
 void              oyl_parser_get_warn(const oyl_parser *p, oyl_warn_fn *fn, void **user);
+/* Give `to` the limits of `from`, for reading the same input again */
+void              oyl_parser_copy_limits(oyl_parser *to, const oyl_parser *from);
 /* Report a warning found after parsing (no re-reading to guard against) */
 void              oyl_parser_warn(oyl_parser *p, oyl_warning code, oyl_mark mark,
                                   const char *msg);

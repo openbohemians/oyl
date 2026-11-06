@@ -22,7 +22,7 @@ invalid-YAML cases, in both parser modes (see
 [Conformance and Testing](#conformance-and-testing)). It parses 2–14×
 faster than libyaml and libfyaml (see [Performance](#performance)).
 
-One deliberate leniency: a line inside a flow collection or multi-line
+Two deliberate leniencies. A line inside a flow collection or multi-line
 quoted scalar that starts with the closing bracket or quote may sit at any
 indentation, so the common style
 
@@ -34,6 +34,12 @@ key: [
 ```
 
 parses, although strict YAML 1.2 would reject the unindented `]`.
+
+And a plain scalar may start with `@`, `` ` `` or `%`, so `handle: @oyl` and
+`date: %Y-%m-%d` read as strings. YAML 1.2 reserves `@` and `` ` `` without
+giving them a meaning, and `%` means something only at the start of a line,
+where Oyl reads it as a directive. libyaml and PyYAML refuse all three, so such
+a file isn't portable; Oyl's emitter quotes these strings.
 
 ## Build
 

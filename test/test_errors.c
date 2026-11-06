@@ -709,9 +709,20 @@ static void test_two_props_one_line(void) {
     const char *bad[] = { "! !!null\n- l\n", "&a &b\n- l\n", "k: !!str !!null\n  - l\n",
                           "&a !x &b\n- l\n",
                           /* on two lines, the key after them not nested: still one node's */
-                          "a: !x\n !y\nb: 1\n", "a: &x\n &y\nb: 1\n" };
+                          "a: !x\n !y\nb: 1\n", "a: &x\n &y\nb: 1\n",
+                          /* the same with what follows on its own line: a '-' takes no
+                           * properties and a key has them on its line (Oyl gave the second
+                           * to the entry or key until 2026-11-05; found the same way) */
+                          "!a\n!b\n- c\n", "&a\n&b\n- c\n", "- !a\n  !b\n  - c\n",
+                          "k: !a\n !b\n - c\n", "? !a\n  !b\n  - c\n", "!\n!&\n- >\n &a[",
+                          "!a\n!b\nc: d\n", "&a\n&b\nc: d\n", "!a\n!b\n[c]: d\n", "!a\n!b\n: d\n",
+                          "!a\n!b\n" };
+    /* and a '-' on the line of the second set */
+    const char *dash[] = { "!a\n&b - c\n", "&a\n!b - c\n", "- !\n &m - n\n- n\n", "k: !a\n &b - c\n",
+                           "? !a\n  &b - c\n: d\n", "--- !a\n&b - c\n" };
     const char *good[] = { "! &a\n- l\n", "&a\n&b k: v\n", "a: !x\n  !y b: 1\n", "a: !x\n &y b: 1\n",
-                           "- !x\n  !y b: 1\n", "a: &x\n !y\nb: 1\n" };
+                           "- !x\n  !y b: 1\n", "a: &x\n !y\nb: 1\n", "!a\n&b\n- c\n", "&a\n!b\n- c\n",
+                           "!a\n&b c: d\n", "!a\n!b c: d\n", "!a\n!b : d\n", "k: !a\n  &b\n  - c\n" };
     for (int eager = 0; eager < 2; eager++) {
         for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
             oyl_arena *a = oyl_arena_new(4096);
@@ -722,6 +733,57 @@ static void test_two_props_one_line(void) {
             while ((st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_STREAM_END) {}
             const char *msg = oyl_parser_error(p);
             ASSERT(st == OYL_ERR_PARSE && msg && strstr(msg, "two anchors or two tags"), bad[i]);
+            oyl_parser_free(p);
+            oyl_arena_free(a);
+        }
+        for (size_t i = 0; i < sizeof dash / sizeof dash[0]; i++) {
+            oyl_arena *a = oyl_arena_new(4096);
+            oyl_parser *p = oyl_parser_new(dash[i], strlen(dash[i]), a);
+            if (eager) oyl_parser_set_merge(p, true);
+            const oyl_event *evt;
+            oyl_status st;
+            while ((st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_STREAM_END) {}
+            const char *msg = oyl_parser_error(p);
+            ASSERT(st == OYL_ERR_PARSE && msg && strstr(msg, "same line as its properties"), dash[i]);
+            oyl_parser_free(p);
+            oyl_arena_free(a);
+        }
+        for (size_t i = 0; i < sizeof good / sizeof good[0]; i++) {
+            oyl_arena *a = oyl_arena_new(4096);
+            oyl_parser *p = oyl_parser_new(good[i], strlen(good[i]), a);
+            if (eager) oyl_parser_set_merge(p, true);
+            const oyl_event *evt;
+            oyl_status st;
+            while ((st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_STREAM_END) {}
+            ASSERT(st == OYL_OK, good[i]);
+            oyl_parser_free(p);
+            oyl_arena_free(a);
+        }
+    }
+}
+
+/* | and > start a block scalar, which a flow collection can't hold; read as
+ * text they hid one ("{a: |\n  text\n}" was "| text"). @, ` and %, which
+ * YAML 1.2 also keeps from starting a plain scalar, stay readable on purpose:
+ * the user's choice, 2026-11-05, and the README's */
+static void test_indicators_starting_plain(void) {
+    printf("test_indicators_starting_plain:\n");
+    const char *bad[] = { "[|]\n", "[>]\n", "{|: a}\n", "{a: |\n  text\n}\n", "a: [>\n  text\n]\n",
+                          "[>=1.0]\n", "[a, |b]\n", "[!x |]\n", "[|]: x\n" };
+    const char *good[] = { "[a|b]\n", "[a>b]\n", "[a\n  |b]\n", "[\"|\"]\n", "a: |\n  text\n",
+                           "a: @b\n", "@b\n", "- @b\n", "[@b]\n", "{@a: @b}\n", "@a: b\n",
+                           "a: `b\n", "`b\n", "- `b\n", "[`b]\n",
+                           "a: %b\n", " %b\n", "- %b\n", "[%b]\n", "a: 50%\n" };
+    for (int eager = 0; eager < 2; eager++) {
+        for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+            oyl_arena *a = oyl_arena_new(4096);
+            oyl_parser *p = oyl_parser_new(bad[i], strlen(bad[i]), a);
+            if (eager) oyl_parser_set_merge(p, true);
+            const oyl_event *evt;
+            oyl_status st;
+            while ((st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_STREAM_END) {}
+            const char *msg = oyl_parser_error(p);
+            ASSERT(st != OYL_OK && msg && strstr(msg, "block scalar cannot be inside a flow"), bad[i]);
             oyl_parser_free(p);
             oyl_arena_free(a);
         }
@@ -1095,6 +1157,7 @@ int main(void) {
     test_block_header_repeats();
     test_key_colon_on_its_line();
     test_two_props_one_line();
+    test_indicators_starting_plain();
 
     /* no error */
     test_no_scanner_error();

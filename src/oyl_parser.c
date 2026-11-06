@@ -1331,14 +1331,16 @@ static oyl_status parse_block_node(oyl_parser *p) {
         tt = tok_type(p);
         col = tok_col(p);
 
-        /* the inner props start a nested key only if what follows is
+        /* the inner props start a nested key only if it is on their line,
          * indented past the enclosing block; otherwise both sets are this
-         * node's, an error when they conflict ("a: !x\n !y\nb: 1"; Oyl
-         * nested b in a until 2026-10-30, found by fuzzing oyl_upgrade) */
+         * node's, an error when they conflict ("a: !x\n !y\nb: 1", where Oyl
+         * nested b in a until 2026-10-30; "!a\n!b\n- c", "!a\n!b\nc: d",
+         * where it gave !b to the first entry or key until 2026-11-05; all
+         * found by fuzzing oyl_upgrade) */
         {
-            ptrdiff_t node_col = p->current.start.line == inner_line ? inner_col : col;
+            bool on_line = p->current.start.line == inner_line;
             const ctx_entry *enc = top_ctx(p);
-            if (node_col <= (enc ? enc->indent : -1) &&
+            if ((!on_line || inner_col <= (enc ? enc->indent : -1)) &&
                 ((inner_has_anchor && p->has_anchor) || (inner_has_tag && p->has_tag)))
                 PARSE_ERROR(p, "a node cannot have two anchors or two tags");
         }
@@ -1395,29 +1397,11 @@ static oyl_status parse_block_node(oyl_parser *p) {
             return OYL_OK;
         }
 
-        if (tt == OYL_TOK_BLOCK_SEQ_ENTRY) {
-            oyl_event evt = evt_simple(OYL_EVT_SEQUENCE_START);
-            evt.start = p->current.start;
-            evt.end = p->current.end;
-            attach_props(p, &evt);
-            enqueue(p, &evt);
-            push_ctx(p, CTX_BLOCK_SEQ, col);
-            /* Restore inner props for the first entry's node */
-            p->pending_anchor = inner_anchor;
-            p->pending_tag = inner_tag;
-            p->has_anchor = inner_has_anchor;
-            p->has_tag = inner_has_tag;
-            st = parse_block_sequence(p, col);
-            if (st != OYL_OK) return st;
-            {
-                oyl_event end_evt = evt_simple(OYL_EVT_SEQUENCE_END);
-                end_evt.start = p->current.start;
-                end_evt.end = p->current.start;
-                enqueue(p, &end_evt);
-            }
-            pop_ctx(p);
-            return OYL_OK;
-        }
+        /* A '-' comes after the inner props, so they can't be its entry's
+         * (Oyl gave them to it until 2026-11-05, found by fuzzing oyl_upgrade).
+         * Above its line they conflict, which is an error above; on it: */
+        if (tt == OYL_TOK_BLOCK_SEQ_ENTRY)
+            PARSE_ERROR(p, "block sequence cannot start on the same line as its properties");
 
         /* Empty key with its own props ("!!map\n!!null : v"): outer props
          * go on the mapping, inner props on the empty key */
@@ -5330,6 +5314,11 @@ void oyl_parser_set_max_events(oyl_parser *p, int max) {
 
 void oyl_parser_set_max_depth(oyl_parser *p, int max) {
     if (p) p->max_depth = max;
+}
+
+void oyl_parser_copy_limits(oyl_parser *to, const oyl_parser *from) {
+    to->max_events = from->max_events;
+    to->max_depth = from->max_depth;
 }
 
 void oyl_parser_fail(oyl_parser *p, oyl_status status, oyl_mark mark, const char *msg) {

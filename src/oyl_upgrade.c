@@ -13,6 +13,7 @@
 
 #include "oyl_internal.h"
 #include "oyl_chars.h"
+#include "oyl_simd.h"
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -104,6 +105,7 @@ typedef struct {
     const oyl_dialect *check[2];   /* the readers' dialects, to check the output */
     bool        ordered;    /* a reader merges in go-yaml v2's order: fix overrides */
     bool        merge_disagree;    /* readers merge otherwise: report overrides */
+    bool        rereading;  /* the input a second time: warnings already told */
     doc        *docs;
     size_t      ndocs, docs_cap;
     fix_rec    *fixes;
@@ -142,7 +144,7 @@ static void hear(void *user, oyl_warning code, oyl_mark mark, const char *msg) {
         else
             u->oom = true;
     }
-    if (u->user_fn) u->user_fn(u->user_data, code, mark, msg);
+    if (u->user_fn && !u->rereading) u->user_fn(u->user_data, code, mark, msg);
 }
 
 /* Text in the parser's arena */
@@ -792,6 +794,9 @@ static bool comment_out(upgrade *u, doc *d, uint32_t m, uint32_t k, uint32_t v) 
         if (t->nodes[x].props && t->nodes[x].kind != OYL_NODE_ALIAS &&
             t->props[t->nodes[x].props].anchor_len)
             return false;
+    /* a quoted scalar may hold a DEL, which no comment can */
+    for (size_t i = from; i < to; i++)
+        if (oyl_is_control((uint8_t)u->in[i]) && !oyl_is_break((uint8_t)u->in[i])) return false;
     /* "# " before each line's first character */
     u->slen = 0;
     size_t i = from;
@@ -870,7 +875,7 @@ static void merges(upgrade *u, doc *d, uint32_t m) {
                 } else if (!u->oom) {
                     add_fix(u, OYL_FIX_MERGE, at, to, (oyl_str){ NULL, 0 }, false,
                             "go-yaml v2's merge overrides this key, YAML 1.2's doesn't, and it "
-                            "can't be commented out (it shares a line, holds an anchor or hangs on a ?): left");
+                            "can't be commented out (it shares a line, holds an anchor or a DEL, or hangs on a ?): left");
                     d->plan[m].what = N_SKIP;
                 }
             }
@@ -1293,6 +1298,54 @@ static const char *dialect_name(const oyl_dialect *d) {
     return d == oyl_dialect_yaml11() ? "PyYAML" : d == oyl_dialect_goyaml2() ? "go-yaml v2" : "the source";
 }
 
+/* Read every document with p */
+static oyl_status read_docs(upgrade *u, oyl_parser *p) {
+    for (;;) {
+        oyl_tree *t = NULL;
+        oyl_status st = oyl_parse_tree(p, &t);
+        if (u->oom) { oyl_tree_free(t); return OYL_ERR_MEMORY; }
+        if (st != OYL_OK) return st;
+        if (!t) return OYL_OK;
+        if (!grow((void **)&u->docs, &u->docs_cap, u->ndocs + 1, sizeof *u->docs)) {
+            oyl_tree_free(t);
+            return OYL_ERR_MEMORY;
+        }
+        doc *d = &u->docs[u->ndocs++];
+        d->tree = t;
+        d->plan = calloc(t->len ? t->len : 1, sizeof *d->plan);
+        if (!d->plan) return OYL_ERR_MEMORY;
+        int dmaj, dmin;
+        oyl_dialect_version(oyl_tree_dialect(t), &dmaj, &dmin);
+        d->left = dmin != 1;
+    }
+}
+
+/* A \' made the reader go-yaml v2: read the input again as it does, so that
+ * the trees have its keys and its merges, as when the caller names it */
+static oyl_status read_as_goyaml2(upgrade *u) {
+    for (size_t k = 0; k < u->ndocs; k++) {
+        oyl_tree_free(u->docs[k].tree);
+        free(u->docs[k].plan);
+    }
+    u->ndocs = 0;
+    u->nheard = 0;
+    oyl_parser *q = oyl_parser_new(u->in, u->len, u->arena);
+    if (!q) return OYL_ERR_MEMORY;
+    oyl_parser_copy_limits(q, u->p);
+    oyl_parser_set_dialect(q, oyl_dialect_goyaml2());
+    oyl_parser_set_warn(q, hear, u);
+    u->rereading = true;
+    oyl_status st = read_docs(u, q);
+    if (st != OYL_OK && st != OYL_ERR_MEMORY) {
+        char msg[384];
+        snprintf(msg, sizeof msg, "neither PyYAML nor go-yaml v2 reads this file: \\' in double quotes "
+                 "is an error to PyYAML, and to go-yaml v2 %s", oyl_parser_error(q));
+        oyl_parser_fail(u->p, st, oyl_parser_error_mark(q), msg);
+    }
+    oyl_parser_free(q);
+    return st;
+}
+
 static oyl_status run(upgrade *u, oyl_str *out) {
     oyl_parser *p = u->p;
     const oyl_dialect *dl = oyl_parser_default_dialect(p);
@@ -1316,25 +1369,8 @@ static oyl_status run(upgrade *u, oyl_str *out) {
         u->ordered = oyl_dialect_merge(dl) == OYL_MERGE_ORDERED;
     }
 
-    /* read every document */
-    for (;;) {
-        oyl_tree *t = NULL;
-        oyl_status st = oyl_parse_tree(p, &t);
-        if (u->oom) { oyl_tree_free(t); return OYL_ERR_MEMORY; }
-        if (st != OYL_OK) return st;
-        if (!t) break;
-        if (!grow((void **)&u->docs, &u->docs_cap, u->ndocs + 1, sizeof *u->docs)) {
-            oyl_tree_free(t);
-            return OYL_ERR_MEMORY;
-        }
-        doc *d = &u->docs[u->ndocs++];
-        d->tree = t;
-        d->plan = calloc(t->len ? t->len : 1, sizeof *d->plan);
-        if (!d->plan) return OYL_ERR_MEMORY;
-        int dmaj, dmin;
-        oyl_dialect_version(oyl_tree_dialect(t), &dmaj, &dmin);
-        d->left = dmin != 1;
-    }
+    oyl_status read = read_docs(u, p);
+    if (read != OYL_OK) return read;
 
     /* lines, for marks */
     u->nlines = 1;
@@ -1366,6 +1402,8 @@ static oyl_status run(upgrade *u, oyl_str *out) {
             return fail(u, sq_at, "neither PyYAML nor go-yaml v2 reads this file: \\' in double quotes "
                                   "is an error to PyYAML, %YAML 1.2 to go-yaml v2");
         if (sq) {
+            oyl_status st = read_as_goyaml2(u);
+            if (st != OYL_OK) return st;
             u->src[0] = go;
             u->check[0] = oyl_dialect_goyaml2();
             u->nsrc = 1;

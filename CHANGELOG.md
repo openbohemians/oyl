@@ -54,6 +54,31 @@
 - **`oyl_upgrade` checks it commented out only what go-yaml v2 doesn't
   read.** It compared its readers with each other, so a key lost to all
   of them passed.
+- **A `\'` settles the reader, and now how the file is read.** With no
+  dialect named, a `\'` in double quotes makes a file go-yaml v2's, but
+  `oyl_upgrade` kept the trees it read with PyYAML's keys and YAML's merge,
+  so it missed that `n` and `no` are one key. `a: "\'"`, `n: 1`,
+  `<<: {no: 2}` with `OYL_UPGRADE_KEYS_KEEP_VALUE` was refused as a bug in
+  `oyl_upgrade`, or left to be changed by a second upgrade. The file is read
+  again as go-yaml v2 reads it, and comes out as naming the dialect does.
+- **`oyl_upgrade` leaves a key it can't comment out for its DEL.** A quoted
+  scalar may hold 0x7F and a comment can't, so a pair go-yaml v2's merge
+  overrides, `x: "\x7f"`, was refused as a bug in `oyl_upgrade`. It is left
+  and reported.
+- **A second set of properties before a `-` or a key's line.** `!a\n!b\n- c`
+  gave `!b` to the entry `c`, past its `-`, and `!a\n!b\nc: d` gave it to the
+  key on the next line; `!a\n&b - c` put a `-` on a property's line. 1.4.0
+  refused these on one line only. They are errors now, as in YAML 1.2, while
+  `!a\n&b\n- c`, one node's tag and anchor, and `!a\n!b c: d`, with the key on
+  the line of its tag, read as before. Fuzzing found it through
+  `oyl_upgrade`, which took the entry's marks from the sequence, rewrote the
+  `-` with its scalar or left a block scalar alone, and then failed its own
+  check.
+- **`|` and `>` can't start a plain scalar in flow.** `{a: |\n  text\n}` read
+  as the string `| text`, hiding a block scalar where none can be, and
+  `[>=1.0]` read as a string. These are errors now, as in YAML 1.2, libyaml,
+  PyYAML and libfyaml. Quote them: `[">=1.0"]`. `@`, `` ` `` and `%` stay
+  readable, on purpose (README).
 
 ## 1.4.0 (2026-10-30)
 
