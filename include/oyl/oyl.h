@@ -455,6 +455,11 @@ typedef struct oyl_parser oyl_parser;
 /** Create a parser over the given input buffer. The buffer must remain
  *  valid for the parser's lifetime and is not copied. NULL with @p len 0
  *  is empty input.
+ *
+ *  The input is UTF-8. Malformed UTF-8 is an error wherever it is, and so
+ *  is a C1 control but NEL, U+FFFE or U+FFFF outside a quoted scalar. The
+ *  error comes when the parser reaches it, so what is before it is
+ *  delivered, and an earlier error stands.
  *  @return Parser instance, or NULL on allocation failure (or NULL input
  *          with a length). */
 OYL_API oyl_parser *oyl_parser_new(const char *input, size_t len, oyl_arena *a);
@@ -1006,7 +1011,7 @@ OYL_API oyl_status   oyl_emit_document_end(oyl_emitter *e, bool implicit);
  *  but tab and line feed, DEL, the C1 controls, U+FEFF, U+FFFE, U+FFFF),
  *  and NEL, U+2028 and U+2029, which YAML 1.1 reads as line breaks, are
  *  written escaped, in double quotes. The emitter doesn't decode UTF-8:
- *  invalid UTF-8 is written as it is. */
+ *  invalid UTF-8 is written as it is, and readers refuse it, Oyl's too. */
 OYL_API oyl_status   oyl_emit_scalar(oyl_emitter *e, oyl_str value,
                                      oyl_scalar_style style,
                                      oyl_str anchor, oyl_str tag);

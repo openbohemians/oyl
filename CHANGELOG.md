@@ -12,6 +12,27 @@
   and the emitter goes on. The piece points into the emitter's buffer,
   valid until the next call on it: no copy, nothing to free.
 
+### Changed
+
+- **Malformed UTF-8 is refused.** Oyl took any byte of 0x80 or more as
+  text, so a file saved as Latin-1 parsed, and its strings came out as
+  bytes that aren't UTF-8. It is an error now, wherever it is, at the
+  exact byte, as in PyYAML and libfyaml. So are a C1 control but NEL,
+  U+FFFE and U+FFFF outside a quoted scalar; inside one they stay, as YAML
+  1.2 requires for JSON's sake. The error comes when the parser reaches
+  the byte: the documents before it are delivered, and an earlier syntax
+  error stands.
+
+  This is one pass over the input at the first `oyl_parse_next`, by the
+  table lookup of Keiser and Lemire, with AVX2 or SSE4.2 chosen at load,
+  and no memory. It costs up to 4% on ASCII. On text that is mostly
+  non-ASCII, which Oyl reads several times faster, it costs 5 to 30% with
+  AVX2 and about twice that with SSE4.2, and on one very long non-ASCII
+  scalar 56% and 100%. Without either, ARM included, each character is
+  decoded: the same on ASCII, about 50 to 130% on non-ASCII text. The
+  emitter still writes invalid UTF-8 as it is given, which Oyl now refuses
+  to read back.
+
 ### Fixed
 
 - **A tag needs a blank before its node.** `!<x>a`, `!<x>|` and `!x[a]`

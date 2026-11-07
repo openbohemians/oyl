@@ -10,7 +10,17 @@
  * by ASAN. The arena is recreated per iteration so we don't lose coverage
  * of arena init/teardown.
  *
+ * Malformed UTF-8 stops a parse where it is, so most of what a fuzzer
+ * writes would get no further: once the text as written has been checked
+ * (below), each malformed byte is replaced with a letter, and the rest
+ * of the harness works on that.
+ *
  * Besides crashes, the harness traps if:
+ *  - the implementations of oyl_find_unprintable disagree;
+ *  - text with malformed UTF-8 parses, the error comes after its first
+ *    byte, or an event holds or passes it; or text that parses has a
+ *    character quotes alone may hold (a C1 control, U+FFFE, U+FFFF)
+ *    outside a quoted scalar;
  *  - the parser emits more events than its event limit allows (a safety
  *    limit was bypassed), or ends a stream that parses without STREAM_END;
  *  - input that parses is emitted as YAML that doesn't parse back to the
@@ -42,6 +52,7 @@
  */
 
 #include "oyl/oyl.h"
+#include "../src/oyl_simd.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -573,6 +584,74 @@ static void check_upgrade(const char *yaml, size_t len, uint8_t opts) {
     oyl_arena_free(a);
 }
 
+/* Text that has malformed UTF-8, its first at `bad`: it doesn't parse, the
+ * error is at `bad` at the latest, and no event goes past it */
+static void check_refused(const char *buf, size_t size, size_t bad) {
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_parser *p = a ? oyl_parser_new(buf, size, a) : NULL;
+    if (!p) { oyl_arena_free(a); return; }
+    oyl_parser_set_max_events(p, MAX_EVENTS);
+    const oyl_event *e;
+    oyl_status st;
+    while ((st = oyl_parse_next(p, &e)) == OYL_OK) {
+        if (e->type == OYL_EVT_STREAM_END) __builtin_trap();  /* it parsed */
+        if (e->end.offset > bad) __builtin_trap();            /* it went past */
+    }
+    if ((st == OYL_ERR_SCAN || st == OYL_ERR_PARSE) && oyl_parser_error_mark(p).offset > bad)
+        __builtin_trap();                                     /* a later error stood */
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+}
+
+/* Text that has a character quotes alone may hold, the first at `at`: if it
+ * parses, each of them is in a quoted scalar */
+static void check_quotes_only(const char *buf, size_t size, size_t at) {
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_parser *p = a ? oyl_parser_new(buf, size, a) : NULL;
+    if (!p) { oyl_arena_free(a); return; }
+    oyl_parser_set_max_events(p, MAX_EVENTS);
+    const oyl_event *e;
+    bool ended = false, outside = false;
+    while (!ended && oyl_parse_next(p, &e) == OYL_OK) {
+        ended = e->type == OYL_EVT_STREAM_END;
+        if (e->type != OYL_EVT_SCALAR || (e->scalar_style != OYL_SCALAR_SINGLE_QUOTED &&
+                                          e->scalar_style != OYL_SCALAR_DOUBLE_QUOTED))
+            continue;
+        outside = outside || at < e->start.offset;
+        while (at < e->end.offset) {
+            at += oyl_utf8_len(buf, size, at);
+            at += oyl_find_unprintable(buf + at, size - at);
+        }
+    }
+    if (ended && (outside || at < size)) __builtin_trap();
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+}
+
+/* What oyl_find_unprintable finds in the text, by each implementation:
+ * a malformed byte becomes a letter, and the first one's offset is
+ * returned, or size. */
+static size_t mend_utf8(char *buf, size_t size) {
+    size_t at = 0, first = size;
+    while (at < size) {
+        size_t n = oyl_find_unprintable(buf + at, size - at);
+        for (int level = 0; level <= 2; level++) {
+            oyl_find_fn f = oyl_find_unprintable_level(level);
+            if (f && f(buf + at, size - at) != n) __builtin_trap();
+        }
+        at += n;
+        if (at >= size) break;
+        size_t w = oyl_utf8_len(buf, size, at);
+        if (w == 0) {
+            if (first == size) first = at;
+            buf[at] = 'x';
+            w = 1;
+        }
+        at += w;
+    }
+    return first;
+}
+
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (size < 1) return 0;
     uint8_t flags = data[0];
@@ -582,6 +661,16 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     char *buf = malloc(size ? size : 1);
     if (!buf) return 0;
     memcpy(buf, data, size);
+
+    /* as written, then mended; a copy, as mending changes it */
+    char *raw = malloc(size ? size : 1);
+    if (!raw) { free(buf); return 0; }
+    memcpy(raw, data, size);
+    size_t bad = mend_utf8(buf, size);
+    if (bad < size) check_refused(raw, size, bad);
+    free(raw);
+    size_t odd = oyl_find_unprintable(buf, size);
+    if (odd < size) check_quotes_only(buf, size, odd);
 
     oyl_arena *ea = oyl_arena_new(4096);
     oyl_emitter *em = ea ? oyl_emitter_new(ea) : NULL;

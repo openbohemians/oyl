@@ -270,8 +270,9 @@ static void test_control_char_anchor(void) {
     char buf[256];
     oyl_mark at;
     ASSERT(!parse_error(good, strlen(good), &at, buf, sizeof buf), "NEL, U+2028 and other UTF-8 are fine");
-    const char *raw = "- &a\xEF\xBF\xC0 x\n- &b\xEF\xBF\xFF y\n- *a\xEF\xBF\xC0\n";
-    ASSERT(!parse_error(raw, strlen(raw), &at, buf, sizeof buf), "invalid UTF-8 as it is");
+    const char *raw = "- &a\xEF\xBF\xC0 x\n";
+    const char *m = parse_error(raw, strlen(raw), &at, buf, sizeof buf);
+    ASSERT(m && strstr(m, "invalid UTF-8") && at.offset == 4, "invalid UTF-8 in a name");
 }
 
 /* The first error in all of yaml's events, copied to buf, or NULL; its mark in *at */
@@ -290,6 +291,190 @@ static const char *parse_error(const char *yaml, size_t len, oyl_mark *at, char 
     oyl_parser_free(p);
     oyl_arena_free(a);
     return msg;
+}
+
+/* The value of the first scalar in yaml, copied to buf; false if there is none or it doesn't parse */
+static bool first_scalar(const char *yaml, size_t len, char *buf, size_t cap) {
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_parser *p = oyl_parser_new(yaml, len, a);
+    const oyl_event *e;
+    oyl_status st;
+    bool found = false;
+    while ((st = oyl_parse_next(p, &e)) == OYL_OK && e->type != OYL_EVT_STREAM_END) {
+        if (e->type == OYL_EVT_SCALAR && !found) {
+            snprintf(buf, cap, "%.*s", (int)e->value.len, e->value.data);
+            found = true;
+        }
+    }
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+    return found && st == OYL_OK;
+}
+
+/* Malformed UTF-8 is refused wherever it is, at its first byte: the first
+ * few take the block and flow fast paths on clean text */
+static void test_invalid_utf8(void) {
+    printf("test_invalid_utf8:\n");
+    static const struct { const char *yaml; size_t offset, line, col; } bad[] = {
+        { "a: caf\xE9 au lait\n", 6, 1, 7 },            /* a stray byte, in a value */
+        { "a: 1\nb\xFF: 2\n", 6, 2, 2 },                /* in a key */
+        { "- x\n- y\xFF\n", 7, 2, 4 },
+        { "'a\xC0\x80'\n", 2, 1, 3 },                   /* overlong, in quotes */
+        { "\"a\xED\xA0\x80\"\n", 2, 1, 3 },             /* a surrogate */
+        { "\"a\\tb\xE0\x80\x80\"\n", 5, 1, 6 },         /* past an escape */
+        { "'it''s \xFF'\n", 7, 1, 8 },
+        { "a: 1 # \xFE\n", 7, 1, 8 },                   /* in a comment */
+        { "# \xF5\x80\x80\x80\n- a\n", 2, 1, 3 },       /* past U+10FFFF */
+        { "- |\n  a\n  \x80\n", 10, 3, 3 },             /* in a block scalar */
+        { "[a, b\xC3]\n", 5, 1, 6 },                    /* in flow, cut short */
+        { "{\"k\": \"v\xE2\x82\"}\n", 8, 1, 9 },
+        { "!t\xFF a\n", 2, 1, 3 },                      /* in a tag */
+        { "&a\xFF a\n", 2, 1, 3 },                      /* in an anchor */
+        { "a: \xF0\x9F\x98", 3, 1, 4 },                 /* cut short by the end */
+        { "- a\r- \xFF\n", 6, 2, 3 },                   /* lines end in CR */
+        { "- a\r\n- \xFF\r\n", 7, 2, 3 },               /* and CRLF */
+        { "\xEF\xBB\xBF" "a: \xFF\n", 6, 1, 4 },        /* columns start past a BOM */
+    };
+    char buf[256];
+    oyl_mark at;
+    for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        const char *m = parse_error(bad[i].yaml, strlen(bad[i].yaml), &at, buf, sizeof buf);
+        if (!m || strcmp(m, "invalid UTF-8") || at.offset != bad[i].offset ||
+            at.line != bad[i].line || at.col != bad[i].col)
+            printf("    case %zu: %s at %zu, %zu:%zu\n", i, m ? m : "(no error)", at.offset, at.line, at.col);
+        ASSERT(m && !strcmp(m, "invalid UTF-8") && at.offset == bad[i].offset &&
+               at.line == bad[i].line && at.col == bad[i].col, "refused at the byte");
+    }
+
+    /* characters of every length that YAML allows, at the edges */
+    const char *good = "- \xC2\xA0\n- \xC2\x85\n- \xDF\xBF\n- \xE0\xA0\x80\n- \xED\x9F\xBF\n- \xEE\x80\x80\n"
+                       "- \xEF\xBF\xBD\n- \xF0\x90\x80\x80\n- \xF4\x8F\xBF\xBF\n# \xE2\x82\xAC\n";
+    ASSERT(!parse_error(good, strlen(good), &at, buf, sizeof buf), "the characters at the edges");
+}
+
+/* C1 controls but NEL, U+FFFE and U+FFFF are out of YAML's printable
+ * characters, but quoted scalars may hold them ("to ensure JSON
+ * compatibility, YAML processors must allow all non-C0 characters inside
+ * quoted scalars", 5.1) */
+static void test_quotes_only_chars(void) {
+    printf("test_quotes_only_chars:\n");
+    static const struct { const char *yaml; size_t offset; } outside[] = {
+        { "a\xC2\x80" "b\n", 1 },
+        { "a: \xC2\x9F\n", 3 },
+        { "- |\n  \xEF\xBF\xBF\n", 6 },
+        { "# \xEF\xBF\xBE\n", 2 },
+        { "[\xC2\x80]\n", 1 },
+        { "!t\xC2\x80 a\n", 2 },
+        { "\"ok\" # \xC2\x80\n", 7 },                   /* after a quoted scalar */
+        { "# \xC2\x80\n\"a\"\n", 2 },                   /* before one */
+        { "'\xC2\x80' # \xC2\x80\n", 7 },               /* the first, in quotes, doesn't count */
+        { "\"\xEF\xBF\xBE\": \xEF\xBF\xBF\n", 7 },
+    };
+    char buf[256];
+    oyl_mark at;
+    for (size_t i = 0; i < sizeof outside / sizeof outside[0]; i++) {
+        const char *m = parse_error(outside[i].yaml, strlen(outside[i].yaml), &at, buf, sizeof buf);
+        if (!m || strcmp(m, "character not allowed outside quotes") || at.offset != outside[i].offset)
+            printf("    case %zu: %s at %zu\n", i, m ? m : "(no error)", at.offset);
+        ASSERT(m && !strcmp(m, "character not allowed outside quotes") && at.offset == outside[i].offset,
+               "refused outside quotes");
+    }
+
+    static const struct { const char *yaml, *value; } inside[] = {
+        { "'a\xC2\x80" "b'\n", "a\xC2\x80" "b" },
+        { "\"\xEF\xBF\xBE\"\n", "\xEF\xBF\xBE" },
+        { "\"\xEF\xBF\xBF \xC2\x9F\xC2\x80\"\n", "\xEF\xBF\xBF \xC2\x9F\xC2\x80" }, /* several */
+        { "- \"a\n  \xC2\x80\"\n", "a \xC2\x80" },      /* the paths that build the text */
+        { "'it''s \xC2\x80'\n", "it's \xC2\x80" },
+        { "\"\\t\xC2\x80\"\n", "\t\xC2\x80" },
+        { "[\"\xC2\x80\", x]\n", "\xC2\x80" },          /* in flow */
+        { "{'\xC2\x80': 1}\n", "\xC2\x80" },
+        { "\"\xC2\x80\": 1\nb: 2\nc: 3\n", "\xC2\x80" }, /* and the plain lines after it */
+    };
+    for (size_t i = 0; i < sizeof inside / sizeof inside[0]; i++) {
+        bool ok = first_scalar(inside[i].yaml, strlen(inside[i].yaml), buf, sizeof buf);
+        if (!ok || strcmp(buf, inside[i].value)) printf("    case %zu\n", i);
+        ASSERT(ok && !strcmp(buf, inside[i].value), "held in quotes");
+    }
+
+    /* quotes hold them, not malformed UTF-8 */
+    const char *m = parse_error("\"\xC2\x80 \xFF\"\n", 7, &at, buf, sizeof buf);
+    ASSERT(m && !strcmp(m, "invalid UTF-8") && at.offset == 4, "invalid UTF-8 after one, in quotes");
+
+    /* as many as it likes: each search goes on from the last */
+    size_t n = 2 * 1024 * 1024;
+    char *big = malloc(n + 3);
+    ASSERT(big != NULL, "room");
+    if (big) {
+        big[0] = '"';
+        for (size_t i = 0; i < n; i += 2) { big[1 + i] = (char)0xC2; big[2 + i] = (char)0x80; }
+        big[n + 1] = '"';
+        big[n + 2] = '\n';
+        ASSERT(!parse_error(big, n + 3, &at, buf, sizeof buf), "a million of them");
+        free(big);
+    }
+}
+
+/* What is refused is refused when the scanner comes to it: the first
+ * error in the stream stands, and what is before it is delivered */
+static void test_unprintable_in_order(void) {
+    printf("test_unprintable_in_order:\n");
+    char buf[256];
+    oyl_mark at;
+    const char *m;
+    m = parse_error("\"a \\q \xFF\"\n", 9, &at, buf, sizeof buf);
+    ASSERT(m && strstr(m, "invalid escape") && at.offset == 5, "a syntax error before it");
+    m = parse_error("\"\xFF \\q\"\n", 7, &at, buf, sizeof buf);
+    ASSERT(m && !strcmp(m, "invalid UTF-8") && at.offset == 1, "a syntax error after it, in one token");
+    m = parse_error("'\xC2\x80", 3, &at, buf, sizeof buf);
+    ASSERT(m && strstr(m, "unterminated"), "quotes that don't close, on a character they may hold");
+    m = parse_error("\"\xFF", 2, &at, buf, sizeof buf);
+    ASSERT(m && !strcmp(m, "invalid UTF-8"), "quotes that don't close, on malformed UTF-8");
+    m = parse_error("a: [\n# \xFF\n", 9, &at, buf, sizeof buf);
+    ASSERT(m && !strcmp(m, "invalid UTF-8") && at.offset == 7, "before the end of the input's error");
+
+    /* each document's events up to it, on the fast paths' text too */
+    static const struct { const char *yaml; int docs; } streams[] = {
+        { "a: 1\nb: 2\n---\nc: 3\nd: \xFF\n", 1 },
+        { "a: 1\nb: 2\n---\nc: 3\nd: x\xFFy\ne: 5\nf: 6\n", 1 },
+        { "k1: v1\nk2: v2\nk3: x\xFFy\nk4: v4\n", 0 },
+        { "a: 1\nb\xFF: 2\nc: 3\n", 0 },
+        { "a:\n  b: 1\n  c: x\xFFy\n  d: 3\nz: 1\n", 0 },
+        { "[1, 2]\n---\n[3, \xFF]\n", 1 },
+        { "[\"a\", \"b\xFF\", \"c\"]\n", 0 },
+        { "a: 1\n---\nb: 2\n# \xFF\n", 1 },             /* the comment ends the second */
+        { "a: 1\n...\n\xFF\n", 1 },
+        { "\xFF\n---\na: 1\n", 0 },
+    };
+    for (size_t i = 0; i < sizeof streams / sizeof streams[0]; i++) {
+        oyl_arena *a = oyl_arena_new(4096);
+        oyl_parser *p = oyl_parser_new(streams[i].yaml, strlen(streams[i].yaml), a);
+        const oyl_event *e;
+        oyl_status st;
+        int docs = 0;
+        bool held = false;
+        while ((st = oyl_parse_next(p, &e)) == OYL_OK && e->type != OYL_EVT_STREAM_END) {
+            docs += e->type == OYL_EVT_DOC_END;
+            held = held || (e->type == OYL_EVT_SCALAR && memchr(e->value.data, 0xFF, e->value.len));
+        }
+        if (st == OYL_OK || docs != streams[i].docs) printf("    case %zu: %d documents\n", i, docs);
+        ASSERT(st != OYL_OK, "the stream fails");
+        ASSERT(docs == streams[i].docs, "the documents before it arrive");
+        ASSERT(!held, "and nothing that holds it");
+        oyl_parser_free(p);
+        oyl_arena_free(a);
+    }
+
+    /* the scanner's own API */
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_scanner *s = oyl_scanner_new("a: \xFF\n", 5, a);
+    const oyl_token *t;
+    oyl_status st;
+    while ((st = oyl_scan_next(s, &t)) == OYL_OK && t->type != OYL_TOK_STREAM_END) {}
+    ASSERT(st == OYL_ERR_SCAN && oyl_scan_next(s, &t) == OYL_ERR_SCAN, "the scanner's error is final");
+    ASSERT(!strcmp(oyl_scanner_error(s), "invalid UTF-8"), "the scanner's message");
+    oyl_scanner_free(s);
+    oyl_arena_free(a);
 }
 
 /* YAML text holds no control characters but tab and line breaks (C0 and
@@ -1144,6 +1329,9 @@ int main(void) {
     test_empty_anchor();
     test_control_char_anchor();
     test_control_chars();
+    test_invalid_utf8();
+    test_quotes_only_chars();
+    test_unprintable_in_order();
     test_line_separator_escapes();
     test_long_implicit_keys();
     test_depth_limit_after_expansion();

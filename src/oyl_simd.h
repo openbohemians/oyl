@@ -34,6 +34,36 @@ size_t oyl_find_break(const char *buf, size_t len);
 /* Scan to end of comment (to line break or EOF) — same as scan_to_break. */
 #define oyl_skip_comment oyl_scan_to_break
 
+/* The length of the well-formed UTF-8 character at buf[i], a byte of 0x80
+ * or more, or 0 if there is none: a stray continuation byte, a sequence
+ * cut short, an overlong form, a surrogate, or past U+10FFFF. */
+static inline size_t oyl_utf8_len(const char *buf, size_t len, size_t i) {
+    const uint8_t *s = (const uint8_t *)buf;
+    uint8_t c = s[i];
+    size_t n = c < 0xC2 ? 0 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : c < 0xF5 ? 4 : 0;
+    if (n == 0 || i + n > len) return 0;
+    uint8_t lo = c == 0xE0 ? 0xA0 : c == 0xF0 ? 0x90 : 0x80;
+    uint8_t hi = c == 0xED ? 0x9F : c == 0xF4 ? 0x8F : 0xBF;
+    if (s[i + 1] < lo || s[i + 1] > hi) return 0;
+    for (size_t k = 2; k < n; k++)
+        if ((s[i + k] & 0xC0) != 0x80) return 0;
+    return n;
+}
+
+/* Find the first thing in buf[0..len) that YAML's c-printable lacks among
+ * the bytes of 0x80 and up: malformed UTF-8 (at the byte oyl_utf8_len
+ * finds no character at), a C1 control but NEL, U+FFFE or U+FFFF (at its
+ * first byte). Returns its offset, or `len`. Control characters below 0x80
+ * aren't looked for: which of them a text may hold depends on where it is,
+ * as it does for C1 and the rest, which quoted scalars may hold. */
+size_t oyl_find_unprintable(const char *buf, size_t len);
+
+/* For the tests: the implementation of oyl_find_unprintable at level 0
+ * (decoding), 1 (SSE4.2) or 2 (AVX2), or NULL if the build or the CPU has
+ * none. */
+typedef size_t (*oyl_find_fn)(const char *, size_t);
+oyl_find_fn oyl_find_unprintable_level(int level);
+
 /* Offset of the first byte in buf[0..len) equal to a, b, c or d, or `len`.
  * Inline because quoted scalars are usually short. SSE2 is part of
  * x86-64, so no runtime dispatch. */

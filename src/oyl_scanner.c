@@ -41,6 +41,8 @@ struct oyl_scanner {
     const char *buf;
     size_t      len;
     size_t      begin;  /* where the text starts: 3 past a UTF-8 BOM, else 0 */
+    size_t      bad;    /* the next thing the text can't hold, oyl_find_unprintable's:
+                         * at len if there is none, past len until stream start */
 
     /* cursor */
     size_t      pos;
@@ -1525,6 +1527,7 @@ oyl_scanner *oyl_scanner_new(const char *input, size_t len, oyl_arena *a) {
         .indicator_end        = SIZE_MAX,
         .props_end            = SIZE_MAX,
         .ahead_from           = SIZE_MAX,
+        .bad                  = SIZE_MAX,
         .arena = a,
     };
 
@@ -1568,7 +1571,49 @@ oyl_status oyl_scan_next(oyl_scanner *s, const oyl_token **tok) {
     return st;
 }
 
-oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
+/* The mark of a byte the cursor has gone past: for an error, so counted
+ * from the start */
+static oyl_mark mark_at(const oyl_scanner *s, size_t at) {
+    oyl_mark m = {at, 1, 1};
+    for (size_t i = s->begin; i < at; i++) {
+        if (s->buf[i] == '\n' || (s->buf[i] == '\r' && s->buf[i + 1] != '\n')) {
+            m.line++;
+            m.col = 1;
+        } else {
+            m.col++;
+        }
+    }
+    return m;
+}
+
+/* A quoted scalar started at `from` and the cursor, where it ended or
+ * failed, is past s->bad. Quotes may hold any character but C0 ("to ensure
+ * JSON compatibility", YAML 1.2 5.1), but not malformed UTF-8, so s->bad
+ * moves on past what they may hold. Each search starts where the last
+ * ended: however many there are, the text is looked at once. */
+NOINLINE void pass_quoted(oyl_scanner *s, size_t from) {
+    while (s->bad >= from && s->bad < s->pos) {
+        size_t n = oyl_utf8_len(s->buf, s->len, s->bad);
+        if (n == 0) return;
+        size_t next = s->bad + n;
+        s->bad = next + oyl_find_unprintable(s->buf + next, s->len - next);
+    }
+}
+
+/* The cursor is past s->bad, with `st` from the token that took it there.
+ * This is the error, unless that token failed before reaching it: the
+ * first in the stream stands. */
+NOINLINE oyl_status past_bad(oyl_scanner *s, oyl_status st) {
+    if (st != OYL_OK && (st != OYL_ERR_SCAN || s->error_mark.offset <= s->bad)) return st;
+    snprintf(s->error_msg, sizeof(s->error_msg), "%s",
+             oyl_utf8_len(s->buf, s->len, s->bad) ? "character not allowed outside quotes"
+                                                  : "invalid UTF-8");
+    s->error_mark = mark_at(s, s->bad);
+    return OYL_ERR_SCAN;
+}
+
+/* Inlined into oyl_scan_token, its one caller */
+ALWAYS_INLINE oyl_status scan_token(oyl_scanner *s, oyl_token *tok) {
     /* drain pending tokens first */
     if (s->pending_count > 0) {
         *tok = s->pending[0];
@@ -1580,6 +1625,7 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
     /* stream start */
     if (!s->stream_started) {
         s->stream_started = true;
+        s->bad = oyl_find_unprintable(s->buf, s->len);
         tok_simple(tok, OYL_TOK_STREAM_START, mark(s), mark(s));
         return OYL_OK;
     }
@@ -1841,12 +1887,13 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
     case '&': case '*':
         s->last_was_quoted = false;
         return scan_anchor_or_alias(s, tok);
-    case '\'':
+    case '\'': case '"': {
         s->last_was_quoted = false;
-        return scan_single_quoted(s, tok);
-    case '"':
-        s->last_was_quoted = false;
-        return scan_double_quoted(s, tok);
+        size_t from = s->pos;
+        oyl_status st = c == '"' ? scan_double_quoted(s, tok) : scan_single_quoted(s, tok);
+        if (s->pos > s->bad) pass_quoted(s, from);
+        return st;
+    }
     case '|': case '>':
         s->last_was_quoted = false;
         if (s->flow_level == 0) return scan_block_scalar(s, tok, start, c);
@@ -1863,6 +1910,11 @@ oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
 plain:
     /* plain scalar — the common case, SIMD-accelerated */
     return scan_plain_scalar(s, tok);
+}
+
+oyl_status oyl_scan_token(oyl_scanner *s, oyl_token *tok) {
+    oyl_status st = scan_token(s, tok);
+    return s->pos > s->bad ? past_bad(s, st) : st;
 }
 
 /* ── Flow fast path (oyl_internal.h) ───────────────────────── */
@@ -1887,8 +1939,9 @@ static inline bool ff_plain(uint8_t c) {
  * blanks. */
 HOT_ALIGNED int oyl_scan_flow_fast(const oyl_scanner *s, const oyl_token *open, oyl_event *out, int cap,
                        oyl_flow_fast *ff) {
-    /* a '?' entry awaiting its ':' changes what ',' and a close do */
-    if (s->explicit_key || s->flows_len == 0 || cap < 2) return -1;
+    /* a '?' entry awaiting its ':' changes what ',' and a close do; and
+     * only tokens are checked against s->bad */
+    if (s->explicit_key || s->flows_len == 0 || cap < 2 || s->bad < s->len) return -1;
     const char *b = s->buf;
     size_t len = s->len;
     size_t line = open->start.line;
@@ -2124,7 +2177,7 @@ int oyl_scan_block_fast(oyl_scanner *s, oyl_block_fast_mode mode, const oyl_toke
                         ptrdiff_t indent, oyl_event *out, int cap, oyl_mark *colon, bool *full) {
     *full = false;
     if (s->pending_count > 0 || s->flow_level > 0 || !s->stream_started || s->indent != indent ||
-        indent < 0 || cap < (mode == OYL_BF_VALUE ? 1 : 2))
+        indent < 0 || cap < (mode == OYL_BF_VALUE ? 1 : 2) || s->bad < s->len)
         return 0;
     const char *b = s->buf;
     size_t len = s->len;

@@ -665,14 +665,16 @@ static void test_escaped_characters(void) {
         { "\xC3\xA9t\xC3\xA9 \xE2\x82\xAC \xEF\xBF\xBD \xC2\xA0", OYL_SCALAR_PLAIN,
           "\xC3\xA9t\xC3\xA9 \xE2\x82\xAC \xEF\xBF\xBD \xC2\xA0\n" },
         { "a\xE2\x80\xA7" "b", OYL_SCALAR_SINGLE_QUOTED, "'a\xE2\x80\xA7" "b'\n" },
-        /* and invalid UTF-8, though it starts like U+FFFE */
+        /* and invalid UTF-8, though it starts like U+FFFE, which only the
+         * reader refuses */
         { "x\xEF\xBF\xC0y", OYL_SCALAR_DOUBLE_QUOTED, "\"x\xEF\xBF\xC0y\"\n" },
         { "x\xEF\xBF\xFF", OYL_SCALAR_PLAIN, "x\xEF\xBF\xFF\n" },
         { "\xEF\xBF\xC0", OYL_SCALAR_SINGLE_QUOTED, "'\xEF\xBF\xC0'\n" },
     };
     oyl_arena *a = oyl_arena_new(4096);
     char got[256], want[256];
-    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+    const size_t ncases = sizeof cases / sizeof cases[0];
+    for (size_t i = 0; i < ncases; i++) {
         oyl_emitter *e = oyl_emitter_new(a);
         oyl_emit_stream_start(e);
         oyl_emit_document_start(e, true);
@@ -683,7 +685,10 @@ static void test_escaped_characters(void) {
         if (!str_eq(out, cases[i].want)) printf("    case %zu: %.*s", i, (int)out.len, out.data);
         ASSERT(str_eq(out, cases[i].want), "escaped where needed");
         snprintf(want, sizeof want, "D =%s d", cases[i].text);
-        ASSERT(read_back(out, got, sizeof got) && strcmp(got, want) == 0, "reads back as written");
+        if (i + 3 < ncases)
+            ASSERT(read_back(out, got, sizeof got) && strcmp(got, want) == 0, "reads back as written");
+        else
+            ASSERT(!read_back(out, got, sizeof got), "invalid UTF-8 doesn't read back");
         oyl_emitter_free(e);
     }
 
@@ -973,14 +978,21 @@ static void test_invalid_events(void) {
     oyl_emit_scalar(e, S("v"), OYL_SCALAR_PLAIN, S("\xC3\xA9t\xC3\xA9"), N);
     oyl_emit_alias(e, S("\xC3\xA9t\xC3\xA9"));
     oyl_emit_scalar(e, S("w"), OYL_SCALAR_PLAIN, S("a*b&c!d"), N);
-    oyl_emit_scalar(e, S("u"), OYL_SCALAR_PLAIN, S("b\xEF\xBF\xC0"), N); /* invalid UTF-8 as it is */
     oyl_emit_sequence_end(e);
     oyl_emit_document_end(e, true);
     ASSERT(oyl_emit_stream_end(e) == OYL_OK, "good anchors");
     char got[128];
     ASSERT(read_back(oyl_emitter_output(e), got, sizeof got) &&
-           strcmp(got, "D &s: [ &\xC3\xA9t\xC3\xA9 =v *\xC3\xA9t\xC3\xA9 &a*b&c!d =w &b\xEF\xBF\xC0 =u ] d") == 0,
+           strcmp(got, "D &s: [ &\xC3\xA9t\xC3\xA9 =v *\xC3\xA9t\xC3\xA9 &a*b&c!d =w ] d") == 0,
            "read back");
+    oyl_emitter_free(e);
+
+    /* invalid UTF-8 is written as it is, which only the reader refuses */
+    FRESH(true);
+    oyl_emit_scalar(e, S("u"), OYL_SCALAR_PLAIN, S("b\xEF\xBF\xC0"), N);
+    oyl_emit_document_end(e, true);
+    ASSERT(oyl_emit_stream_end(e) == OYL_OK, "an invalid name is written");
+    ASSERT(!read_back(oyl_emitter_output(e), got, sizeof got), "and doesn't read back");
     oyl_emitter_free(e);
 #undef FRESH
     oyl_arena_free(a);

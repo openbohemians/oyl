@@ -166,6 +166,19 @@ require seeing a whole document first. Such documents are parsed one at a
 time, so memory follows the largest document, not the stream; the
 documents before an error are delivered before it.
 
+### Input
+
+The input is UTF-8; a leading byte order mark is skipped. Malformed UTF-8
+is an error wherever it is: a stray byte, a sequence cut short, an overlong
+form, a surrogate, anything past U+10FFFF. A C1 control but NEL, U+FFFE or
+U+FFFF is an error outside a quoted scalar; quotes may hold them, as YAML
+1.2 requires for JSON's sake. The error gives the byte's exact place. It
+comes when the parser reaches that byte, so the documents before it are
+delivered, and an earlier syntax error stands.
+
+The first `oyl_parse_next` looks over the whole input for these, once,
+with AVX2 or SSE4.2 where the CPU has them.
+
 ### Functions
 
 | Function | Description |
@@ -277,7 +290,8 @@ What the emitter writes reads back as the events it was given:
   line feed, DEL, the C1 controls, U+FEFF, U+FFFE, U+FFFF), and NEL,
   U+2028 and U+2029, which YAML 1.1 readers take as line breaks, are
   written escaped in double quotes, whatever style was asked for. The
-  emitter doesn't decode UTF-8: invalid UTF-8 is written as it is.
+  emitter doesn't decode UTF-8: invalid UTF-8 is written as it is, and
+  readers refuse it, Oyl's too.
 - A mapping key longer than YAML allows an implicit key (1024
   characters, its anchor and tag included) is written explicit:
   `? key`, its value on the next line.

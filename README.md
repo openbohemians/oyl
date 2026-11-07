@@ -795,6 +795,11 @@ rapidyaml's default build rejects tabs after `:` and `-` (a documented
 choice), and its event output leaves `%TAG` shorthands unexpanded, which
 accounts for 9 of its differences. libyaml implements YAML 1.1.
 
+The suite doesn't test encodings. Oyl reads UTF-8 and refuses malformed
+UTF-8 at its exact byte; YAML's C1 and noncharacter rules apply too, with
+quoted scalars holding those characters as YAML 1.2 requires. UTF-16 and
+UTF-32, which YAML 1.2 also requires, aren't read.
+
 Oyl's own suite runner (`make test-suite`) also checks both of its parser
 modes and round-trips every valid case through the emitter in all three
 output styles. A libFuzzer harness (`fuzz/fuzz_parser.c`) checks that
