@@ -20,12 +20,14 @@ static int tests_passed = 0;
 /* The readers to name: none, PyYAML's, go-yaml v2's */
 enum { UNKNOWN, PYYAML, GOYAML2 };
 
+enum { TEXT_MAX = 200 };   /* the longest message a test looks into */
+
 typedef struct {
     oyl_status status;
     char       out[2048];
     size_t     nfixes, fixed;
     oyl_fix    fixes[32];
-    char       texts[32][3][160];   /* each fix's before, after and message */
+    char       texts[32][3][TEXT_MAX];   /* each fix's before, after and message */
     char       error[256];
     oyl_mark   error_mark;
     int        warnings;
@@ -37,7 +39,7 @@ static void count_warning(void *user, oyl_warning code, oyl_mark mark, const cha
 }
 
 static void copy(char *dst, oyl_str s) {
-    size_t n = s.len < 159 ? s.len : 159;
+    size_t n = s.len < TEXT_MAX - 1 ? s.len : TEXT_MAX - 1;
     if (n) memcpy(dst, s.data, n);
     dst[n] = '\0';
 }
@@ -281,13 +283,16 @@ static void test_merges(void) {
     ASSERT(r.status == OYL_OK && strcmp(r.out, "b: &b\n  # a: 1\n  <<: {a: 2}\nm:\n  <<: *b\n") == 0,
            "... of one fixed: as fixed");
 
-    /* A DEL can be quoted, and can't be in a comment: left */
+    /* A DEL, a C1 control, U+FFFE and U+FFFF can be quoted, and can't be in
+     * a comment: left (the last four found by fuzzing) */
     const char *del[] = { "x: \"\x7f\"\n<<: {x: 1}\n", "\"\x7f\": 1\n<<: {\"\x7f\": 2}\n",
-                          "x: '\x7f'\n<<: {x: 1}\n", "x: \"a\x7f\n  b\"\n<<: {x: 1}\n" };
+                          "x: '\x7f'\n<<: {x: 1}\n", "x: \"a\x7f\n  b\"\n<<: {x: 1}\n",
+                          "x: \"\xc2\x80\"\n<<: {x: 1}\n", "x: '\xef\xbf\xbe'\n<<: {x: 1}\n",
+                          "x: 'a\n  \xef\xbf\xbf b'\n<<: {x: 1}\n", "x:\n- '\xc2\x9f'\n<<: {x: 1}\n" };
     for (size_t i = 0; i < sizeof del / sizeof *del; i++) {
         r = upgrade(del[i], GOYAML2, 0);
         ASSERT(r.status == OYL_OK && strcmp(r.out, del[i]) == 0 && r.nfixes == 1 && !r.fixes[0].fixed &&
-               strstr(r.texts[0][2], "a DEL"), "a pair holding a DEL: left, reported");
+               strstr(r.texts[0][2], "no comment can"), "a pair holding what a comment can't: left, reported");
     }
     r = upgrade("x: \"a\tb\"\n<<: {x: 1}\n", GOYAML2, 0);
     ASSERT(r.status == OYL_OK && strcmp(r.out, "# x: \"a\tb\"\n<<: {x: 1}\n") == 0, "... a tab can be");

@@ -794,9 +794,10 @@ static bool comment_out(upgrade *u, doc *d, uint32_t m, uint32_t k, uint32_t v) 
         if (t->nodes[x].props && t->nodes[x].kind != OYL_NODE_ALIAS &&
             t->props[t->nodes[x].props].anchor_len)
             return false;
-    /* a quoted scalar may hold a DEL, which no comment can */
+    /* a quoted scalar may hold what no comment can: a DEL, a C1 control, U+FFFE */
     for (size_t i = from; i < to; i++)
         if (oyl_is_control((uint8_t)u->in[i]) && !oyl_is_break((uint8_t)u->in[i])) return false;
+    if (oyl_find_unprintable(u->in + from, to - from) < to - from) return false;
     /* "# " before each line's first character */
     u->slen = 0;
     size_t i = from;
@@ -875,7 +876,7 @@ static void merges(upgrade *u, doc *d, uint32_t m) {
                 } else if (!u->oom) {
                     add_fix(u, OYL_FIX_MERGE, at, to, (oyl_str){ NULL, 0 }, false,
                             "go-yaml v2's merge overrides this key, YAML 1.2's doesn't, and it "
-                            "can't be commented out (it shares a line, holds an anchor or a DEL, or hangs on a ?): left");
+                            "can't be commented out (it shares a line, holds an anchor or a character no comment can, or hangs on a ?): left");
                     d->plan[m].what = N_SKIP;
                 }
             }
