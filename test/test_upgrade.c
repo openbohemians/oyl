@@ -140,7 +140,7 @@ static void test_scalars(void) {
         /* line breaks kept as they are */
         { PYYAML,  0, "a: yes\r\nb: 1\r\n", "a: true\r\nb: 1\r\n" },
         /* the reader unknown: what PyYAML and go-yaml v2 read alike */
-        { UNKNOWN, 0, "a: yes\nb: 0755\non: 1\ny: 2\n", "a: true\nb: !!int 0o755\n\"on\": 1\n\"y\": 2\n" },
+        { UNKNOWN, 0, "a: yes\nb: 0755\non: 1\ny: 2\n", "a: true\nb: !!int 0o755\non: 1\ny: 2\n" },
     };
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
         result r = upgrade(cases[i].in, cases[i].reader, cases[i].flags);
@@ -316,20 +316,74 @@ static void test_merges(void) {
                strstr(r.texts[0][2], "two keys equal"), "a rewrite joining a key and one merged: left");
     }
     r = upgrade("\"n\": 1\n<<: {<<: [{no: 2}, {n: 3}]}\n", GOYAML2, 0);
-    ASSERT(r.status == OYL_OK && strcmp(r.out, "\"n\": 1\n<<: {<<: [{\"no\": 2}, {n: 3}]}\n") == 0,
-           "... one overridden on the way in too");
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "\"n\": 1\n<<: {<<: [{no: 2}, {n: 3}]}\n") == 0 && !r.fixed,
+           "... one overridden on the way in too, and no, one key with n");
     r = upgrade("\"n\": 1\n<<: {n: 2}\n", GOYAML2, OYL_UPGRADE_KEYS_KEEP_VALUE);
     ASSERT(r.status == OYL_OK && strcmp(r.out, "\"n\": 1\n<<: {false: 2}\n") == 0, "... not keeping the value");
-    const char *settled[][2] = { { "<<: {\"n\": 1}\n<<: {n: 2}\n", "<<: {\"n\": 1}\n<<: {\"n\": 2}\n" },
-                                 { "<<: [{n: 2}, {\"n\": 1}]\n", "<<: [{\"n\": 2}, {\"n\": 1}]\n" },
-                                 { "<<: {n: 2}\n\"n\": 1\n", "<<: {\"n\": 2}\n\"n\": 1\n" } };
+    /* ... and where every reader would settle them alike: one would be lost */
+    const char *settled[] = { "<<: {\"n\": 1}\n<<: {n: 2}\n", "<<: [{n: 2}, {\"n\": 1}]\n", "<<: {n: 2}\n\"n\": 1\n" };
     for (size_t i = 0; i < sizeof settled / sizeof *settled; i++) {
-        r = upgrade(settled[i][0], GOYAML2, 0);
-        ASSERT(r.status == OYL_OK && strcmp(r.out, settled[i][1]) == 0, "... not where every reader settles them alike");
+        r = upgrade(settled[i], GOYAML2, 0);
+        ASSERT(r.status == OYL_OK && strcmp(r.out, settled[i]) == 0 && r.nfixes == 1 && !r.fixes[0].fixed &&
+               strstr(r.texts[0][2], "two keys equal"), "... where every reader would settle them alike too");
     }
-    /* `n` and `no` are one key to go-yaml v2 and, their text kept, two */
+    /* whichever the reader, merging or not */
+    const char *lost[] = { "on: a\n<<: {\"on\": b}\n", "<<: {\"on\": b}\non: a\n", "<<: [{on: a}, {\"on\": b}]\nc: d\n",
+                           "<<: [{\"on\": b}, {on: a}]\nc: d\n",
+                           "c: d\n<<: {<<: {\"on\": b}, on: a}\n", "m: &m {\"on\": b}\nn:\n  on: a\n  <<: *m\n" };
+    for (size_t i = 0; i < sizeof lost / sizeof *lost; i++) {
+        r = upgrade(lost[i], PYYAML, 0);
+        ASSERT(r.status == OYL_OK && strcmp(r.out, lost[i]) == 0 && r.nfixes == 1 && !r.fixes[0].fixed &&
+               strstr(r.texts[0][2], "two keys equal"), "PyYAML: a rewrite joining keys of a merge: left");
+    }
+    /* -0.0 is 0.0 as a key, and -.0 is text to PyYAML (found by fuzzing) */
+    const char *zero[] = { "-.0: a\n.0: b\n", "-.0: a\n0.0: b\n", "-.0: a\n<<: {.0: b}\n", "<<: {.0: b}\n-.0: a\n" };
+    for (size_t i = 0; i < sizeof zero / sizeof *zero; i++) {
+        r = upgrade(zero[i], PYYAML, 0);
+        ASSERT(r.status == OYL_OK && strcmp(r.out, zero[i]) == 0 && r.nfixes == 1 && !r.fixes[0].fixed &&
+               strstr(r.texts[0][2], "two keys equal"), "a rewrite joining -0.0 and 0.0: left");
+        r = upgrade(zero[i], UNKNOWN, 0);
+        ASSERT(r.status == OYL_OK && strcmp(r.out, zero[i]) == 0 && !r.fixed, "... the reader unknown too");
+    }
+    r = upgrade("+.0: a\n-.0: b\n", PYYAML, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "+.0: a\n-.0: b\n") == 0 && r.nfixes == 2 && !r.fixed,
+           "... both being rewritten");
+    r = upgrade("-.0: a\n", PYYAML, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "-0.0: a\n") == 0 && r.fixed == 1, "... alone it's rewritten");
+    /* one key to PyYAML, two to go-yaml v2: either reader may be the one */
+    r = upgrade("y: a\n\"y\": b\n", UNKNOWN, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "y: a\n\"y\": b\n") == 0 && !r.fixed, "keys one reader parts: left");
+    /* a key commented out is no key: 010 would be 10 to YAML 1.2, and 012 is
+     * rewritten to that */
+    r = upgrade("010: a\n012: b\n<<: {8: c}\n", GOYAML2, OYL_UPGRADE_KEYS_KEEP_VALUE);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "# 010: a\n0o12: b\n<<: {8: c}\n") == 0,
+           "a key commented out clashes with nothing");
+    /* 010 can't be 10, so it stays 8 to PyYAML, which 0o10 would have become */
+    r = upgrade("010: a\n10: b\n0o10: c\n", PYYAML, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "010: a\n10: b\n0o10: c\n") == 0 && r.nfixes == 2 && !r.fixed,
+           "a key left brings its reading back: one more left");
+
+    /* Keys a reader has as one stay so: the file has a key set twice, its own
+     * mistake, and parting them would change the value of the key */
+    r = upgrade("1: a\n0b1: b\n", PYYAML, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "1: a\n0b1: b\n") == 0 && r.nfixes == 1 && !r.fixed &&
+           strstr(r.texts[0][2], "PyYAML reads it and another key as one"), "a rewrite parting one key: left, reported");
+    r = upgrade("on: 1\nyes: 2\n", PYYAML, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "on: 1\nyes: 2\n") == 0 && r.nfixes == 2 && !r.fixed,
+           "... both being rewritten");
+    r = upgrade("y: 1\non: 2\n", UNKNOWN, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "y: 1\non: 2\n") == 0 && !r.fixed &&
+           strstr(r.texts[0][2], "go-yaml v2 reads it and another key as one"), "... one reader having them as one");
+    r = upgrade("y: 1\non: 2\n", PYYAML, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "y: 1\n\"on\": 2\n") == 0 && r.fixed == 1,
+           "... the reader named, two keys, rewritten");
+    r = upgrade("-.0: a\n\"-.0\": b\n", PYYAML, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "-.0: a\n\"-.0\": b\n") == 0 && !r.fixed, "... text to PyYAML");
     r = upgrade("?\nn:\n<<:\n no:\n", GOYAML2, 0);
-    ASSERT(r.status == OYL_OK && strcmp(r.out, "?\n\"n\":\n<<:\n \"no\":\n") == 0, "keys the text policy parts");
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "?\nn:\n<<:\n no:\n") == 0 && !r.fixed, "... one written, one merged");
+    /* a value can be rewritten where its key isn't */
+    r = upgrade("1: yes\n0b1: no\n", PYYAML, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "1: true\n0b1: false\n") == 0, "... its values rewritten");
 
     /* Every spelling trees merge */
     r = upgrade("a: 0\n! <<: {a: 1}\n", GOYAML2, 0);

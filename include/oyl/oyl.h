@@ -920,10 +920,11 @@ enum {
  *  ending the input without a line break gets the strip indicator, a
  *  quoted scalar's or flow collection's line not indented past its block
  *  is indented, and a key go-yaml v2's merge overrides is commented out.
- *  Each is in @p fixes, with what can't be fixed (as two keys made equal),
- *  left as it was. The output is then read in every reader and YAML 1.2:
- *  if any scalar reads otherwise than decided, OYL_ERR_PARSE, never a
- *  file that reads otherwise.
+ *  Each is in @p fixes, with what can't be fixed left as it was: a rewrite
+ *  never changes how many keys a mapping has to a reader of the source. The
+ *  output is then read in every reader and YAML 1.2: if any scalar reads
+ *  otherwise than decided, or a mapping has another number of keys,
+ *  OYL_ERR_PARSE, never a file that reads otherwise.
  *
  *  @p out and @p fixes are in the parser's arena. Errors are reported as
  *  parse errors (oyl_parser_error(), oyl_parser_error_mark()); the

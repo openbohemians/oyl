@@ -582,7 +582,7 @@ It also removes `%YAML 1.1`, the backslash of `\'` in double quotes, and
 libyaml's other leniencies: a block scalar ending the input without a line
 break gets `|-`, and a quoted scalar's or flow collection's line not
 indented past its block is indented. What can't be fixed is reported and
-left: a rewrite that would make two keys equal, YAML 1.1's `=` key, a
+left: a rewrite that would change how many keys a mapping has, YAML 1.1's `=` key, a
 merge override in a flow mapping. `<<` itself stays, as YAML 1.2 readers
 commonly keep it.
 

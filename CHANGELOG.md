@@ -35,6 +35,23 @@
 
 ### Fixed
 
+- **`oyl_upgrade` could lose a key without a word.** A rewrite that would
+  make two keys equal was left alone only if both were written in one
+  mapping. So `on: a` with `<<: {"on": b}`, read as PyYAML's, became
+  `"on": a`, and `b` was gone for every reader; likewise keys in two merges,
+  or a key after the `<<` in go-yaml v2's. And -0.0 was taken for another key
+  than 0.0, so `-.0: a` and `.0: b`, two keys to PyYAML, became one. All are
+  left and reported now. Fuzzing found it. In 1.4.0.
+- **`oyl_upgrade` leaves a key set twice as it is.** `1: a` and `0b1: b` are
+  one key to PyYAML, which reads `{1: b}`; rewriting the second made it
+  `{1: a, "0b1": b}`, changing what key 1 holds. It's a mistake in the file, so
+  the keys stay and the report says so. The same goes for `on: 1` and `y: 2`
+  with no reader named, as go-yaml v2 has them as one; naming the reader
+  rewrites them. Its check of the output now also compares each mapping's
+  number of keys, for each reader of the source.
+- **`oyl_upgrade` compared a mapping's keys pair by pair,** so time grew with
+  the square of the keys it rewrote: 2.25 s at 4,000 keys. It takes one pass
+  now: 5 ms.
 - **A tag needs a blank before its node.** `!<x>a`, `!<x>|` and `!x[a]`
   were read as a tag and a node with nothing between them, where YAML 1.2,
   libyaml and libfyaml all refuse them. They are errors now. A tag on an

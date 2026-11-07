@@ -609,68 +609,13 @@ static void decide(upgrade *u, doc *d, uint32_t i) {
     pl->expect = target->key;
 }
 
-/* Do the source's readers all read scalars a and b as one key? */
-static bool same_in_source(upgrade *u, const oyl_tree *t, uint32_t a, uint32_t b) {
-    for (int r = 0; r < u->nsrc; r++) {
-        reading x = read_as(&u->src[r], oyl_node_text(t, a), (oyl_scalar_style)t->nodes[a].style,
-                            explicit_tag(t, a));
-        reading y = read_as(&u->src[r], oyl_node_text(t, b), (oyl_scalar_style)t->nodes[b].style,
-                            explicit_tag(t, b));
-        if (!x.ok || !y.ok || !same(&x, &y)) return false;
-    }
-    return true;
-}
-
-/* Would scalar k, rewritten, equal scalar o, a key the source reads as
- * another? (Two keys the source already read as one stay one, rewritten
- * alike.) */
-static bool clashes(upgrade *u, const doc *d, uint32_t k, uint32_t o) {
-    const oyl_tree *t = d->tree;
-    if (same_in_source(u, t, k, o)) return false;
-    reading want = { true, d->plan[k].expect };
-    if (d->plan[o].what == N_CHANGED) {
-        reading x = { true, d->plan[o].expect };
-        return same(&x, &want);
-    }
-    oyl_str text = oyl_node_text(t, o), own = explicit_tag(t, o);
-    oyl_scalar_style st = (oyl_scalar_style)t->nodes[o].style;
-    for (int r = 0; r <= u->nsrc; r++) {
-        reading x = read_as(r < u->nsrc ? &u->src[r] : &u->core, text, st, own);
-        if (x.ok && same(&x, &want)) return true;
-    }
-    return false;
-}
-
-/* Undo k's rewrite, which would make two keys equal */
-static void undo_rewrite(upgrade *u, doc *d, uint32_t k) {
+/* Undo k's rewrite, which would change how many keys its mapping has */
+static void undo_rewrite(upgrade *u, doc *d, uint32_t k, const char *why) {
     fix_rec *r = &u->fixes[d->plan[k].fix - 1];
     r->fix.fixed = false;
     r->fix.after = (oyl_str){ "", 0 };
-    r->fix.message = keepf(u, "%s; left, as the rewrite would make two keys equal", r->fix.message);
+    r->fix.message = keepf(u, "%s; left, as %s", r->fix.message, why);
     d->plan[k].what = N_SKIP;
-}
-
-/* Undo the rewrite of keys that would equal another key of their mapping */
-static void key_clashes(upgrade *u, doc *d, uint32_t m) {
-    const oyl_tree *t = d->tree;
-    const oyl_node *nodes = t->nodes;
-    uint32_t npairs = nodes[m].len;
-    uint32_t k = m + 1;
-    for (uint32_t pi = 0; pi < npairs; pi++) {
-        uint32_t v = k + nodes[k].span;
-        if (nodes[k].kind == OYL_NODE_SCALAR && d->plan[k].what == N_CHANGED) {
-            bool clash = false;
-            uint32_t o = m + 1;
-            for (uint32_t pj = 0; pj < npairs && !clash; pj++) {
-                uint32_t ov = o + nodes[o].span;
-                clash = o != k && nodes[o].kind == OYL_NODE_SCALAR && d->plan[o].what != N_REMOVED &&
-                        clashes(u, d, k, o);
-                o = ov + nodes[ov].span;
-            }
-            if (clash) undo_rewrite(u, d, k);
-        }
-        k = v + nodes[v].span;
-    }
 }
 
 /* ── Merges ──────────────────────────────────────────────── */
@@ -909,52 +854,212 @@ static uint32_t push_merged(const oyl_tree *t, uint32_t m, uint32_t walk, uint32
     return last;
 }
 
-/* Undo the rewrite of a key written before a merge, or of one merged, that
- * would make them equal: go-yaml v2's merge would then override the first
- * and YAML 1.2's wouldn't, where the source had two keys (`"n": 1` before
- * `<<: {n: 2}`). Elsewhere every reader settles them alike. Every key
- * merged counts, in the end, those overridden on the way too: they're
- * rewritten as well. */
-static void merge_clashes(upgrade *u, doc *d, uint32_t m, uint32_t *seen, uint32_t *stack) {
+/* ── Keys a rewrite would join ───────────────────────────── */
+
+/* A rewrite stays only if each reader of the source sees as many keys as
+ * before, among all a mapping ends up with, written or merged: it neither
+ * joins two nor parts one, as a key set twice is the file's mistake to mend.
+ * Comparing them pair by pair spends time as the square of the keys, for
+ * each mapping that merges them, and a file picks those: so each reading of
+ * a key gets a number, once, under the secret hash key, and a mapping takes
+ * one pass. */
+#define NO_READING UINT32_MAX
+
+/* A key's readings, as numbers */
+typedef struct {
+    uint32_t src[2], core;   /* NO_READING: its tag rejects it, or no such reader */
+    uint32_t after;          /* what it's rewritten to, if it is */
+    bool     known;
+} key_nums;
+
+/* A reading, and the last pass over a mapping that met it */
+typedef struct {
+    oyl_key  key;
+    uint64_t pass;
+    uint32_t first;     /* the key that pass met it on first */
+    bool     parted;    /* and one the source reads as another */
+    uint64_t from[2];   /* the last pass a key was read so by reader r */
+    uint32_t to[2];     /* what that key will read as, to reader r */
+    bool     split[2];  /* and another read so will read otherwise */
+} read_num;
+
+typedef struct {
+    upgrade            *u;
+    const oyl_hash_key *hk;
+    read_num           *nums;     /* the index is the number */
+    size_t              len, cap;
+    uint32_t           *table;    /* a number plus one, by hash */
+    size_t              tcap;
+    key_nums           *by_node;
+    uint32_t           *seen, *stack, *list;
+    uint64_t            pass;
+} clash_check;
+
+static uint32_t number_of(clash_check *c, const oyl_key *key) {
+    if (c->len * 2 + 2 > c->tcap) {
+        size_t nt = c->tcap ? c->tcap * 2 : 64;
+        uint32_t *t = calloc(nt, sizeof *t);
+        if (!t) { c->u->oom = true; return NO_READING; }
+        for (size_t i = 0; i < c->len; i++) {
+            size_t j = oyl_key_hash(c->hk, &c->nums[i].key) & (nt - 1);
+            while (t[j]) j = (j + 1) & (nt - 1);
+            t[j] = (uint32_t)i + 1;
+        }
+        free(c->table);
+        c->table = t;
+        c->tcap = nt;
+    }
+    size_t i = oyl_key_hash(c->hk, key) & (c->tcap - 1);
+    for (; c->table[i]; i = (i + 1) & (c->tcap - 1))
+        if (oyl_key_cmp(&c->nums[c->table[i] - 1].key, key) == 0) return c->table[i] - 1;
+    if (!grow((void **)&c->nums, &c->cap, c->len + 1, sizeof *c->nums)) {
+        c->u->oom = true;
+        return NO_READING;
+    }
+    c->nums[c->len] = (read_num){ .key = *key };
+    c->table[i] = (uint32_t)++c->len;
+    return (uint32_t)c->len - 1;
+}
+
+static uint32_t number_read(clash_check *c, const reader *r, const oyl_tree *t, uint32_t k) {
+    reading x = read_as(r, oyl_node_text(t, k), (oyl_scalar_style)t->nodes[k].style, explicit_tag(t, k));
+    return x.ok ? number_of(c, &x.key) : NO_READING;
+}
+
+static const key_nums *nums_of(clash_check *c, const doc *d, uint32_t k) {
+    key_nums *x = &c->by_node[k];
+    if (x->known) return x;
+    upgrade *u = c->u;
+    x->known = true;
+    x->src[0] = x->src[1] = NO_READING;
+    for (int r = 0; r < u->nsrc; r++) x->src[r] = number_read(c, &u->src[r], d->tree, k);
+    x->core = number_read(c, &u->core, d->tree, k);
+    x->after = d->plan[k].what == N_CHANGED ? number_of(c, &d->plan[k].expect) : NO_READING;
+    return x;
+}
+
+/* Do the source's readers all read a and b as one key? */
+static bool one_in_source(const upgrade *u, const key_nums *a, const key_nums *b) {
+    for (int r = 0; r < u->nsrc; r++)
+        if (a->src[r] == NO_READING || a->src[r] != b->src[r]) return false;
+    return true;
+}
+
+/* Key k reads as number n, in this pass */
+static void meet(clash_check *c, uint32_t n, uint32_t k) {
+    if (n == NO_READING) return;
+    read_num *e = &c->nums[n];
+    if (e->pass != c->pass) {
+        e->pass = c->pass;
+        e->first = k;
+        e->parted = false;
+    } else if (e->first != k && !e->parted) {
+        e->parted = !one_in_source(c->u, &c->by_node[e->first], &c->by_node[k]);
+    }
+}
+
+/* Reader r reads a key as number n, and will as number to, in this pass */
+static void follow(clash_check *c, int r, uint32_t n, uint32_t to) {
+    if (n == NO_READING) return;
+    read_num *e = &c->nums[n];
+    if (e->from[r] != c->pass) {
+        e->from[r] = c->pass;
+        e->to[r] = to;
+        e->split[r] = false;
+    } else if (e->to[r] != to) {
+        e->split[r] = true;
+    }
+}
+
+/* Add the keys of mapping s, but for the << that merge, to the list */
+static uint32_t add_keys(clash_check *c, const doc *d, uint32_t s, uint32_t n) {
     const oyl_tree *t = d->tree;
     const oyl_node *nodes = t->nodes;
-    uint32_t walk = m + 1, sp = 0, last = push_merged(t, m, walk, seen, stack, &sp);
+    for (uint32_t pi = 0, p = s + 1; pi < nodes[s].len; pi++) {
+        uint32_t pv = p + nodes[p].span, b = oyl_node_target(t, p);
+        if (nodes[b].kind == OYL_NODE_SCALAR && d->plan[p].what != N_REMOVED &&
+            !(oyl_tree_merge_key(t, p) && mergeable(t, s, pv)))
+            c->list[n++] = b;
+        p = pv + nodes[pv].span;
+    }
+    return n;
+}
+
+/* Undo the rewrites that would change how many keys mapping m has, written
+ * in it or merged. Those joining keys the source has apart: `yes` and
+ * `"yes"`, `on: 1` and `<<: {"on": 2}`, `<<: [{on: 1}, {"on": 2}]`, as one
+ * would be lost, for every reader, and go-yaml v2's merge and YAML 1.2's
+ * wouldn't agree on which. Those parting keys a reader has as one: `1` and
+ * `0b1` to PyYAML, as it would change which value key 1 has. Every key merged
+ * counts, those overridden on the way too: they're rewritten as well. A key
+ * left has its readings back, so look again. */
+static void mapping_clashes(clash_check *c, doc *d, uint32_t m) {
+    const oyl_tree *t = d->tree;
+    upgrade *u = c->u;
+    uint32_t sp = 0;
+    push_merged(t, m, m + 1, c->seen, c->stack, &sp);
+    uint32_t n = add_keys(c, d, m, 0);
     while (sp) {
-        uint32_t s = stack[--sp];
-        push_merged(t, s, walk, seen, stack, &sp);
-        for (uint32_t pi = 0, p = s + 1; pi < nodes[s].len; pi++) {
-            uint32_t pv = p + nodes[p].span, b = oyl_node_target(t, p);
-            if (nodes[b].kind == OYL_NODE_SCALAR && d->plan[p].what != N_REMOVED &&
-                !(oyl_tree_merge_key(t, p) && mergeable(t, s, pv))) {
-                for (uint32_t o = m + 1; o < last;) {
-                    uint32_t ov = o + nodes[o].span, a = oyl_node_target(t, o);
-                    if (a != b && nodes[a].kind == OYL_NODE_SCALAR && d->plan[o].what != N_REMOVED &&
-                        !(oyl_tree_merge_key(t, o) && mergeable(t, m, ov))) {
-                        if (d->plan[a].what == N_CHANGED && clashes(u, d, a, b)) undo_rewrite(u, d, a);
-                        else if (d->plan[b].what == N_CHANGED && clashes(u, d, b, a)) undo_rewrite(u, d, b);
-                    }
-                    o = ov + nodes[ov].span;
-                }
+        uint32_t s = c->stack[--sp];
+        push_merged(t, s, m + 1, c->seen, c->stack, &sp);
+        n = add_keys(c, d, s, n);
+    }
+    bool again = false;
+    for (uint32_t i = 0; i < n && !again; i++) again = d->plan[c->list[i]].what == N_CHANGED;
+    while (again && !u->oom) {
+        again = false;
+        c->pass++;
+        for (uint32_t i = 0; i < n; i++) {
+            uint32_t k = c->list[i];
+            const key_nums *x = nums_of(c, d, k);
+            bool changed = d->plan[k].what == N_CHANGED;
+            if (changed) {
+                meet(c, x->after, k);
+            } else {
+                for (int r = 0; r < u->nsrc; r++) meet(c, x->src[r], k);
+                meet(c, x->core, k);
             }
-            p = pv + nodes[pv].span;
+            for (int r = 0; r < u->nsrc; r++) follow(c, r, x->src[r], changed ? x->after : x->src[r]);
+        }
+        if (u->oom) return;
+        for (uint32_t i = 0; i < n; i++) {
+            uint32_t k = c->list[i];
+            if (d->plan[k].what != N_CHANGED) continue;
+            const key_nums *x = &c->by_node[k];
+            const char *why = c->nums[x->after].parted ? "the rewrite would make two keys equal" : NULL;
+            for (int r = 0; r < u->nsrc && !why; r++)
+                if (c->nums[x->src[r]].split[r])
+                    why = keepf(u, "%s reads it and another key as one", u->src[r].name);
+            if (why) {
+                undo_rewrite(u, d, k, why);
+                again = true;
+            }
         }
     }
 }
 
-/* merge_clashes for each mapping of a document */
-static void all_merge_clashes(upgrade *u, doc *d) {
+/* mapping_clashes for each mapping of a document */
+static void key_clashes(upgrade *u, doc *d) {
     const oyl_tree *t = d->tree;
-    uint32_t *seen = calloc(t->len ? t->len : 1, sizeof *seen);
-    uint32_t *stack = malloc((t->len ? t->len : 1) * sizeof *stack);
-    if (!seen || !stack) {
+    size_t len = t->len ? t->len : 1;
+    clash_check c = { .u = u, .hk = oyl_parser_hash_key(u->p) };
+    c.by_node = calloc(len, sizeof *c.by_node);
+    c.seen = calloc(len, sizeof *c.seen);
+    c.stack = malloc(len * sizeof *c.stack);
+    c.list = malloc(len * sizeof *c.list);
+    if (!c.by_node || !c.seen || !c.stack || !c.list) {
         u->oom = true;
     } else {
-        for (uint32_t i = 0; i < t->len; i++)
+        for (uint32_t i = 0; i < t->len && !u->oom; i++)
             if (t->nodes[i].kind == OYL_NODE_MAPPING && d->plan[i].what != N_REMOVED)
-                merge_clashes(u, d, i, seen, stack);
+                mapping_clashes(&c, d, i);
     }
-    free(seen);
-    free(stack);
+    free(c.nums);
+    free(c.table);
+    free(c.by_node);
+    free(c.seen);
+    free(c.stack);
+    free(c.list);
 }
 
 /* ── Libyaml's leniencies, and %YAML 1.1 ─────────────────── */
@@ -1266,9 +1371,61 @@ static oyl_status check_merges(upgrade *u, oyl_tree **trees[], int n, oyl_arena 
     return OYL_OK;
 }
 
+/* How many keys mapping m has, merges applied, or SIZE_MAX if the tree can't
+ * say (past its bound); *st on running out of memory */
+static size_t key_count(upgrade *u, const oyl_tree *t, uint32_t m, oyl_status *st) {
+    const oyl_pair *pairs;
+    size_t n;
+    oyl_arena_reset(u->tmp);
+    oyl_status s = oyl_node_entries(t, m, 0, u->tmp, &pairs, &n);
+    if (s == OYL_ERR_MEMORY) *st = s;
+    return s == OYL_OK ? n : SIZE_MAX;
+}
+
+/* Does each reader of the source see as many keys in each mapping as before?
+ * Each reader's trees of the input are `in`, the first reader's being the
+ * documents' own */
+static oyl_status check_key_counts(upgrade *u, oyl_tree **trees[], oyl_tree **in[]) {
+    for (size_t k = 0; k < u->ndocs; k++) {
+        doc *d = &u->docs[k];
+        if (d->left) continue;
+        const oyl_tree *it = d->tree;
+        for (int r = 0; r < u->nsrc; r++) {
+            const oyl_tree *ir = r ? in[r][k] : it;
+            uint32_t j = 0;
+            for (uint32_t i = 0; i < it->len; i++) {
+                if (d->plan[i].what == N_REMOVED) continue;
+                if (it->nodes[i].kind == OYL_NODE_MAPPING) {
+                    oyl_status st = OYL_OK;
+                    size_t before = key_count(u, ir, i, &st), after = key_count(u, trees[r][k], j, &st);
+                    if (st != OYL_OK) return st;
+                    if (before != SIZE_MAX && after != SIZE_MAX && before != after)
+                        return fail(u, it->base + it->nodes[i].start,
+                                    "after oyl_upgrade a reader sees another number of keys here "
+                                    "(a bug in oyl_upgrade)");
+                }
+                j++;
+            }
+        }
+    }
+    return OYL_OK;
+}
+
+/* The input's documents, as dialect dl reads them */
+static oyl_status read_input(upgrade *u, const oyl_dialect *dl, oyl_arena *a, oyl_tree **trees) {
+    oyl_parser *q = oyl_parser_new(u->in, u->len, a);
+    if (!q) return OYL_ERR_MEMORY;
+    oyl_parser_copy_limits(q, u->p);
+    oyl_parser_set_dialect(q, dl);
+    oyl_status st = OYL_OK;
+    for (size_t k = 0; k < u->ndocs && st == OYL_OK; k++) st = oyl_parse_tree(q, &trees[k]);
+    oyl_parser_free(q);
+    return st;
+}
+
 static oyl_status check(upgrade *u, oyl_str out) {
     int n = u->nsrc + 1;
-    oyl_tree **trees[3] = { NULL, NULL, NULL };
+    oyl_tree **trees[3] = { NULL, NULL, NULL }, **in[2] = { NULL, NULL };
     oyl_arena *a = oyl_arena_new(4096);
     oyl_status st = a ? OYL_OK : OYL_ERR_MEMORY;
     for (int r = 0; r < n && st == OYL_OK; r++) {
@@ -1278,10 +1435,19 @@ static oyl_status check(upgrade *u, oyl_str out) {
         st = check_one(u, out, r < u->nsrc ? u->check[r] : oyl_dialect_yaml12(), rd, a, trees[r]);
     }
     if (st == OYL_OK) st = check_merges(u, trees, n, a);
+    if (st == OYL_OK && u->nsrc == 2) {
+        in[1] = calloc(u->ndocs ? u->ndocs : 1, sizeof *in[1]);
+        st = in[1] ? read_input(u, u->check[1], a, in[1]) : OYL_ERR_MEMORY;
+    }
+    if (st == OYL_OK) st = check_key_counts(u, trees, in);
     for (int r = 0; r < n; r++) {
         if (!trees[r]) continue;
         for (size_t k = 0; k < u->ndocs; k++) oyl_tree_free(trees[r][k]);
         free(trees[r]);
+    }
+    if (in[1]) {
+        for (size_t k = 0; k < u->ndocs; k++) oyl_tree_free(in[1][k]);
+        free(in[1]);
     }
     oyl_arena_free(a);
     return st;
@@ -1435,10 +1601,7 @@ static oyl_status run(upgrade *u, oyl_str *out) {
         for (uint32_t i = 0; i < d->tree->len && !u->oom; i++)
             if (d->tree->nodes[i].kind == OYL_NODE_SCALAR && d->plan[i].what != N_REMOVED)
                 decide(u, d, i);
-        for (uint32_t i = 0; i < d->tree->len; i++)
-            if (d->tree->nodes[i].kind == OYL_NODE_MAPPING && d->plan[i].what != N_REMOVED)
-                key_clashes(u, d, i);
-        if (u->ordered || u->merge_disagree) all_merge_clashes(u, d);
+        key_clashes(u, d);
     }
     if (u->oom) return OYL_ERR_MEMORY;
     /* the rest, outside what those replaced */
