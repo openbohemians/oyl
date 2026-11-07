@@ -671,9 +671,15 @@ static void read_limited(const char *yaml, size_t len, uint8_t opts, int events,
     oyl_arena_free(a);
 }
 
-/* A limit stops a read, or changes nothing */
+/* A limit stops a read, or changes nothing. On input that's bad anyway it may
+ * change which fault is reported: the scanner looks a token ahead for the
+ * event at the limit, its error is kept, and the event a layer above would
+ * have refused first (an unknown anchor, say) never comes. */
+static bool input_fault(oyl_status s) { return s == OYL_ERR_SCAN || s == OYL_ERR_PARSE; }
+
 static void same_read(oyl_status near, oyl_status all, uint64_t near_hash, uint64_t all_hash) {
     if (near == OYL_ERR_LIMIT || all == OYL_ERR_LIMIT) return;
+    if (input_fault(near) && input_fault(all)) return;
     if (near != all) __builtin_trap();   /* a limit ended it some other way */
     if (near == OYL_OK && near_hash != all_hash) __builtin_trap();   /* or changed what it gave */
 }
