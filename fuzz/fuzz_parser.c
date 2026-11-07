@@ -37,7 +37,11 @@
  *    joined, the output written without taking it;
  *  - oyl_upgrade's check of its output fails (a scalar reads otherwise in
  *    a reader or YAML 1.2 than it decided, or its fixes overlap), or
- *    upgrading its output changes anything more.
+ *    upgrading its output changes anything more;
+ *  - a limit does more than stop a read. Each input sets limits by what it
+ *    takes itself, just under, at or just over: a read under them ends as it
+ *    does without them or with OYL_ERR_LIMIT, gives the same if it ends well,
+ *    and an event limit it doesn't reach doesn't stop it.
  *
  * Build (via `just fuzz`):
  *   clang -fsanitize=fuzzer,address,undefined -g -O1 -Iinclude \
@@ -584,6 +588,119 @@ static void check_upgrade(const char *yaml, size_t len, uint8_t opts) {
     oyl_arena_free(a);
 }
 
+/* A read under limits (0 events: none) by each way there is: how it ended
+ * and what it gave, with the events it took and the depth they reached */
+typedef struct {
+    oyl_status events, tree, json, upgrade;
+    uint64_t   events_hash, tree_hash, json_hash, upgrade_hash;
+    int        count, depth;
+} limited;
+
+static oyl_parser *limited_parser(const char *yaml, size_t len, int reader, int events, int depth,
+                                  oyl_arena *a) {
+    oyl_parser *p = oyl_parser_new(yaml, len, a);
+    if (!p) return NULL;
+    oyl_parser_set_max_events(p, events);
+    oyl_parser_set_max_depth(p, depth);
+    if (reader == 1 || reader == 3) oyl_parser_set_dialect(p, oyl_dialect_yaml11());
+    if (reader == 2) oyl_parser_set_dialect(p, oyl_dialect_goyaml2());
+    return p;
+}
+
+static void read_limited(const char *yaml, size_t len, uint8_t opts, int events, int depth,
+                         limited *r) {
+    int reader = (opts >> 6) & 3;
+    memset(r, 0, sizeof *r);
+    r->events_hash = r->tree_hash = r->json_hash = r->upgrade_hash = 14695981039346656037u;
+
+    oyl_arena *a = oyl_arena_new(4096);
+    oyl_parser *p = a ? limited_parser(yaml, len, reader, events, depth, a) : NULL;
+    if (!p) { oyl_arena_free(a); return; }
+    if (opts & 1) oyl_parser_set_merge(p, true);
+    if (opts & 2) oyl_parser_set_resolve(p, true);
+    const oyl_event *e;
+    int d = 0;
+    while ((r->events = oyl_parse_next(p, &e)) == OYL_OK) {
+        unsigned char type = (unsigned char)e->type;
+        r->events_hash = fnv_str(fnv_str(fnv_str(fnv(r->events_hash, &type, 1), e->value), e->anchor), e->tag);
+        r->count++;
+        if (e->type == OYL_EVT_SEQUENCE_START || e->type == OYL_EVT_MAPPING_START) {
+            if (++d > r->depth) r->depth = d;
+        }
+        if (e->type == OYL_EVT_SEQUENCE_END || e->type == OYL_EVT_MAPPING_END) d--;
+        if (e->type == OYL_EVT_STREAM_END || e->type == OYL_EVT_NONE) break;
+    }
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+
+    a = oyl_arena_new(4096);
+    p = a ? limited_parser(yaml, len, reader, events, depth, a) : NULL;
+    if (!p) { oyl_arena_free(a); return; }
+    oyl_tree *t = NULL;
+    while ((r->tree = oyl_parse_tree(p, &t)) == OYL_OK && t) {
+        uint32_t count;
+        oyl_tree_nodes(t, &count);
+        r->tree_hash = fnv(r->tree_hash, &count, sizeof count);
+        oyl_tree_free(t);
+        t = NULL;
+    }
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+
+    a = oyl_arena_new(4096);
+    p = a ? limited_parser(yaml, len, reader == 2 ? 2 : 0, events, depth, a) : NULL;
+    if (!p) { oyl_arena_free(a); return; }
+    oyl_str json = OYL_STR_NULL;
+    r->json = reader == 2 ? oyl_parse_json(p, NULL, OYL_JSON_KUBERNETES, &json)
+                          : oyl_parse_json(p, oyl_schema_core(), OYL_JSON_MERGE | OYL_JSON_STRICT, &json);
+    if (r->json == OYL_OK) r->json_hash = fnv_str(r->json_hash, json);
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+
+    a = oyl_arena_new(4096);
+    p = a ? limited_parser(yaml, len, reader, events, depth, a) : NULL;
+    if (!p) { oyl_arena_free(a); return; }
+    oyl_str out;
+    const oyl_fix *fx;
+    size_t nf = 0;
+    r->upgrade = oyl_upgrade(p, 0, &out, &fx, &nf);
+    if (r->upgrade == OYL_ERR_PARSE && oyl_parser_error(p) && strstr(oyl_parser_error(p), "(a bug in oyl_upgrade)"))
+        __builtin_trap();   /* the limits made its check fail */
+    if (r->upgrade == OYL_OK) r->upgrade_hash = fnv(fnv_str(r->upgrade_hash, out), &nf, sizeof nf);
+    oyl_parser_free(p);
+    oyl_arena_free(a);
+}
+
+/* A limit stops a read, or changes nothing */
+static void same_read(oyl_status near, oyl_status all, uint64_t near_hash, uint64_t all_hash) {
+    if (near == OYL_ERR_LIMIT || all == OYL_ERR_LIMIT) return;
+    if (near != all) __builtin_trap();   /* a limit ended it some other way */
+    if (near == OYL_OK && near_hash != all_hash) __builtin_trap();   /* or changed what it gave */
+}
+
+static void check_limits(const char *yaml, size_t len, uint8_t opts) {
+    enum { DEEP = 1000 };   /* as good as none: much deeper, and the stack is at risk (oyl.h) */
+    limited all, near;
+    read_limited(yaml, len, opts, 0, DEEP, &all);
+    /* which limit and where it falls: the input's to say */
+    unsigned pick = (len ? (unsigned char)yaml[len - 1] : 0u) + (unsigned)len;
+    bool on_events = pick & 1;
+    int over = (int)((pick >> 1) % 3) - 1;
+    int limit = (on_events ? all.count : all.depth) + over;
+    if (limit < 1) limit = 1;
+    read_limited(yaml, len, opts, on_events ? limit : 0, on_events ? DEEP : limit, &near);
+    same_read(near.events, all.events, near.events_hash, all.events_hash);
+    same_read(near.tree, all.tree, near.tree_hash, all.tree_hash);
+    same_read(near.json, all.json, near.json_hash, all.json_hash);
+    same_read(near.upgrade, all.upgrade, near.upgrade_hash, all.upgrade_hash);
+    if (on_events) {
+        if (near.count > limit) __builtin_trap();   /* a limit bypassed */
+        /* expansion's bound is what the stream has left, so it may stop short */
+        if (over > 0 && all.events == OYL_OK && !(opts & 3) && near.events != OYL_OK)
+            __builtin_trap();                       /* a limit it didn't reach stopped it */
+    }
+}
+
 /* Text that has malformed UTF-8, its first at `bad`: it doesn't parse, the
  * error is at `bad` at the latest, and no event goes past it */
 static void check_refused(const char *buf, size_t size, size_t bad) {
@@ -712,6 +829,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     check_tree(buf, size, flags & 32, style == 1 ? OYL_EMIT_FLOW
                                     : style == 2 ? OYL_EMIT_MINIMAL : OYL_EMIT_BLOCK);
     check_upgrade(buf, size, flags);
+    check_limits(buf, size, flags);
 
     free(before);
     free(after);

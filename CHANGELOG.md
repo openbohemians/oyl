@@ -49,9 +49,14 @@
   with no reader named, as go-yaml v2 has them as one; naming the reader
   rewrites them. Its check of the output now also compares each mapping's
   number of keys, for each reader of the source.
+- **`oyl_upgrade` kept to the caller's limits only reading its input.** Read
+  back, its output took the default limits, so with
+  `oyl_parser_set_max_events(p, 0)` a file of over 10,000 events was refused
+  as "a bug in oyl_upgrade", and likewise a raised
+  `oyl_parser_set_max_depth`. No file came out wrong. In 1.4.0.
 - **`oyl_upgrade` compared a mapping's keys pair by pair,** so time grew with
   the square of the keys it rewrote: 2.25 s at 4,000 keys. It takes one pass
-  now: 5 ms.
+  now: 6 ms.
 - **A tag needs a blank before its node.** `!<x>a`, `!<x>|` and `!x[a]`
   were read as a tag and a node with nothing between them, where YAML 1.2,
   libyaml and libfyaml all refuse them. They are errors now. A tag on an

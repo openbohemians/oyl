@@ -20,3 +20,5 @@ cp fuzz/yaml.dict "$OUT/fuzz_parser.dict"
 if [ -d yaml-test-suite/src ]; then
     (cd yaml-test-suite/src && zip -q "$OUT/fuzz_parser_seed_corpus.zip" ./*.yaml)
 fi
+# And the inputs that failed before
+(cd fuzz/regress && zip -q "$OUT/fuzz_parser_seed_corpus.zip" ./*)

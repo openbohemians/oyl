@@ -1235,6 +1235,7 @@ static oyl_status check_one(upgrade *u, oyl_str out, const oyl_dialect *dl, cons
                             oyl_arena *a, oyl_tree **trees) {
     oyl_parser *q = oyl_parser_new(out.data, out.len, a);
     if (!q) return OYL_ERR_MEMORY;
+    oyl_parser_copy_limits(q, u->p);
     oyl_parser_set_dialect(q, dl);
     for (size_t k = 0; k <= u->ndocs; k++) {
         oyl_tree *ot = NULL;

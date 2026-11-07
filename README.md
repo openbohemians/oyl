@@ -805,7 +805,8 @@ modes and round-trips every valid case through the emitter in all three
 output styles. A libFuzzer harness (`fuzz/fuzz_parser.c`) checks that
 arbitrary input never crashes or exceeds the safety limits, and that
 whatever parses, emits and parses again to the same data. It runs for 3
-minutes on every push, and
+minutes on every push, along with every input that ever failed (kept in
+`fuzz/regress`), and
 [ClusterFuzzLite](https://google.github.io/clusterfuzzlite/) runs it for
 hours a day under AddressSanitizer and UndefinedBehaviorSanitizer. CI
 builds and tests with GCC and Clang on Linux and macOS, and with MSVC on

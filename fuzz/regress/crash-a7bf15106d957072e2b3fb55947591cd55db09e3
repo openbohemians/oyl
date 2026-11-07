@@ -1,0 +1,39 @@
+"to: 
+  "key1" : &alias1 scalar1
+'top2' : 
+   
+  *alias2 : scalar4
+top : &alias2 sca?lar2
+top3: &node3 
+  *alias1 : scalar3
+top4: 
+  *alias2 : scalar4
+top5   :    
+ top3:top4: 
+  *alias2 : scalar4
+top5   :    
+ top3: &node3 
+  *alias1 : scalar3
+top4: 
+  *alias2 : scalar2
+top : &alias2
+ [?]:
+  !!
+ [?]: !ùµ“
+  !!
+ [? *a]: !¬yä  !!
+ [?]: !¬yˇù®®®®®®®®®®®®®®®®®®®®®®HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH # Tmmen  # Comments:HHHH !ùµ“
+  !!
+ [? *a]: !¬yä  !!
+ [?]: !¬yˇù®®®®®®®®®®®®®®®®®®®®®®HHHHHHyˇù®®®®®®®®®®®®®®®®®®®®®®HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH # Tmmen  # Comments:HHHH !ùµ“
+  !!
+ [? *a]: !¬yä  !!
+ [?]: !¬yˇù®®®®®®®®®®®®®®®®®®®®®®HHHHHHyˇù®®®®®®®®®®®®®®®®®®®®®®HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHop4: 
+  *alias2 : scalar2
+top : &alias2 sca?lar2
+top3: &node3 
+ as2 scalar2
+top3: &node3 
+  *alias1 : scalar3
+top4: 
+  *ali$as2 : scalaHHHHHHHHHH`HHHHHH # Tmmer4

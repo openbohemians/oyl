@@ -518,6 +518,56 @@ static void test_arguments(void) {
     oyl_arena_free(a);
 }
 
+/* Every read takes the caller's limits: raised, a file past the defaults
+ * comes through, and left, it stops at them */
+static void test_limits(void) {
+    printf("test_limits:\n");
+    enum { KEYS = 6000 };   /* twice as many events as that: past the default */
+    size_t cap = KEYS * 16, len = 0;
+    char *yaml = malloc(cap);
+    for (int i = 0; i < KEYS; i++) len += (size_t)snprintf(yaml + len, cap - len, "k%d: yes\n", i);
+    int caps[] = { 0, 20000, 10000, 100 };
+    oyl_status want[] = { OYL_OK, OYL_OK, OYL_ERR_LIMIT, OYL_ERR_LIMIT };
+    for (int reader = PYYAML; reader >= UNKNOWN; reader--)
+        for (size_t i = 0; i < sizeof caps / sizeof caps[0]; i++) {
+            oyl_arena *a = oyl_arena_new(4096);
+            oyl_parser *p = oyl_parser_new(yaml, len, a);
+            if (reader == PYYAML) oyl_parser_set_dialect(p, oyl_dialect_yaml11());
+            oyl_parser_set_max_events(p, caps[i]);
+            oyl_str out;
+            const oyl_fix *fx;
+            size_t nf = 0;
+            oyl_status st = oyl_upgrade(p, 0, &out, &fx, &nf);
+            ASSERT(st == want[i], "the event limit is the caller's");
+            if (want[i] == OYL_OK) ASSERT(nf == KEYS, "every value rewritten");
+            oyl_parser_free(p);
+            oyl_arena_free(a);
+        }
+    free(yaml);
+
+    enum { DEEP = 400 };
+    char deep[2 * DEEP + 8];
+    memset(deep, '[', DEEP);
+    memcpy(deep + DEEP, "yes", 3);
+    memset(deep + DEEP + 3, ']', DEEP);
+    deep[2 * DEEP + 3] = '\n';
+    for (int raised = 1; raised >= 0; raised--) {
+        oyl_arena *a = oyl_arena_new(4096);
+        oyl_parser *p = oyl_parser_new(deep, 2 * DEEP + 4, a);
+        oyl_parser_set_dialect(p, oyl_dialect_yaml11());
+        if (raised) oyl_parser_set_max_depth(p, 2 * DEEP);
+        oyl_str out;
+        const oyl_fix *fx;
+        size_t nf = 0;
+        oyl_status st = oyl_upgrade(p, 0, &out, &fx, &nf);
+        ASSERT(st == (raised ? OYL_OK : OYL_ERR_LIMIT), "the depth limit is the caller's");
+        if (raised) ASSERT(nf == 1 && out.len == 2 * DEEP + 5 && !memcmp(out.data + DEEP, "true", 4),
+                           "the deep value rewritten");
+        oyl_parser_free(p);
+        oyl_arena_free(a);
+    }
+}
+
 int main(void) {
     test_example();
     test_scalars();
@@ -528,6 +578,7 @@ int main(void) {
     test_evidence();
     test_refused();
     test_arguments();
+    test_limits();
     printf("\n--- Upgrade tests: %d / %d passed ---\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;
 }

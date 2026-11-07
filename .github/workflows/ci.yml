@@ -86,13 +86,16 @@ jobs:
       - name: Build fuzzer
         run: make build/fuzz_parser
 
+      - name: Replay the inputs that failed before
+        run: ./build/fuzz_parser -runs=0 -timeout=30 -rss_limit_mb=2048 fuzz/regress
+
       # Short run on every push to catch regressions; long runs happen
       # before releases.
       - name: Fuzz for 3 minutes
         run: |
           mkdir -p fuzz/corpus fuzz/crashes
           ./build/fuzz_parser -max_total_time=180 -timeout=5 -rss_limit_mb=2048 \
-            -max_len=4096 -artifact_prefix=fuzz/crashes/ fuzz/corpus
+            -max_len=4096 -artifact_prefix=fuzz/crashes/ fuzz/corpus fuzz/regress
 
       - name: Upload crashing inputs
         if: failure()

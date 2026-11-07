@@ -121,7 +121,8 @@ fuzz duration='60':
     # Each crash/oom/timeout finding is written to fuzz/crashes/ for
     # inspection; libFuzzer accumulates an interesting-input corpus under
     # fuzz/corpus/. Both dirs are gitignored. Replay a finding with:
-    # ./build/fuzz_parser path. An input taking over 10 s is a finding: work
+    # ./build/fuzz_parser path, and once it's fixed copy it to fuzz/regress/,
+    # which is kept in git and replayed on every push. An input taking over 10 s is a finding: work
     # that grows too fast on some input (libFuzzer's default allows 20 min).
     set -euo pipefail
     mkdir -p fuzz/corpus fuzz/crashes
@@ -130,7 +131,7 @@ fuzz duration='60':
         -max_total_time={{duration}} \
         -timeout=10 \
         -artifact_prefix=fuzz/crashes/ \
-        fuzz/corpus
+        fuzz/corpus fuzz/regress
 
 # Print the version (from include/oyl/oyl.h)
 version:
