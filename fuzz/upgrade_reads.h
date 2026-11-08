@@ -92,7 +92,9 @@ static bool ur_align(const oyl_tree *in, const oyl_tree *out, const oyl_fix *fx,
     uint32_t j = 0;
     for (uint32_t i = 0; i < nin;) {
         bool gone = false;
-        if (a[i].flags & OYL_NODE_KEY) {
+        /* an empty key starts where the next token does, which may begin a
+         * pair commented out; oyl_upgrade comments out none with an empty key */
+        if ((a[i].flags & OYL_NODE_KEY) && a[i].end > a[i].start) {
             size_t at = base + a[i].start;
             for (size_t f = 0; f < nf && !gone; f++)
                 gone = fx[f].fixed && fx[f].kind == OYL_FIX_MERGE && at >= fx[f].mark.offset &&

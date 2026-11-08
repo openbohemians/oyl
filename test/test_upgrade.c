@@ -201,6 +201,17 @@ static void test_reported(void) {
     /* a scalar its tag rejects errs in the source already */
     r = upgrade("a: !!int abc\n", PYYAML, 0);
     ASSERT(r.status == OYL_OK && r.nfixes == 0, "!!int abc: nothing");
+    r = upgrade("a: !!int abc\n", UNKNOWN, 0);
+    ASSERT(r.status == OYL_OK && r.nfixes == 0, "... to both readers: nothing");
+    /* the reader unknown, one rejects it and the other reads it otherwise
+     * than YAML 1.2: go-yaml v2 takes 2001-1-1 1:1:1 as a timestamp, given as
+     * text, PyYAML doesn't (found reading the output from outside) */
+    r = upgrade("a: !!timestamp 2001-1-1 1:1:1\n", UNKNOWN, 0);
+    ASSERT(r.status == OYL_OK && r.nfixes == 1 && !r.fixes[0].fixed &&
+           strstr(r.texts[0][2], "PyYAML: an error; go-yaml v2: \"2001-1-1 1:1:1\""),
+           "one reader's tag rejects it, the other reads it otherwise: left, reported");
+    r = upgrade("a: !!timestamp 2001-1-1 1:1:1\n", PYYAML, 0);
+    ASSERT(r.status == OYL_OK && r.nfixes == 0, "... PyYAML's alone: nothing");
 }
 
 /* ── Merges ──────────────────────────────────────────────── */
@@ -454,6 +465,23 @@ static void test_leniencies(void) {
     ASSERT(r.status == OYL_OK && strcmp(r.out, "k: |+\n z\n\n") == 0, "|+ and an empty last line: removed");
     r = upgrade("k: |+\n z\n\n ", PYYAML, OYL_UPGRADE_VALUES_KEEP_TEXT);
     ASSERT(r.status == OYL_OK && strcmp(r.out, "k: |+\n z\n\n \n") == 0, "... or a line break added");
+
+    /* a key, as any key: its text kept, or under KEYS_KEEP_VALUE its value
+     * (found reading the output from outside) */
+    r = upgrade("? |\n a", PYYAML, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "? |\n a\n") == 0 && r.fixed == 1, "a key: a line break added");
+    r = upgrade("? |\n a", PYYAML, OYL_UPGRADE_KEYS_KEEP_VALUE | OYL_UPGRADE_VALUES_KEEP_TEXT);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "? |-\n a") == 0, "... its value kept: stripped");
+    /* the line break making it another key's equal, or parting it from one,
+     * to PyYAML: left, reported */
+    r = upgrade("\"a\\n\": 1\n? |\n a", PYYAML, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "\"a\\n\": 1\n? |\n a") == 0 && r.nfixes == 1 &&
+           !r.fixes[0].fixed && strstr(r.texts[0][2], "two keys equal"), "... another key's equal: left");
+    r = upgrade("a: 1\n? |\n a", PYYAML, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "a: 1\n? |\n a") == 0 && r.nfixes == 1 && !r.fixes[0].fixed,
+           "... parted from one: left");
+    r = upgrade("a: 1\n? |\n a", PYYAML, OYL_UPGRADE_KEYS_KEEP_VALUE);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "a: 1\n? |-\n a") == 0, "... its value kept: stripped");
 }
 
 static void test_documents(void) {
@@ -604,7 +632,7 @@ static void test_reads(void) {
         "-.0", "+.0", "0.0", "-0.0", ".5", "-.5", "1", "01", "1.0", "0x1", "0o1", "0b1", "1_0",
         "1:00", "010", "8", "0755", "1e3", "yes", "no", "on", "On", "off", "y", "n", "true",
         "false", "~", "null", ".inf", ".nan", "2001-01-01", "12:30:00", "<<", "'<<'", "=",
-        "\"on\"", "'yes'", "\"1\"",
+        "\"on\"", "'yes'", "\"1\"", "!!timestamp 2001-01-01", "!!timestamp 2001-1-1 1:1:1",
     };
     static const char *const forms[] = {
         "%s: a\n%s: b\n",
@@ -614,6 +642,8 @@ static void test_reads(void) {
         "<<: [{%s: a}, {%s: b}]\nc: d\n",
         "c: d\n<<: {<<: {%s: b}, %s: a}\n",
         "- [%s, {%s: x}]\n",
+        /* the empty key starts where the next line does (found by fuzzing) */
+        "? ?\n%s: a\n<<: {%s: b}\n",
     };
     enum { NS = sizeof sp / sizeof *sp, NF = sizeof forms / sizeof *forms };
     unsigned long tried = 0, upgraded = 0, failed = 0;

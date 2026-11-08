@@ -3,7 +3,8 @@
  *
  * The first input byte selects options: bit 0 merge keys, bit 1 alias
  * resolution, bit 2 core schema, bits 3-4 emitter style, bit 5 go-yaml
- * v2's dialect, bits 6-7 the upgrade's reader. So both the
+ * v2's dialect, bits 6-7 the upgrade's reader; to the upgrade, bits 0 and
+ * 1 are KEYS_KEEP_VALUE and VALUES_KEEP_TEXT. So both the
  * default incremental parser and the eager path used by merge/resolve are
  * exercised. The remaining bytes are copied into an exact-size heap buffer
  * — not NUL-terminated — so any read past the end of the input is caught
@@ -577,7 +578,8 @@ static bool upgrade_once(const char *yaml, size_t len, int reader, unsigned flag
 static void check_upgrade(const char *yaml, size_t len, uint8_t opts) {
     int reader = (opts >> 6) & 3;
     unsigned flags = (reader == 3 ? OYL_UPGRADE_KEYS_KEEP_VALUE | OYL_UPGRADE_VALUES_KEEP_TEXT : 0) |
-                     (opts & 1 ? OYL_UPGRADE_KEYS_KEEP_VALUE : 0);
+                     (opts & 1 ? OYL_UPGRADE_KEYS_KEEP_VALUE : 0) |
+                     (opts & 2 ? OYL_UPGRADE_VALUES_KEEP_TEXT : 0);
     oyl_arena *a = oyl_arena_new(4096);
     if (!a) return;
     oyl_str out, again;

@@ -917,7 +917,8 @@ enum {
  *  A scalar is rewritten in a spelling every reader reads alike: true,
  *  !!int 0o755 for 0755, "on", 1.0e+3, !!timestamp 2001-12-14. %YAML 1.1
  *  is removed, \' in double quotes loses its backslash, a block scalar
- *  ending the input without a line break gets the strip indicator, a
+ *  ending the input without a line break gets the strip indicator (or,
+ *  where YAML 1.2's reading is kept, a line break), a
  *  quoted scalar's or flow collection's line not indented past its block
  *  is indented, and a key go-yaml v2's merge overrides is commented out.
  *  Each is in @p fixes, with what can't be fixed left as it was: a rewrite

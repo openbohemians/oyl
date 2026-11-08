@@ -72,6 +72,25 @@
   `oyl_upgrade`'s own plan: to each reader of the source, each mapping keeps
   its values and each value its value, and with nothing left the output
   reads the same in YAML 1.2. In 1.4.0.
+- **`oyl_upgrade`, the reader unknown, reports a value one reader's tag
+  rejects and the other reads otherwise than YAML 1.2.** `!!timestamp
+  2001-1-1 1:1:1` is no timestamp to PyYAML, whose minutes and seconds take
+  two digits; go-yaml v2 reads it, as text, and YAML 1.2 as a timestamp.
+  When either reader rejected a value the upgrade left it without a word.
+  Now, when the other reads it otherwise than YAML 1.2, it's left and
+  reported, as when the two readers disagree. Found by the same check, in
+  CI. In 1.4.0.
+- **`oyl_upgrade` treats a block scalar key ending the input as a key.** A
+  block scalar ending the input without a line break got a line break under
+  `OYL_UPGRADE_VALUES_KEEP_TEXT`, and `|-` otherwise, key or value. A key
+  keeps its text unless `OYL_UPGRADE_KEYS_KEEP_VALUE`, so under both flags
+  `? |\n a` lost the value it should have kept. Now a key gets the line
+  break unless `OYL_UPGRADE_KEYS_KEEP_VALUE`, and `|-` under it. Given the
+  line break it reads otherwise to the source, so when that would make it
+  another key's equal (`"a\n": 1`) or part it from one (`a: 1`), it's left
+  and reported, as any key rewrite is; before, under
+  `OYL_UPGRADE_VALUES_KEEP_TEXT`, the upgrade failed. Found by the same
+  check, in CI. In 1.4.0.
 - **`oyl_upgrade` kept to the caller's limits only reading its input.** Read
   back, its output took the default limits, so with
   `oyl_parser_set_max_events(p, 0)` a file of over 10,000 events was refused

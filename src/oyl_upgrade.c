@@ -543,11 +543,21 @@ static void decide(upgrade *u, doc *d, uint32_t i) {
 
     reading s[2], c = read_as(&u->core, text, style, own);
     memset(s, 0, sizeof s);
-    for (int r = 0; r < u->nsrc; r++) {
-        s[r] = read_as(&u->src[r], text, style, own);
-        /* one its tag rejects errs in the source already */
-        if (!s[r].ok) { pl->what = N_SKIP; return; }
-    }
+    for (int r = 0; r < u->nsrc; r++) s[r] = read_as(&u->src[r], text, style, own);
+    /* one its tag rejects errs in the source already. The reader unknown,
+     * the other may read it still, and otherwise than YAML 1.2: reported */
+    for (int r = 0; r < u->nsrc; r++)
+        if (!s[r].ok) {
+            pl->what = N_SKIP;
+            if (u->nsrc == 2 && s[1 - r].ok && !same(&s[1 - r], &c)) {
+                char b1[64], b2[64];
+                size_t tok = token_start(u, t->base + n->start, t->base + n->end);
+                add_fix(u, OYL_FIX_SCALAR, tok, token_end(u, tok, t->base + n->end), (oyl_str){ NULL, 0 },
+                        false, keepf(u, "PyYAML: %s; go-yaml v2: %s: name the dialect to fix this",
+                                     describe(u, &s[0], b1, sizeof b1), describe(u, &s[1], b2, sizeof b2)));
+            }
+            return;
+        }
     pl->what = N_SAME;
     pl->expect = s[0].key;
     /* << stays, as the user decided. One that merges no mapping, which
@@ -1163,33 +1173,71 @@ static void indent_lines(upgrade *u, const size_t *at, size_t n) {
 }
 
 /* A block scalar ending the input without a line break: libyaml gives it
- * no final line feed, YAML 1.2 one */
-static void chomp(upgrade *u, size_t at) {
+ * no final line feed, YAML 1.2 one. Its document, not left, and node; or
+ * NULL */
+static doc *chomped(upgrade *u, size_t at, uint32_t *node) {
     doc *d = doc_at(u, at);
-    if (!d || d->left || covered(u, at, at + 1)) return;
+    if (!d || d->left) return NULL;
     const oyl_tree *t = d->tree;
-    uint32_t i = 0;
-    for (; i < t->len; i++) {
+    for (uint32_t i = 0; i < t->len; i++) {
         const oyl_node *n = &t->nodes[i];
         if (n->kind == OYL_NODE_SCALAR && (n->style == OYL_SCALAR_LITERAL || n->style == OYL_SCALAR_FOLDED) &&
-            token_start(u, t->base + n->start, t->base + n->end) == at)
-            break;
-    }
-    if (i == t->len) return;
-    oyl_str text = oyl_node_text(t, i);
-    if (u->flags & OYL_UPGRADE_VALUES_KEEP_TEXT) {
-        /* YAML 1.2's reading: a line break at the end, for every reader */
-        u->slen = 0;
-        sput(u, text.data, text.len);
-        sputs(u, "\n");
-        oyl_str with = keep(u, u->scratch, u->slen);
-        if (d->plan[i].what == N_SAME || d->plan[i].what == N_CHANGED) {   /* its tag stays */
-            d->plan[i].what = N_CHANGED;
-            d->plan[i].expect.value = (oyl_value){ .kind = OYL_VALUE_STR, .as = { .s = with } };
+            token_start(u, t->base + n->start, t->base + n->end) == at) {
+            *node = i;
+            return d;
         }
-        add_fix(u, OYL_FIX_CHOMP, u->len, u->len, keep(u, "\n", 1), true,
-                "a block scalar ending the input without a line break: libyaml gives it no final "
-                "line feed, YAML 1.2 one; a line break added, YAML 1.2's reading kept");
+    }
+    return NULL;
+}
+
+/* As for any scalar, YAML 1.2's reading kept: a key's unless
+ * KEYS_KEEP_VALUE, a value's if VALUES_KEEP_TEXT */
+static bool chomp_keeps_text(const upgrade *u, const oyl_node *n) {
+    return (n->flags & OYL_NODE_KEY) ? !(u->flags & OYL_UPGRADE_KEYS_KEEP_VALUE)
+                                     : (u->flags & OYL_UPGRADE_VALUES_KEEP_TEXT) != 0;
+}
+
+/* YAML 1.2's reading: a line break at the end, for every reader */
+static void chomp_break(upgrade *u, doc *d, uint32_t i) {
+    oyl_str text = oyl_node_text(d->tree, i);
+    u->slen = 0;
+    sput(u, text.data, text.len);
+    sputs(u, "\n");
+    oyl_str with = keep(u, u->scratch, u->slen);
+    if (u->oom ||
+        !add_fix(u, OYL_FIX_CHOMP, u->len, u->len, keep(u, "\n", 1), true,
+                 "a block scalar ending the input without a line break: libyaml gives it no final "
+                 "line feed, YAML 1.2 one; a line break added, YAML 1.2's reading kept"))
+        return;
+    if (d->plan[i].what == N_SAME || d->plan[i].what == N_CHANGED) {   /* its tag stays */
+        d->plan[i].what = N_CHANGED;
+        d->plan[i].fix = u->nfixes;
+        d->plan[i].expect.value = (oyl_value){ .kind = OYL_VALUE_STR, .as = { .s = with } };
+    }
+}
+
+/* Such a key, its text kept, is decided with the scalars: given a line
+ * break, it reads otherwise to the source, and may become another key's
+ * equal, or part from one (key_clashes). Rewritten, removed or left, it
+ * stays as it is. */
+static void chomp_key(upgrade *u, doc *d) {
+    for (size_t h = 0; h < u->nheard && !u->oom; h++) {
+        uint32_t i;
+        if (u->heard[h].msg == oyl_msg_flow_indent || chomped(u, u->heard[h].offset, &i) != d) continue;
+        const oyl_node *n = &d->tree->nodes[i];
+        if ((n->flags & OYL_NODE_KEY) && chomp_keeps_text(u, n) && d->plan[i].what == N_SAME)
+            chomp_break(u, d, i);
+    }
+}
+
+static void chomp(upgrade *u, size_t at) {
+    uint32_t i;
+    doc *d = chomped(u, at, &i);
+    if (!d || covered(u, at, at + 1)) return;
+    const oyl_node *n = &d->tree->nodes[i];
+    oyl_str text = oyl_node_text(d->tree, i);
+    if (chomp_keeps_text(u, n)) {
+        if (!(n->flags & OYL_NODE_KEY)) chomp_break(u, d, i);   /* a key: chomp_key's */
         return;
     }
     /* the value kept: when it ends with a line feed, the last line was an
@@ -1617,6 +1665,7 @@ static oyl_status run(upgrade *u, oyl_str *out) {
         for (uint32_t i = 0; i < d->tree->len && !u->oom; i++)
             if (d->tree->nodes[i].kind == OYL_NODE_SCALAR && d->plan[i].what != N_REMOVED)
                 decide(u, d, i);
+        chomp_key(u, d);
         key_clashes(u, d);
     }
     if (u->oom) return OYL_ERR_MEMORY;
