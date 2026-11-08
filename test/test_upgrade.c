@@ -141,6 +141,11 @@ static void test_scalars(void) {
         { PYYAML,  0, "a: yes\r\nb: 1\r\n", "a: true\r\nb: 1\r\n" },
         /* the reader unknown: what PyYAML and go-yaml v2 read alike */
         { UNKNOWN, 0, "a: yes\nb: 0755\non: 1\ny: 2\n", "a: true\nb: !!int 0o755\non: 1\ny: 2\n" },
+        /* a block scalar rewritten keeps the line break that ends it */
+        { PYYAML,  0, "a: !!int >\n  -0\nb: 1\n",       "a: !!int 0\nb: 1\n" },
+        { PYYAML,  0, "- !!int |\n  010\n- x\n",        "- !!int 0o10\n- x\n" },
+        { PYYAML,  0, "a: !!int |+\n  010\n\n\nb: 1\n", "a: !!int 0o10\n\n\nb: 1\n" },
+        { PYYAML,  0, "!!int\n>\n-0\n--- +.0!\n",       "!!int\n0\n--- +.0!\n" },
     };
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
         result r = upgrade(cases[i].in, cases[i].reader, cases[i].flags);

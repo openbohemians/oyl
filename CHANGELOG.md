@@ -49,6 +49,19 @@
   with no reader named, as go-yaml v2 has them as one; naming the reader
   rewrites them. Its check of the output now also compares each mapping's
   number of keys, for each reader of the source.
+- **The depth limit counts a flow pair's mapping.** `[a: [b: c]]` is four
+  levels deep, a sequence and a single-pair mapping twice over, but
+  `oyl_parser_set_max_depth(p, 2)` let it through, as it let `[? a]` through
+  at 1: the pair's mapping went uncounted unless the parser took its other
+  path, as it does for a quoted key after `?`. So nesting could reach twice
+  the limit: 512 levels at the default of 256. Every level counts now.
+  Fuzzing found it through `oyl_upgrade`, whose output, with a key quoted,
+  then broke a limit its input had kept. In 1.4.0.
+- **`oyl_upgrade` keeps the line break after a block scalar it rewrites.**
+  `a: !!int >\n  -0\nb: 1\n`, read as PyYAML's, became `a: !!int 0b: 1`: the
+  rewrite took in the line break that ends a block scalar. Its check refused
+  that as "a bug in oyl_upgrade", so no file came out wrong. It gives
+  `a: !!int 0\nb: 1\n` now. Fuzzing found it. In 1.4.0.
 - **`oyl_upgrade` kept to the caller's limits only reading its input.** Read
   back, its output took the default limits, so with
   `oyl_parser_set_max_events(p, 0)` a file of over 10,000 events was refused

@@ -251,9 +251,10 @@ static size_t past_break(const upgrade *u, size_t at) {
 }
 
 /* Where a scalar's text ends: before the blanks a plain one's end takes
- * in when a comment follows */
+ * in when a comment follows, and the line breaks and empty lines a block
+ * scalar's takes in, which what replaces it needs after it */
 static size_t token_end(const upgrade *u, size_t start, size_t end) {
-    while (end > start && oyl_is_blank((uint8_t)u->in[end - 1])) end--;
+    while (end > start && oyl_is_blank_or_break((uint8_t)u->in[end - 1])) end--;
     return end;
 }
 

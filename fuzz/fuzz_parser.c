@@ -704,6 +704,10 @@ static void check_limits(const char *yaml, size_t len, uint8_t opts) {
         /* expansion's bound is what the stream has left, so it may stop short */
         if (over > 0 && all.events == OYL_OK && !(opts & 3) && near.events != OYL_OK)
             __builtin_trap();                       /* a limit it didn't reach stopped it */
+    } else {
+        if (near.depth > limit) __builtin_trap();   /* a limit bypassed */
+        if (over >= 0 && all.events == OYL_OK && !(opts & 3) && near.events != OYL_OK)
+            __builtin_trap();                       /* a limit it reached, not passed, stopped it */
     }
 }
 

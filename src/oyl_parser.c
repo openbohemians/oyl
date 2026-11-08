@@ -176,6 +176,7 @@ struct oyl_parser {
     state_frame *frames;
     int          frame_len;
     int          frame_cap;
+    int          pairs_open;    /* flow pairs ([a: b]) open: mappings with no frame */
     int          out_len;       /* events in out_buf, at the end */
     int          out_cursor;
     oyl_event    saved_node;    /* saved scalar/alias for : lookahead */
@@ -3455,7 +3456,7 @@ NOINLINE bool inc_flow_fast(oyl_parser *p, bool keyless, parser_state node_retur
         return false;
     }
     if (p->max_events > 0 && p->events_delivered + p->out_len + n > p->max_events) return false;
-    if (p->max_depth > 0 && p->frame_len + ff.depth > p->max_depth) return false;
+    if (p->max_depth > 0 && p->frame_len + p->pairs_open + ff.depth > p->max_depth) return false;
     p->out_len += n;
     oyl_scan_flow_commit(p->scanner, &ff);
     consume_token(p);
@@ -3575,6 +3576,18 @@ static inline void fill_scalar(oyl_event *e, const oyl_token *t) {
     e->end = t->end;
 }
 
+/* A flow pair's mapping ([a: b], [? a]) has no frame of its own, but nests
+ * all the same: the depth limit counts it, as the eager parser does. False,
+ * the limit hit, before its start is queued. */
+static inline bool inc_open_pair(oyl_parser *p) {
+    if (p->max_depth > 0 && p->frame_len + p->pairs_open >= p->max_depth) {
+        hit_limit(p, "nesting depth limit exceeded");
+        return false;
+    }
+    p->pairs_open++;
+    return true;
+}
+
 static inline void inc_push_frame(oyl_parser *p, ctx_type type, ptrdiff_t indent,
                                    parser_state return_state) {
     if ((type == CTX_BLOCK_MAP || type == CTX_BLOCK_SEQ) && p->doc_start_line &&
@@ -3582,7 +3595,7 @@ static inline void inc_push_frame(oyl_parser *p, ctx_type type, ptrdiff_t indent
         stop_with(p, OYL_ERR_PARSE, "block collection cannot start on the '---' line");
         return;
     }
-    if (p->max_depth > 0 && p->frame_len >= p->max_depth) {
+    if (p->max_depth > 0 && p->frame_len + p->pairs_open >= p->max_depth) {
         /* the collection's start event (and, for a block mapping, its
          * first key) was just queued: withhold them, so no delivered event
          * nests deeper than the limit */
@@ -3963,6 +3976,7 @@ static oyl_status parser_step_flow(oyl_parser *p) {
             key->end = p->current.start;
             attach_props(p, key);
 
+            if (!inc_open_pair(p)) return OOM_STATUS(p);
             inc_emit_ev(p, OYL_EVT_MAPPING_START, key->start, key->start, false, true);
             inc_emit(p, key);
 
@@ -4043,6 +4057,7 @@ static oyl_status parser_step_flow(oyl_parser *p) {
 
     case ST_FLOW_SEQ_ENTRY_KEY: {
         /* Implicit pair detected: emit MAPPING_START + saved key */
+        if (!inc_open_pair(p)) return OOM_STATUS(p);
         inc_emit_ev(p, OYL_EVT_MAPPING_START, p->saved_node.start, p->saved_node.start, false, true);
         inc_emit(p, &p->saved_node);
         p->have_saved_node = false;
@@ -4066,12 +4081,14 @@ static oyl_status parser_step_flow(oyl_parser *p) {
     case ST_FLOW_SEQ_IMPLICIT_END: {
         peek_token(p);
         inc_emit_at(p, OYL_EVT_MAPPING_END, p->current.start, p->current.start);
+        p->pairs_open--;
         p->state = ST_FLOW_SEQ_SEP;
         return OYL_OK;
     }
 
     case ST_FLOW_SEQ_EXPLICIT_KEY: {
         /* ? key : value pair in flow sequence */
+        if (!inc_open_pair(p)) return OOM_STATUS(p);
         inc_emit_ev(p, OYL_EVT_MAPPING_START, p->current.start, p->current.end, false, true);
 
         consume_token(p); /* consume ? */
@@ -4117,6 +4134,7 @@ static oyl_status parser_step_flow(oyl_parser *p) {
     case ST_FLOW_SEQ_EXPLICIT_END: {
         peek_token(p);
         inc_emit_at(p, OYL_EVT_MAPPING_END, p->current.start, p->current.start);
+        p->pairs_open--;
         p->state = ST_FLOW_SEQ_SEP;
         return OYL_OK;
     }

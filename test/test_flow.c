@@ -533,6 +533,20 @@ static void test_depth_limit(void) {
     ASSERT(parse_all(ok, 16, true, 8, &msg) == OYL_OK, "depth == limit parses (eager)");
     ASSERT(parse_all(ok, 16, false, 7, &msg) == OYL_ERR_LIMIT, "depth > limit fails");
     ASSERT(parse_all(ok, 16, true, 7, &msg) == OYL_ERR_LIMIT, "depth > limit fails (eager)");
+
+    /* a flow pair's mapping is a level too, however it's written: each of
+     * these is four deep */
+    static const char *const pairs[] = { "[n: [m: o]]", "[? [? n]]", "[? [? \"n\"]]", "[: [: o]]",
+                                         "[n: [[o]]]", "[? n: [m: o]]", "[[n: [m]]]" };
+    for (size_t i = 0; i < sizeof pairs / sizeof pairs[0]; i++)
+        for (int eager = 0; eager <= 1; eager++) {
+            size_t n = strlen(pairs[i]);
+            char m[96];
+            snprintf(m, sizeof m, "%s: depth 4 parses%s", pairs[i], eager ? " (eager)" : "");
+            ASSERT(parse_all(pairs[i], n, eager, 4, &msg) == OYL_OK, m);
+            snprintf(m, sizeof m, "%s: depth 3 fails%s", pairs[i], eager ? " (eager)" : "");
+            ASSERT(parse_all(pairs[i], n, eager, 3, &msg) == OYL_ERR_LIMIT, m);
+        }
     free(buf);
 }
 
