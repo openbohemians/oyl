@@ -482,6 +482,92 @@ static void test_leniencies(void) {
            "... parted from one: left");
     r = upgrade("a: 1\n? |\n a", PYYAML, OYL_UPGRADE_KEYS_KEEP_VALUE);
     ASSERT(r.status == OYL_OK && strcmp(r.out, "a: 1\n? |-\n a") == 0, "... its value kept: stripped");
+
+    /* YAML 1.2's reading kept, a tag that rejects a final line feed (YAML
+     * 1.2 rejects !!int "3\n"): stripped, the value kept (found by fuzzing) */
+    r = upgrade("!!int |\n 3", PYYAML, OYL_UPGRADE_VALUES_KEEP_TEXT);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "!!int |-\n 3") == 0 && r.fixed == 1 &&
+           strstr(r.texts[0][2], "which its tag rejects"), "!!int: stripped");
+    r = upgrade("? !!bool |\n true", GOYAML2, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "? !!bool |-\n true") == 0, "... a key's too");
+    r = upgrade("!!str |\n 3", PYYAML, OYL_UPGRADE_VALUES_KEEP_TEXT);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "!!str |\n 3\n") == 0, "!!str: a line break added");
+    /* one left, which go-yaml v2 would reject given a line break: as it was */
+    r = upgrade("!!timestamp |\n 2001-01-01", GOYAML2, OYL_UPGRADE_VALUES_KEEP_TEXT);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "!!timestamp |\n 2001-01-01") == 0 && r.fixed == 0,
+           "one left: no line break");
+}
+
+/* Each block scalar ending the input, as each reader reads it, under each
+ * flag: upgraded, read as promised from outside, and upgraded again,
+ * unchanged */
+static void test_chomps(void) {
+    printf("test_chomps:\n");
+    static const char *const tags[] = {
+        "", "!!str ", "!!int ", "!!float ", "!!bool ", "!!null ", "!!binary ", "!!timestamp ", "!x ",
+    };
+    static const char *const texts[] = { "3", "true", "2001-01-01", "AAAA", "a", "yes", "~", "1:00" };
+    static const char *const heads[] = { "|", "|+", ">", ">+", "|2", "|+1" };
+    static const char *const forms[] = {
+        "%s\n  %s", "k: %s\n  %s", "? %s\n  %s", "- %s\n  %s", "a: 1\n? %s\n  %s",
+        "%s\r  %s", "\"3\\n\": 1\n? %s\n  %s",
+    };
+    enum { NT = sizeof tags / sizeof *tags, NX = sizeof texts / sizeof *texts,
+           NH = sizeof heads / sizeof *heads, NF = sizeof forms / sizeof *forms };
+    unsigned long tried = 0, upgraded = 0, failed = 0;
+    char y[128];
+    for (int reader = UNKNOWN; reader <= GOYAML2; reader++) {
+        const oyl_dialect *dl = reader == PYYAML ? oyl_dialect_yaml11()
+                              : reader == GOYAML2 ? oyl_dialect_goyaml2() : NULL;
+        for (unsigned flags = 0; flags < 4; flags++)
+            for (int f = 0; f < NF; f++)
+                for (int t = 0; t < NT; t++)
+                    for (int h = 0; h < NH; h++)
+                        for (int x = 0; x < NX; x++) {
+                            char hd[16];
+                            snprintf(hd, sizeof hd, "%s%s", tags[t], heads[h]);
+                            size_t len = (size_t)snprintf(y, sizeof y, forms[f], hd, texts[x]);
+                            oyl_arena *a = oyl_arena_new(4096);
+                            oyl_parser *p = oyl_parser_new(y, len, a);
+                            if (dl) oyl_parser_set_dialect(p, dl);
+                            oyl_str out;
+                            const oyl_fix *fx;
+                            size_t nf = 0;
+                            tried++;
+                            oyl_status st = oyl_upgrade(p, flags, &out, &fx, &nf);
+                            const char *why = NULL;
+                            if (st == OYL_OK) {
+                                upgraded++;
+                                why = ur_check(y, len, out, dl, flags, fx, nf, -1);
+                                size_t fixed = 0;
+                                for (size_t i = 0; i < nf; i++) fixed += fx[i].fixed;
+                                if (!why && fixed) {   /* upgraded again: nothing to fix */
+                                    oyl_parser *q = oyl_parser_new(out.data, out.len, a);
+                                    if (dl) oyl_parser_set_dialect(q, dl);
+                                    oyl_str again;
+                                    const oyl_fix *fx2;
+                                    size_t nf2 = 0, more = 0;
+                                    if (oyl_upgrade(q, flags, &again, &fx2, &nf2) != OYL_OK)
+                                        why = "the output doesn't upgrade";
+                                    else {
+                                        for (size_t i = 0; i < nf2; i++) more += fx2[i].fixed;
+                                        if (more || !ur_str_eq(again, out)) why = "upgrading the output changed it";
+                                    }
+                                    oyl_parser_free(q);
+                                }
+                            } else if (strstr(oyl_parser_error(p) ? oyl_parser_error(p) : "", "a bug in")) {
+                                why = oyl_parser_error(p);
+                            } else {
+                                upgraded++;   /* an error in the source: nothing to upgrade */
+                            }
+                            if (why && failed++ < 5)
+                                printf("  %s (reader %d, flags %u): %s\n", why, reader, flags, y);
+                            oyl_parser_free(p);
+                            oyl_arena_free(a);
+                        }
+    }
+    ASSERT(upgraded == tried, "every one upgraded, or an error in the source");
+    ASSERT(failed == 0, "each reads as oyl_upgrade promises, and upgrades no further");
 }
 
 static void test_documents(void) {
@@ -683,6 +769,7 @@ int main(void) {
     test_reported();
     test_merges();
     test_leniencies();
+    test_chomps();
     test_documents();
     test_evidence();
     test_refused();

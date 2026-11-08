@@ -91,6 +91,15 @@
   and reported, as any key rewrite is; before, under
   `OYL_UPGRADE_VALUES_KEEP_TEXT`, the upgrade failed. Found by the same
   check, in CI. In 1.4.0.
+- **`oyl_upgrade` gives a block scalar ending the input a line break only
+  if its tag takes one.** Where YAML 1.2's reading is kept, a block scalar
+  ending the input without a line break got one, YAML 1.2 giving it a final
+  line feed. But YAML 1.2 and go-yaml v2 reject `!!int "3\n"` (and
+  `!!float`, `!!bool` so), and the upgrade failed on `!!int |\n 3`, under
+  `OYL_UPGRADE_VALUES_KEEP_TEXT` or as a key. Now one YAML 1.2 rejects is
+  stripped, its value kept, as any scalar YAML 1.2 rejects is; one a
+  reader would read otherwise given the line break is left and reported.
+  Found by the fuzzer, in CI. In 1.4.0.
 - **`oyl_upgrade` kept to the caller's limits only reading its input.** Read
   back, its output took the default limits, so with
   `oyl_parser_set_max_events(p, 0)` a file of over 10,000 events was refused

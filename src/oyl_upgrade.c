@@ -1197,23 +1197,58 @@ static bool chomp_keeps_text(const upgrade *u, const oyl_node *n) {
                                      : (u->flags & OYL_UPGRADE_VALUES_KEEP_TEXT) != 0;
 }
 
-/* YAML 1.2's reading: a line break at the end, for every reader */
-static void chomp_break(upgrade *u, doc *d, uint32_t i) {
-    oyl_str text = oyl_node_text(d->tree, i);
+/* YAML 1.2's reading, *c: the text and a line feed, as its tag takes them.
+ * Given a line break at the end, does every reader read it so (1)? Or
+ * does YAML 1.2 reject it, as !!int does "3\n" (0), or reader *who read
+ * it otherwise, as *x (-1)? */
+static int break_reads(upgrade *u, const doc *d, uint32_t i, reading *c, reading *x, int *who) {
+    const oyl_tree *t = d->tree;
+    oyl_str text = oyl_node_text(t, i), own = explicit_tag(t, i);
+    oyl_scalar_style style = (oyl_scalar_style)t->nodes[i].style;
     u->slen = 0;
     sput(u, text.data, text.len);
     sputs(u, "\n");
     oyl_str with = keep(u, u->scratch, u->slen);
-    if (u->oom ||
-        !add_fix(u, OYL_FIX_CHOMP, u->len, u->len, keep(u, "\n", 1), true,
+    if (u->oom) return 0;
+    *c = read_as(&u->core, with, style, own);
+    if (!c->ok) return 0;
+    for (int r = 0; r < u->nsrc; r++) {
+        *x = read_as(&u->src[r], with, style, own);
+        if (!same(x, c)) {
+            *who = r;
+            return -1;
+        }
+    }
+    return 1;
+}
+
+/* YAML 1.2's reading, c: a line break at the end, for every reader */
+static void chomp_break(upgrade *u, doc *d, uint32_t i, const reading *c) {
+    if (!add_fix(u, OYL_FIX_CHOMP, u->len, u->len, keep(u, "\n", 1), true,
                  "a block scalar ending the input without a line break: libyaml gives it no final "
                  "line feed, YAML 1.2 one; a line break added, YAML 1.2's reading kept"))
         return;
-    if (d->plan[i].what == N_SAME || d->plan[i].what == N_CHANGED) {   /* its tag stays */
+    if (d->plan[i].what == N_SAME || d->plan[i].what == N_CHANGED) {
         d->plan[i].what = N_CHANGED;
         d->plan[i].fix = u->nfixes;
-        d->plan[i].expect.value = (oyl_value){ .kind = OYL_VALUE_STR, .as = { .s = with } };
+        d->plan[i].expect = c->key;
     }
+}
+
+/* Given a line break, reader `who` would read it otherwise, as x: left.
+ * One left already is reported already, or errs in the source. */
+static void chomp_left(upgrade *u, doc *d, uint32_t i, size_t at, const reading *c, const reading *x,
+                       int who) {
+    if (d->plan[i].what != N_SAME) return;
+    char b1[64], b2[64];
+    size_t end = token_end(u, at, d->tree->base + d->tree->nodes[i].end);
+    if (!add_fix(u, OYL_FIX_CHOMP, at, end, (oyl_str){ NULL, 0 }, false,
+                 keepf(u, "a block scalar ending the input without a line break: libyaml gives it no "
+                          "final line feed, YAML 1.2 one; given a line break, %s would read %s, YAML 1.2 "
+                          "%s: left", u->src[who].name, describe(u, x, b1, sizeof b1),
+                       describe(u, c, b2, sizeof b2))))
+        return;
+    d->plan[i].what = N_SKIP;
 }
 
 /* Such a key, its text kept, is decided with the scalars: given a line
@@ -1225,8 +1260,13 @@ static void chomp_key(upgrade *u, doc *d) {
         uint32_t i;
         if (u->heard[h].msg == oyl_msg_flow_indent || chomped(u, u->heard[h].offset, &i) != d) continue;
         const oyl_node *n = &d->tree->nodes[i];
-        if ((n->flags & OYL_NODE_KEY) && chomp_keeps_text(u, n) && d->plan[i].what == N_SAME)
-            chomp_break(u, d, i);
+        if (!(n->flags & OYL_NODE_KEY) || !chomp_keeps_text(u, n) || d->plan[i].what != N_SAME) continue;
+        reading c = { 0 }, x = { 0 };
+        int who = 0, r = break_reads(u, d, i, &c, &x, &who);
+        if (u->oom) return;
+        if (r > 0) chomp_break(u, d, i, &c);
+        else if (r < 0) chomp_left(u, d, i, u->heard[h].offset, &c, &x, who);
+        /* YAML 1.2 rejecting it: stripped (chomp), its value kept */
     }
 }
 
@@ -1236,9 +1276,21 @@ static void chomp(upgrade *u, size_t at) {
     if (!d || covered(u, at, at + 1)) return;
     const oyl_node *n = &d->tree->nodes[i];
     oyl_str text = oyl_node_text(d->tree, i);
+    /* YAML 1.2's reading kept, if every reader can read it so; a key's
+     * decided by chomp_key. One YAML 1.2 rejects keeps its value, as any
+     * scalar does. */
+    const char *rejects = "";
     if (chomp_keeps_text(u, n)) {
-        if (!(n->flags & OYL_NODE_KEY)) chomp_break(u, d, i);   /* a key: chomp_key's */
-        return;
+        reading c = { 0 }, x = { 0 };
+        int who = 0, r = break_reads(u, d, i, &c, &x, &who);
+        if (u->oom) return;
+        if (r != 0) {
+            if (n->flags & OYL_NODE_KEY) return;
+            if (r > 0) chomp_break(u, d, i, &c);
+            else chomp_left(u, d, i, at, &c, &x, who);
+            return;
+        }
+        rejects = ", which its tag rejects";
     }
     /* the value kept: when it ends with a line feed, the last line was an
      * empty one (after |+, keeping the line feeds before it): removed; else
@@ -1246,23 +1298,21 @@ static void chomp(upgrade *u, size_t at) {
     size_t ls = line_start(u, u->len);
     if (text.len && text.data[text.len - 1] == '\n' && ls > at && ls < u->len) {
         add_fix(u, OYL_FIX_CHOMP, ls, u->len, (oyl_str){ "", 0 }, true,
-                "a block scalar ending the input with an empty line without a line break: libyaml "
-                "gives it no line feed, YAML 1.2 one; removed, the value kept");
+                keepf(u, "a block scalar ending the input with an empty line without a line break: "
+                         "libyaml gives it no line feed, YAML 1.2 one%s; removed, the value kept", rejects));
         return;
     }
+    const char *why = keepf(u, "a block scalar ending the input without a line break: libyaml gives it no "
+                               "final line feed, YAML 1.2 one%s; stripped, the value kept", rejects);
     size_t h = at + 1;
     for (int i = 0; i < 2 && h < u->len; i++, h++)
         if (u->in[h] == '+') {
-            add_fix(u, OYL_FIX_CHOMP, h, h + 1, keep(u, "-", 1), true,
-                    "a block scalar ending the input without a line break: libyaml gives it no "
-                    "final line feed, YAML 1.2 one; stripped, the value kept");
+            add_fix(u, OYL_FIX_CHOMP, h, h + 1, keep(u, "-", 1), true, why);
             return;
         } else if (!(u->in[h] >= '1' && u->in[h] <= '9')) {
             break;
         }
-    add_fix(u, OYL_FIX_CHOMP, at + 1, at + 1, keep(u, "-", 1), true,
-            "a block scalar ending the input without a line break: libyaml gives it no final "
-            "line feed, YAML 1.2 one; stripped, the value kept");
+    add_fix(u, OYL_FIX_CHOMP, at + 1, at + 1, keep(u, "-", 1), true, why);
 }
 
 /* %YAML 1.1 before document k: removed, with its line */
