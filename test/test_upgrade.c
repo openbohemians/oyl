@@ -4,6 +4,7 @@
  */
 
 #include "oyl/oyl.h"
+#include "../fuzz/upgrade_reads.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -182,6 +183,20 @@ static void test_reported(void) {
 
     r = upgrade("=: v\n", PYYAML, 0);
     ASSERT(r.status == OYL_OK && r.nfixes == 1 && !r.fixes[0].fixed, "= : left");
+
+    /* a << that merges no mapping, which PyYAML refuses, is a !!merge key
+     * in its dialect and "<<" in YAML 1.2's: beside a '<<', two keys to one
+     * and one to the other (found reading the output from outside) */
+    r = upgrade("'<<': a\n<<: b\n", PYYAML, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "'<<': a\n<<: b\n") == 0 && r.nfixes == 1 &&
+           !r.fixes[0].fixed && r.fixes[0].mark.line == 2 && strstr(r.texts[0][2], "merges no mapping"),
+           "a << merging nothing: left, reported");
+    r = upgrade("<<: b\n", UNKNOWN, 0);
+    ASSERT(r.status == OYL_OK && r.nfixes == 1 && !r.fixes[0].fixed, "... the reader unknown too");
+    r = upgrade("'<<': a\n<<: b\n", GOYAML2, 0);
+    ASSERT(r.status == OYL_OK && r.nfixes == 0, "... not to go-yaml v2, which gives it no !!merge");
+    r = upgrade("a: &a {x: 1}\nb:\n  <<: *a\nc:\n  <<: [*a]\n", PYYAML, 0);
+    ASSERT(r.status == OYL_OK && r.nfixes == 0, "a << that merges: nothing");
 
     /* a scalar its tag rejects errs in the source already */
     r = upgrade("a: !!int abc\n", PYYAML, 0);
@@ -573,6 +588,65 @@ static void test_limits(void) {
     }
 }
 
+/* ── Read from outside ───────────────────────────────────── */
+
+/* Each pair of spellings as two keys, a key and a merged one, merged
+ * through an alias, in a sequence of merges and in a nested one, and in a
+ * flow sequence, by each reader and policy: read through the public API
+ * alone (fuzz/upgrade_reads.h), each mapping keeps its values to a reader
+ * of the source, each value its value, and with nothing left the output
+ * reads the same in YAML 1.2. oyl_upgrade's own checks, grown one bug at a
+ * time, missed keys lost in silence for four rounds of fuzzing; this
+ * catches them. */
+static void test_reads(void) {
+    printf("test_reads:\n");
+    static const char *const sp[] = {
+        "-.0", "+.0", "0.0", "-0.0", ".5", "-.5", "1", "01", "1.0", "0x1", "0o1", "0b1", "1_0",
+        "1:00", "010", "8", "0755", "1e3", "yes", "no", "on", "On", "off", "y", "n", "true",
+        "false", "~", "null", ".inf", ".nan", "2001-01-01", "12:30:00", "<<", "'<<'", "=",
+        "\"on\"", "'yes'", "\"1\"",
+    };
+    static const char *const forms[] = {
+        "%s: a\n%s: b\n",
+        "%s: a\n<<: {%s: b}\n",
+        "<<: {%s: b}\n%s: a\n",
+        "m: &m\n  %s: b\nn:\n  %s: a\n  <<: *m\n",
+        "<<: [{%s: a}, {%s: b}]\nc: d\n",
+        "c: d\n<<: {<<: {%s: b}, %s: a}\n",
+        "- [%s, {%s: x}]\n",
+    };
+    enum { NS = sizeof sp / sizeof *sp, NF = sizeof forms / sizeof *forms };
+    unsigned long tried = 0, upgraded = 0, failed = 0;
+    char y[128];
+    for (int reader = UNKNOWN; reader <= GOYAML2; reader++) {
+        const oyl_dialect *dl = reader == PYYAML ? oyl_dialect_yaml11()
+                              : reader == GOYAML2 ? oyl_dialect_goyaml2() : NULL;
+        for (unsigned flags = 0; flags < 4; flags++)
+            for (int f = 0; f < NF; f++)
+                for (int i = 0; i < NS; i++)
+                    for (int j = 0; j < NS; j++) {
+                        size_t len = (size_t)snprintf(y, sizeof y, forms[f], sp[i], sp[j]);
+                        oyl_arena *a = oyl_arena_new(4096);
+                        oyl_parser *p = oyl_parser_new(y, len, a);
+                        if (dl) oyl_parser_set_dialect(p, dl);
+                        oyl_str out;
+                        const oyl_fix *fx;
+                        size_t nf = 0;
+                        tried++;
+                        if (oyl_upgrade(p, flags, &out, &fx, &nf) == OYL_OK) {
+                            upgraded++;
+                            const char *why = ur_check(y, len, out, dl, flags, fx, nf, -1);
+                            if (why && failed++ < 5)
+                                printf("  %s (reader %d, flags %u): %s", why, reader, flags, y);
+                        }
+                        oyl_parser_free(p);
+                        oyl_arena_free(a);
+                    }
+    }
+    ASSERT(upgraded == tried, "every one upgraded");
+    ASSERT(failed == 0, "each reads as oyl_upgrade promises, read from outside");
+}
+
 int main(void) {
     test_example();
     test_scalars();
@@ -584,6 +658,7 @@ int main(void) {
     test_refused();
     test_arguments();
     test_limits();
+    test_reads();
     printf("\n--- Upgrade tests: %d / %d passed ---\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;
 }

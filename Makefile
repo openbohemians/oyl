@@ -178,7 +178,7 @@ $(TEST_DIALECT): $(TESTDIR)/test_dialect.c $(LIB)
 $(TEST_TREE): $(TESTDIR)/test_tree.c $(LIB)
 	$(CC) $(OYL_CFLAGS) $< $(LIB) -lm -o $@
 
-$(TEST_UPGRADE): $(TESTDIR)/test_upgrade.c $(LIB)
+$(TEST_UPGRADE): $(TESTDIR)/test_upgrade.c fuzz/upgrade_reads.h $(LIB)
 	$(CC) $(OYL_CFLAGS) $< $(LIB) -lm -o $@
 
 # the hash is internal: nothing a caller sees depends on it
@@ -317,7 +317,7 @@ bench-parser-cmp: $(OBJDIR)/bench_parser_cmp
 # libFuzzer + ASAN + UBSAN. Single-shot compile (no .a) so all units share
 # the same instrumentation. Run via `just fuzz`.
 # OYL_CKPT_SPACING: checkpoints every 256 bytes, so short inputs take several
-$(OBJDIR)/fuzz_parser: fuzz/fuzz_parser.c $(SRCS) | $(OBJDIR)
+$(OBJDIR)/fuzz_parser: fuzz/fuzz_parser.c fuzz/upgrade_reads.h $(SRCS) | $(OBJDIR)
 	clang -std=c11 -Wall -Wextra -Iinclude -DOYL_CKPT_SPACING=256 \
 	  -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION \
 	  -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined \

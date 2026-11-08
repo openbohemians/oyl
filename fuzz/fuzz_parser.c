@@ -38,6 +38,9 @@
  *  - oyl_upgrade's check of its output fails (a scalar reads otherwise in
  *    a reader or YAML 1.2 than it decided, or its fixes overlap), or
  *    upgrading its output changes anything more;
+ *  - read from outside oyl_upgrade (upgrade_reads.h), a mapping has other
+ *    values to a reader of the source after the upgrade, a value another
+ *    value, or with nothing left the output reads otherwise in YAML 1.2;
  *  - a limit does more than stop a read. Each input sets limits by what it
  *    takes itself, just under, at or just over: a read under them ends as it
  *    does without them or with OYL_ERR_LIMIT, gives the same if it ends well,
@@ -57,6 +60,7 @@
 
 #include "oyl/oyl.h"
 #include "../src/oyl_simd.h"
+#include "upgrade_reads.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -544,26 +548,27 @@ static void check_tree(const char *yaml, size_t len, bool dialect, oyl_emit_styl
 /* Upgrade `yaml` with the reader bits 6-7 pick (none, PyYAML's, go-yaml
  * v2's, PyYAML's with both flags), as oyl_upgrade checks it; then upgrade
  * the output, which must change nothing */
+static const oyl_dialect *reader_dialect(int reader) {
+    return reader == 1 || reader == 3 ? oyl_dialect_yaml11() : reader == 2 ? oyl_dialect_goyaml2() : NULL;
+}
+
 static bool upgrade_once(const char *yaml, size_t len, int reader, unsigned flags, oyl_arena *a,
-                         oyl_str *out, size_t *fixed, bool *escapes) {
+                         oyl_str *out, size_t *fixed, bool *escapes, const oyl_fix **fx, size_t *nf) {
     oyl_parser *p = oyl_parser_new(yaml, len, a);
     if (!p) return false;
     oyl_parser_set_max_events(p, MAX_EVENTS);
     oyl_parser_set_warn(p, check_warning, NULL);
-    if (reader == 1 || reader == 3) oyl_parser_set_dialect(p, oyl_dialect_yaml11());
-    if (reader == 2) oyl_parser_set_dialect(p, oyl_dialect_goyaml2());
-    const oyl_fix *fx;
-    size_t nf;
-    oyl_status st = oyl_upgrade(p, flags, out, &fx, &nf);
+    if (reader_dialect(reader)) oyl_parser_set_dialect(p, reader_dialect(reader));
+    oyl_status st = oyl_upgrade(p, flags, out, fx, nf);
     if (st == OYL_ERR_PARSE && oyl_parser_error(p) && strstr(oyl_parser_error(p), "(a bug in oyl_upgrade)"))
         __builtin_trap();   /* its check of its output failed */
     *fixed = 0;
     *escapes = false;
-    for (size_t i = 0; st == OYL_OK && i < nf; i++) {
-        if (!fx[i].message || fx[i].kind < OYL_FIX_SCALAR || fx[i].kind > OYL_FIX_INDENT)
-            __builtin_trap();
-        if (fx[i].fixed) (*fixed)++;
-        if (fx[i].fixed && fx[i].kind == OYL_FIX_ESCAPE) *escapes = true;
+    for (size_t i = 0; st == OYL_OK && i < *nf; i++) {
+        const oyl_fix *f = &(*fx)[i];
+        if (!f->message || f->kind < OYL_FIX_SCALAR || f->kind > OYL_FIX_INDENT) __builtin_trap();
+        if (f->fixed) (*fixed)++;
+        if (f->fixed && f->kind == OYL_FIX_ESCAPE) *escapes = true;
     }
     oyl_parser_free(p);
     return st == OYL_OK;
@@ -576,13 +581,17 @@ static void check_upgrade(const char *yaml, size_t len, uint8_t opts) {
     oyl_arena *a = oyl_arena_new(4096);
     if (!a) return;
     oyl_str out, again;
-    size_t fixed, more;
+    size_t fixed, more, nf, nf2;
     bool escapes, more_escapes;
+    const oyl_fix *fx, *fx2;
+    bool ok = upgrade_once(yaml, len, reader, flags, a, &out, &fixed, &escapes, &fx, &nf);
+    if (ok && ur_check(yaml, len, out, reader_dialect(reader), flags, fx, nf, MAX_EVENTS))
+        __builtin_trap();   /* to a reader, the output has other values, or reads otherwise */
     /* the reader unknown, a \' made it go-yaml v2, which the output no
      * longer shows: upgrade the output as go-yaml v2's */
-    if (upgrade_once(yaml, len, reader, flags, a, &out, &fixed, &escapes) && fixed &&
+    if (ok && fixed &&
         upgrade_once(out.data, out.len, reader == 0 && escapes ? 2 : reader, flags, a, &again, &more,
-                     &more_escapes) &&
+                     &more_escapes, &fx2, &nf2) &&
         (more || again.len != out.len || memcmp(again.data, out.data, out.len) != 0))
         __builtin_trap();   /* upgrading the output changed it */
     oyl_arena_free(a);

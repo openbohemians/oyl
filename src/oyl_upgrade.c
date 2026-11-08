@@ -529,6 +529,8 @@ static const char *src_name(const upgrade *u) {
     return u->nsrc == 2 ? "PyYAML and go-yaml v2" : u->src[0].name;
 }
 
+static bool mergeable(const oyl_tree *t, uint32_t m, uint32_t v);
+
 /* Decide scalar i of doc d: rewrite it, or report it, or nothing */
 static void decide(upgrade *u, doc *d, uint32_t i) {
     const oyl_tree *t = d->tree;
@@ -548,9 +550,21 @@ static void decide(upgrade *u, doc *d, uint32_t i) {
     }
     pl->what = N_SAME;
     pl->expect = s[0].key;
-    /* << stays, as the user decided */
+    /* << stays, as the user decided. One that merges no mapping, which
+     * PyYAML refuses, is an ordinary key: a !!merge one in its dialect, the
+     * key "<<" in YAML 1.2's, so a '<<' beside it is another key to one and
+     * the same to the other. */
     for (int r = 0; r < u->nsrc; r++)
-        if (oyl_key_tag_eq(s[r].key.tag, OYL_TAG_MERGE)) { pl->what = N_SKIP; return; }
+        if (oyl_key_tag_eq(s[r].key.tag, OYL_TAG_MERGE)) {
+            pl->what = N_SKIP;
+            if (is_key && !mergeable(t, i - n->parent, i + n->span)) {
+                size_t tok = token_start(u, t->base + n->start, t->base + n->end);
+                add_fix(u, OYL_FIX_SCALAR, tok, token_end(u, tok, t->base + n->end), (oyl_str){ NULL, 0 },
+                        false, "a << that merges no mapping: PyYAML refuses it, and YAML 1.2 reads "
+                               "the key \"<<\": left");
+            }
+            return;
+        }
 
     bool agree = u->nsrc == 1 || same(&s[0], &s[1]);
     if (agree && same(&s[0], &c)) return;

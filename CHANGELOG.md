@@ -62,6 +62,16 @@
   rewrite took in the line break that ends a block scalar. Its check refused
   that as "a bug in oyl_upgrade", so no file came out wrong. It gives
   `a: !!int 0\nb: 1\n` now. Fuzzing found it. In 1.4.0.
+- **`oyl_upgrade` reports a `<<` that merges no mapping.** In
+  `oyl_dialect_yaml11()` such a `<<` is a `!!merge` key, and in YAML 1.2 the
+  key `"<<"`, so `'<<': a` beside `<<: b` is two keys to one and one to the
+  other. PyYAML itself refuses the file. The upgrade left it as it was
+  without a word, and it read otherwise in the two; now it's left and
+  reported. Found by a new check in the fuzzer and the tests, which reads
+  the input and the output through the public API alone, not through
+  `oyl_upgrade`'s own plan: to each reader of the source, each mapping keeps
+  its values and each value its value, and with nothing left the output
+  reads the same in YAML 1.2. In 1.4.0.
 - **`oyl_upgrade` kept to the caller's limits only reading its input.** Read
   back, its output took the default limits, so with
   `oyl_parser_set_max_events(p, 0)` a file of over 10,000 events was refused
