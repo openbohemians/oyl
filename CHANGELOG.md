@@ -57,6 +57,14 @@
   the limit: 512 levels at the default of 256. Every level counts now.
   Fuzzing found it through `oyl_upgrade`, whose output, with a key quoted,
   then broke a limit its input had kept. In 1.4.0.
+- **A flow collection key's `:` is on its line.** In a block mapping,
+  `a: 1\n{}\n: 2` read as `{a: 1, {}: 2}`, though an implicit key lies on
+  one line with its `:`, and libyaml, PyYAML and YAML 1.2 reject it, as Oyl
+  did a scalar or alias there. It's an error now ("could not find expected
+  ':' after mapping key"). Fuzzing found it through `oyl_upgrade`: with
+  go-yaml v2's merge, commenting out the pair before such a key left `{}`
+  outside any mapping, and its check refused the output. In 1.4.0, and
+  every release before it.
 - **`oyl_upgrade` keeps the line break after a block scalar it rewrites.**
   `a: !!int >\n  -0\nb: 1\n`, read as PyYAML's, became `a: !!int 0b: 1`: the
   rewrite took in the line break that ends a block scalar. Its check refused

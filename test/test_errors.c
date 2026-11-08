@@ -865,10 +865,26 @@ static void test_block_header_repeats(void) {
 
 /* An implicit key's ':' is on its line: "b\n: c" is a scalar without
  * one, then an empty key's pair (Oyl took b as the key until 2026-10-30,
- * after a mapping's first pair; found by fuzzing oyl_upgrade) */
+ * after a mapping's first pair; found by fuzzing oyl_upgrade). A flow
+ * collection's too: Oyl took "{}\n: c" there as a pair until 2026-11-08,
+ * as libyaml doesn't (found the same way). */
 static void test_key_colon_on_its_line(void) {
     printf("test_key_colon_on_its_line:\n");
-    const char *bad[] = { "a: 1\nb\n: 2\n", ":\nb\n:\n", "a: 1\n*x\n: 2\n" };
+    const char *bad[] = { "a: 1\nb\n: 2\n", ":\nb\n:\n", "a: 1\n*x\n: 2\n", "a: 1\n{}\n: 2\n",
+                          "a: 1\n[x]\n: 2\n", "a: 1\n!t {}\n: 2\n", "a: 1\n{} # c\n: 2\n",
+                          "? a\n{}\n: 2\n", "- a: 1\n  [x]\n  : 2\n", "a: {b: 1}\n{}\n: 2\n" };
+    const char *good[] = { "a: 1\n{}: 2\n", "a: 1\n[x] : 2\n", "a: 1\n!t {}: 2\n", "? {}\n: 2\n",
+                           "a: 1\n? [x]\n: 2\n", "a: 1\n[x]:\n  y\n" };
+    for (size_t i = 0; i < sizeof good / sizeof good[0]; i++) {
+        oyl_arena *a = oyl_arena_new(4096);
+        oyl_parser *p = oyl_parser_new(good[i], strlen(good[i]), a);
+        const oyl_event *evt;
+        oyl_status st;
+        while ((st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_STREAM_END) {}
+        ASSERT(st == OYL_OK, good[i]);
+        oyl_parser_free(p);
+        oyl_arena_free(a);
+    }
     for (int eager = 0; eager < 2; eager++)
         for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
             oyl_arena *a = oyl_arena_new(4096);

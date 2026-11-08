@@ -1023,6 +1023,14 @@ static oyl_status parse_block_map_value(oyl_parser *p, ptrdiff_t map_indent) {
     return parse_block_node(p);
 }
 
+/* Is the current token an implicit key's ':'? It must be on the line where
+ * the key ends: a ':' starting a later line belongs to an explicit "?"
+ * entry or an enclosing mapping. */
+static inline bool key_colon_follows(oyl_parser *p, size_t key_end_line) {
+    return tok_type(p) == OYL_TOK_BLOCK_MAP_VALUE && !in_flow(p) &&
+           p->current.start.line == key_end_line;
+}
+
 /* ── Parse block mapping ─────────────────────────────────── */
 
 static oyl_status parse_block_mapping(oyl_parser *p, ptrdiff_t map_indent) {
@@ -1189,7 +1197,9 @@ static oyl_status parse_block_mapping(oyl_parser *p, ptrdiff_t map_indent) {
             st = peek_token(p);
             if (st != OYL_OK) return st;
 
-            if (tok_type(p) == OYL_TOK_BLOCK_MAP_VALUE) {
+            /* its ':' on the line where it ends, as a scalar's ("{}\n: c"
+             * is an error) */
+            if (key_colon_follows(p, p->events[p->evt_len - 1].end.line)) {
                 st = parse_block_map_value(p, map_indent);
                 if (st != OYL_OK) return st;
                 continue;
@@ -1243,14 +1253,6 @@ static oyl_status parse_block_sequence(oyl_parser *p, ptrdiff_t seq_indent) {
     }
 
     return OYL_OK;
-}
-
-/* Is the current token an implicit key's ':'? It must be on the line where
- * the key ends: a ':' starting a later line belongs to an explicit "?"
- * entry or an enclosing mapping. */
-static inline bool key_colon_follows(oyl_parser *p, size_t key_end_line) {
-    return tok_type(p) == OYL_TOK_BLOCK_MAP_VALUE && !in_flow(p) &&
-           p->current.start.line == key_end_line;
 }
 
 /* ── Parse block node (may be scalar, collection, alias, flow) ── */
