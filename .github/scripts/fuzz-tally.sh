@@ -36,8 +36,9 @@ while :; do
         if jq -e --arg id "$id" 'has($id)' <<<"$runs" >/dev/null; then continue; fi
         n=0
         for job in $(curl -fsSL "${auth[@]}" "$api/actions/runs/$id/jobs" | jq -r '.jobs[].id'); do
-            k=$(curl -fsSL "${auth[@]}" "$api/actions/jobs/$job/logs" \
-                | grep -oE 'stat::number_of_executed_units: [0-9]+' \
+            # A job with no log or no counts (a run cancelled while it waited) adds 0
+            k=$( { curl -fsSL "${auth[@]}" "$api/actions/jobs/$job/logs" || true; } \
+                | { grep -oE 'stat::number_of_executed_units: [0-9]+' || true; } \
                 | awk '{ s += $2 } END { print s + 0 }')
             n=$((n + k))
         done
