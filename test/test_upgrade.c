@@ -579,6 +579,22 @@ static void test_documents(void) {
     r = upgrade(in, GOYAML2, 0);
     ASSERT(r.status == OYL_ERR_PARSE, "%YAML 1.2 is an error to go-yaml v2");
 
+    /* the first line starts past a byte order mark, as the parser has it
+     * (found by fuzzing: %YAML 1.1 was kept, so YAML 1.2 read 2e1 as a string) */
+    r = upgrade("\xEF\xBB\xBF%YAML 1.1\n---\n- 2e1\n", GOYAML2, OYL_UPGRADE_VALUES_KEEP_TEXT);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "\xEF\xBB\xBF---\n- 2e1\n") == 0 && r.nfixes == 1 &&
+           r.fixes[0].kind == OYL_FIX_DIRECTIVE && r.fixes[0].mark.offset == 3 && r.fixes[0].mark.col == 1,
+           "a byte order mark: %YAML 1.1 after it removed, the mark kept");
+    r = upgrade("\xEF\xBB\xBF" "t: [a,\nb]\n", PYYAML, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "\xEF\xBB\xBF" "t: [a,\n    b]\n") == 0,
+           "... a line indented past a column counted after it");
+    r = upgrade("\xEF\xBB\xBFx: 1\n<<: {x: 2}\n", GOYAML2, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "\xEF\xBB\xBF# x: 1\n<<: {x: 2}\n") == 0 && r.fixed == 1,
+           "... a pair on its line commented out");
+    r = upgrade("\xEF\xBB\xBFs: \"it\\'s\"\n", GOYAML2, 0);
+    ASSERT(r.status == OYL_OK && r.nfixes == 1 && r.fixes[0].mark.line == 1 && r.fixes[0].mark.col == 7,
+           "... a fix's column counted after it");
+
     r = upgrade("", PYYAML, 0);
     ASSERT(r.status == OYL_OK && r.out[0] == '\0' && r.nfixes == 0, "an empty stream");
     r = upgrade("a: [1\n", PYYAML, 0);
@@ -730,6 +746,9 @@ static void test_reads(void) {
         "- [%s, {%s: x}]\n",
         /* the empty key starts where the next line does (found by fuzzing) */
         "? ?\n%s: a\n<<: {%s: b}\n",
+        /* the first line starts past a byte order mark (found by fuzzing) */
+        "\xEF\xBB\xBF%%YAML 1.1\n---\n%s: a\n%s: b\n",
+        "\xEF\xBB\xBF%s: a\n<<: {%s: b}\n",
     };
     enum { NS = sizeof sp / sizeof *sp, NF = sizeof forms / sizeof *forms };
     unsigned long tried = 0, upgraded = 0, failed = 0;

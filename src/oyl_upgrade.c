@@ -174,7 +174,7 @@ static oyl_mark mark_at(const upgrade *u, size_t at) {
         size_t mid = (lo + hi) / 2;
         if (u->lines[mid] <= at) lo = mid; else hi = mid;
     }
-    return (oyl_mark){ at, lo + 1, at - u->lines[lo] + 1 };
+    return (oyl_mark){ at, lo + 1, at > u->lines[lo] ? at - u->lines[lo] + 1 : 1 };
 }
 
 static fix_rec *add_fix(upgrade *u, oyl_fix_kind kind, size_t start, size_t end, oyl_str after,
@@ -233,8 +233,15 @@ static bool covered(const upgrade *u, size_t start, size_t end) {
 
 /* ── The input's text ────────────────────────────────────── */
 
+/* Where the text starts: past a UTF-8 byte order mark, as the scanner
+ * takes it, so that the first line starts there */
+static size_t text_start(const upgrade *u) {
+    return u->len >= 3 && memcmp(u->in, "\xEF\xBB\xBF", 3) == 0 ? 3 : 0;
+}
+
 static size_t line_start(const upgrade *u, size_t at) {
-    while (at > 0 && u->in[at - 1] != '\n' && u->in[at - 1] != '\r') at--;
+    size_t begin = text_start(u);
+    while (at > begin && u->in[at - 1] != '\n' && u->in[at - 1] != '\r') at--;
     return at;
 }
 
@@ -1320,7 +1327,7 @@ static void directive(upgrade *u, size_t k) {
     const oyl_tree *t = u->docs[k].tree;
     int major, minor;
     if (!oyl_tree_yaml_version(t, &major, &minor) || major != 1 || minor != 1) return;
-    size_t at = k ? u->docs[k - 1].tree->base : 0, found = SIZE_MAX;
+    size_t at = k ? u->docs[k - 1].tree->base : text_start(u), found = SIZE_MAX;
     if (line_start(u, at) != at) at = past_break(u, line_end(u, at));
     while (at < t->base) {   /* the last %YAML line before the document */
         if (at + 5 < u->len && memcmp(u->in + at, "%YAML", 5) == 0 && oyl_is_blank((uint8_t)u->in[at + 5]))
@@ -1659,7 +1666,7 @@ static oyl_status run(upgrade *u, oyl_str *out) {
         if (u->in[i] == '\n' || (u->in[i] == '\r' && (i + 1 >= u->len || u->in[i + 1] != '\n'))) u->nlines++;
     u->lines = malloc(u->nlines * sizeof *u->lines);
     if (!u->lines) return OYL_ERR_MEMORY;
-    u->lines[0] = 0;
+    u->lines[0] = text_start(u);
     for (size_t i = 0, l = 1; i < u->len; i++)
         if (u->in[i] == '\n' || (u->in[i] == '\r' && (i + 1 >= u->len || u->in[i + 1] != '\n')))
             u->lines[l++] = i + 1;

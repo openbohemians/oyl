@@ -65,6 +65,15 @@
   go-yaml v2's merge, commenting out the pair before such a key left `{}`
   outside any mapping, and its check refused the output. In 1.4.0, and
   every release before it.
+- **`oyl_upgrade` starts a file's first line past its byte order mark,**
+  as the parser does. It looked for `%YAML 1.1` at the start of a line, so
+  after a byte order mark it kept the directive, and a YAML 1.2 reader
+  read the document as 1.1: `- 2e1`, go-yaml v2's 20, became a string,
+  with nothing reported. Where merges then read otherwise, its check
+  refused the output. On that line, too, a flow collection's lines were
+  indented 3 columns further than needed, a pair go-yaml v2's merge
+  overrides was left and reported instead of commented out, and each fix's
+  column was 3 too many. Fuzzing found it, in CI. In 1.4.0.
 - **`oyl_upgrade` keeps the line break after a block scalar it rewrites.**
   `a: !!int >\n  -0\nb: 1\n`, read as PyYAML's, became `a: !!int 0b: 1`: the
   rewrite took in the line break that ends a block scalar. Its check refused
