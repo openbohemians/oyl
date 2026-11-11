@@ -1,15 +1,19 @@
-# ClusterFuzzLite batch fuzzing under AddressSanitizer: every hour, an
-# hour on all of the runner's cores. A run that comes due while one is
-# going waits for it (the concurrency group), so the runs follow back to
-# back. The corpus carries over between runs (kept as GitHub
-# artifacts), so fuzzing accumulates; crashes are uploaded as artifacts.
-# Each sanitizer has its own workflow because both upload crashes under
-# the same artifact name, and a name must be unique within a run.
-# Pruning and coverage run in cflite_cron.yml.
+# ClusterFuzzLite batch fuzzing under AddressSanitizer: an hour on all of
+# the runner's cores. While the repository variable FUZZ_CHAIN is "on",
+# a run that passes starts the next (the Next job), so the runs follow
+# back to back; a failure stops the chain, and so does
+# `gh variable set FUZZ_CHAIN --body off`. The schedule, every 6 hours,
+# is the floor, and GitHub starts only some of those. A run that comes
+# due while one is going waits for it (the concurrency group). The corpus
+# carries over between runs (kept as GitHub artifacts), so fuzzing
+# accumulates; crashes are uploaded as artifacts. Each sanitizer has its
+# own workflow because both upload crashes under the same artifact name,
+# and a name must be unique within a run. Pruning and coverage run in
+# cflite_cron.yml.
 name: ClusterFuzzLite batch fuzzing (address)
 on:
   schedule:
-    - cron: '17 * * * *'
+    - cron: '17 */6 * * *'
   workflow_dispatch:
 permissions: read-all
 concurrency:
@@ -32,3 +36,14 @@ jobs:
         mode: 'batch'
         sanitizer: address
         parallel-fuzzing: true
+  Next:
+    needs: BatchFuzzing
+    if: vars.FUZZ_CHAIN == 'on'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write   # start the next run
+    steps:
+    - name: Start the next run
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: gh workflow run cflite_batch_address.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
