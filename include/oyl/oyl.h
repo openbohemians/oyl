@@ -434,7 +434,9 @@ OYL_API const oyl_schema *oyl_schema_yaml11(void);
  *  an int beyond 64 bits as a float, timestamps. An explicit !!float
  *  reads its scalar as if untagged and takes an int as a float, as
  *  go-yaml v2 does (!!float 017 is 15). Like go-yaml v2 it gives << no
- *  merge tag; merge keys are the parser's option (oyl_parser_set_merge). */
+ *  merge tag; merge keys are the parser's option (oyl_parser_set_merge).
+ *  As go-yaml v2 hands a program a timestamp as its text, a timestamp key
+ *  is the string key of its text: 2001-01-01 and "2001-01-01" are one. */
 OYL_API const oyl_schema *oyl_schema_goyaml2(void);
 
 /** The tag YAML gives timestamps. */
@@ -863,7 +865,8 @@ enum {
  *  merges applied and each key once, in the order keys first appear. The
  *  array is allocated in @p a. Scalar keys are equal when their tags and
  *  values are (YAML 1.2.2 §3.2.1.3), so 1 and "1" are two keys and 0x1
- *  and 1 one; collection keys are all kept. Returns OYL_ERR_PARSE under
+ *  and 1 one (with oyl_schema_goyaml2(), a timestamp is the string of its
+ *  text); collection keys are all kept. Returns OYL_ERR_PARSE under
  *  OYL_ENTRIES_STRICT for a repeated key, the error YAML makes it, with
  *  @p *n the first key written again; OYL_ERR_LIMIT if @p map merges and
  *  the document's merges were too costly to work out; OYL_ERR_MEMORY;

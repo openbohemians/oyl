@@ -735,6 +735,8 @@ static void test_reads(void) {
         "1:00", "010", "8", "0755", "1e3", "yes", "no", "on", "On", "off", "y", "n", "true",
         "false", "~", "null", ".inf", ".nan", "2001-01-01", "12:30:00", "<<", "'<<'", "=",
         "\"on\"", "'yes'", "\"1\"", "!!timestamp 2001-01-01", "!!timestamp 2001-1-1 1:1:1",
+        /* a timestamp's text as a string, and one only go-yaml v2 has (found by fuzzing) */
+        "\"2001-01-01\"", "! 2001-01-01", "2001-1-1",
     };
     static const char *const forms[] = {
         "%s: a\n%s: b\n",

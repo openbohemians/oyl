@@ -189,7 +189,7 @@ static inline uint64_t oyl_hash_u64(const oyl_hash_key *key, uint64_t x) {
 
 /* A scalar as mapping keys are compared: two are equal when their tags
  * and values are (YAML 1.2.2 §3.2.1.3), so 0x1 and 1 are one key, 1 and
- * "1" two. Inline: trees sort keys with these. */
+ * "1" two (but see oyl_key_tag for go-yaml v2's timestamps). Inline: trees sort keys with these. */
 typedef struct {
     oyl_str   tag;
     oyl_value value;
@@ -200,9 +200,16 @@ typedef struct {
  * plain (oyl_schema.c) */
 oyl_str oyl_schema_nonspecific(const oyl_schema *schema, oyl_str text);
 
-/* A key's tag from the scalar's (written, else resolved), and its text */
+/* A key's tag from the scalar's (written, else resolved), and its text.
+ * go-yaml v2 hands a program a timestamp as its text, so with its schema
+ * a timestamp key is the string key of that text: 2001-01-01 and
+ * "2001-01-01" are one. */
 static inline oyl_str oyl_key_tag(const oyl_schema *schema, oyl_str tag, oyl_str text) {
-    return tag.len == 1 && tag.data[0] == '!' ? oyl_schema_nonspecific(schema, text) : tag;
+    if (tag.len == 1 && tag.data[0] == '!') return oyl_schema_nonspecific(schema, text);
+    if (schema->tagged == OYL_TAGGED_GOYAML2 && tag.len == OYL_TAG_TIMESTAMP.len &&
+        memcmp(tag.data, OYL_TAG_TIMESTAMP.data, tag.len) == 0)
+        return schema->default_quoted_tag;
+    return tag;
 }
 
 /* The key for a scalar with tag `tag` (from oyl_key_tag) and `text`, given

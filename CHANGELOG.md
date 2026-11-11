@@ -74,6 +74,13 @@
   indented 3 columns further than needed, a pair go-yaml v2's merge
   overrides was left and reported instead of commented out, and each fix's
   column was 3 too many. Fuzzing found it, in CI. In 1.4.0.
+- **With go-yaml v2's types, a timestamp key is the string of its text,**
+  as go-yaml v2 hands a program a timestamp. `2001-01-01: a` and
+  `"2001-01-01": b` were two keys to `oyl_node_entries`, `oyl_node_get`,
+  `oyl_node_get_value` and merges, where go-yaml v2 has one, `b`. So
+  `oyl_upgrade`, reading a file as go-yaml v2's, refused one where a merge
+  brought such a pair together ("a bug in oyl_upgrade"); no file came out
+  wrong. Fuzzing found it, in CI. Since 1.2.0.
 - **`oyl_upgrade` keeps the line break after a block scalar it rewrites.**
   `a: !!int >\n  -0\nb: 1\n`, read as PyYAML's, became `a: !!int 0b: 1`: the
   rewrite took in the line break that ends a block scalar. Its check refused

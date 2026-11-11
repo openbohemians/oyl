@@ -438,6 +438,12 @@ static const char *KEYS_YAML11 =
     "s:\n  1:00: a\n  60: b\n"
     "t:\n  ! 1: a\n  1: b\n  ! \"2\": c\n  \"2\": d\n";
 
+/* timestamps as keys, by each reader's types */
+static const char *KEYS_TIMESTAMPS =
+    "t:\n  2001-01-01: a\n  \"2001-01-01\": b\n  ! 2001-1-1: c\n  2001-1-1: d\n"
+    "  !!timestamp 2001-01-02: e\n  '2001-01-02': f\n"
+    "u:\n  2001-01-01: x\n";
+
 static oyl_status entries_status(const doc *x, const char *key, unsigned flags) {
     oyl_arena *a = oyl_arena_new(1024);
     const oyl_pair *pairs;
@@ -542,6 +548,23 @@ static void test_keys(void) {
     ASSERT(str_is(text_at(&x, "b.on"), "c"), "on is true in YAML 1.1");
     ASSERT(str_is(text_by_value(&x, "b", BOOL(true)), "c"), "true in YAML 1.1");
     ASSERT(entries_agree(&x), "entries and lookups agree on YAML 1.1's keys");
+    unload(&x);
+
+    /* go-yaml v2 hands a program a timestamp as its text, so as keys a
+     * timestamp and the string it is written as are one (found by
+     * fuzzing); to PyYAML a date isn't a string */
+    x = load_with(KEYS_TIMESTAMPS, oyl_dialect_goyaml2());
+    check_entries(&x, "t", 0, "2001-01-01=b 2001-1-1=d 2001-01-02=f");
+    ASSERT(entries_status(&x, "t", OYL_ENTRIES_STRICT) == OYL_ERR_PARSE, "a timestamp and its text repeat");
+    ASSERT(str_is(text_at(&x, "t.2001-1-1"), "d"), "2001-1-1 by its text, in go-yaml v2");
+    ASSERT(str_is(text_by_value(&x, "u", (oyl_value){ .kind = OYL_VALUE_STR, .as = { .s = S("2001-01-01") } }), "x"),
+           "the string 2001-01-01 finds the timestamp, in go-yaml v2");
+    ASSERT(entries_agree(&x), "entries and lookups agree on go-yaml v2's timestamps");
+    unload(&x);
+    x = load_with(KEYS_TIMESTAMPS, oyl_dialect_yaml11());
+    check_entries(&x, "t", 0, "2001-01-01=a 2001-01-01=b 2001-1-1=d 2001-01-02=e 2001-01-02=f");
+    ASSERT(str_is(text_by_value(&x, "u", (oyl_value){ .kind = OYL_VALUE_STR, .as = { .s = S("2001-01-01") } }), "<none>"),
+           "the string 2001-01-01 isn't the date, in YAML 1.1");
     unload(&x);
 
     /* and the failsafe schema's are all strings */
