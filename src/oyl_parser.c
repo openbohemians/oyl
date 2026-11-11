@@ -2477,7 +2477,7 @@ static oyl_status event_key(const oyl_parser *p, const oyl_event *evt, oyl_key *
     oyl_value v;
     oyl_status st = oyl_schema_value_of(s, evt->value, evt->scalar_style, evt->tag, &v);
     if (st == OYL_ERR_MEMORY) return st;
-    oyl_key_make(k, oyl_key_tag(s, tag, evt->value), evt->value, st, &v);
+    oyl_key_of(k, s, tag, evt->value, st, &v);
     return OYL_OK;
 }
 

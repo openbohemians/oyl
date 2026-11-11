@@ -737,6 +737,8 @@ static void test_reads(void) {
         "\"on\"", "'yes'", "\"1\"", "!!timestamp 2001-01-01", "!!timestamp 2001-1-1 1:1:1",
         /* a timestamp's text as a string, and one only go-yaml v2 has (found by fuzzing) */
         "\"2001-01-01\"", "! 2001-01-01", "2001-1-1",
+        /* a scalar its tag rejects (found by fuzzing) */
+        "!!timestamp n",
     };
     static const char *const forms[] = {
         "%s: a\n%s: b\n",

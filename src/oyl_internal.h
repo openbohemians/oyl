@@ -189,7 +189,7 @@ static inline uint64_t oyl_hash_u64(const oyl_hash_key *key, uint64_t x) {
 
 /* A scalar as mapping keys are compared: two are equal when their tags
  * and values are (YAML 1.2.2 §3.2.1.3), so 0x1 and 1 are one key, 1 and
- * "1" two (but see oyl_key_tag for go-yaml v2's timestamps). Inline: trees sort keys with these. */
+ * "1" two (but see oyl_key_of for go-yaml v2's timestamps). Inline: trees sort keys with these. */
 typedef struct {
     oyl_str   tag;
     oyl_value value;
@@ -200,16 +200,9 @@ typedef struct {
  * plain (oyl_schema.c) */
 oyl_str oyl_schema_nonspecific(const oyl_schema *schema, oyl_str text);
 
-/* A key's tag from the scalar's (written, else resolved), and its text.
- * go-yaml v2 hands a program a timestamp as its text, so with its schema
- * a timestamp key is the string key of that text: 2001-01-01 and
- * "2001-01-01" are one. */
+/* A key's tag from the scalar's (written, else resolved), and its text */
 static inline oyl_str oyl_key_tag(const oyl_schema *schema, oyl_str tag, oyl_str text) {
-    if (tag.len == 1 && tag.data[0] == '!') return oyl_schema_nonspecific(schema, text);
-    if (schema->tagged == OYL_TAGGED_GOYAML2 && tag.len == OYL_TAG_TIMESTAMP.len &&
-        memcmp(tag.data, OYL_TAG_TIMESTAMP.data, tag.len) == 0)
-        return schema->default_quoted_tag;
-    return tag;
+    return tag.len == 1 && tag.data[0] == '!' ? oyl_schema_nonspecific(schema, text) : tag;
 }
 
 /* The key for a scalar with tag `tag` (from oyl_key_tag) and `text`, given
@@ -223,6 +216,21 @@ static inline void oyl_key_make(oyl_key *k, oyl_str tag, oyl_str text, oyl_statu
     /* one int, whichever kind a parser gave it */
     if (k->value.kind == OYL_VALUE_UINT && k->value.as.u <= INT64_MAX)
         k->value = (oyl_value){ .kind = OYL_VALUE_INT, .as = { .i = (int64_t)k->value.as.u } };
+}
+
+/* The key for a scalar with tag `tag` (written, else resolved) and `text`
+ * in `schema`, given the status and value oyl_schema_value_of gave it: as
+ * oyl_key_make makes it with oyl_key_tag's tag. go-yaml v2 hands a program
+ * a timestamp as its text, so with its schema a timestamp key is the
+ * string key of that text: 2001-01-01 and "2001-01-01" are one. A scalar
+ * !!timestamp rejects, which go-yaml v2 refuses, keeps its tag. */
+static inline void oyl_key_of(oyl_key *k, const oyl_schema *schema, oyl_str tag, oyl_str text,
+                              oyl_status st, const oyl_value *v) {
+    tag = oyl_key_tag(schema, tag, text);
+    if (st == OYL_OK && schema->tagged == OYL_TAGGED_GOYAML2 && tag.len == OYL_TAG_TIMESTAMP.len &&
+        memcmp(tag.data, OYL_TAG_TIMESTAMP.data, tag.len) == 0)
+        tag = schema->default_quoted_tag;
+    oyl_key_make(k, tag, text, st, v);
 }
 
 static inline int oyl_bytes_cmp(oyl_str a, oyl_str b) {

@@ -442,7 +442,8 @@ static const char *KEYS_YAML11 =
 static const char *KEYS_TIMESTAMPS =
     "t:\n  2001-01-01: a\n  \"2001-01-01\": b\n  ! 2001-1-1: c\n  2001-1-1: d\n"
     "  !!timestamp 2001-01-02: e\n  '2001-01-02': f\n"
-    "u:\n  2001-01-01: x\n";
+    "u:\n  2001-01-01: x\n"
+    "v:\n  !!timestamp n: a\n  \"n\": b\n";
 
 static oyl_status entries_status(const doc *x, const char *key, unsigned flags) {
     oyl_arena *a = oyl_arena_new(1024);
@@ -559,6 +560,8 @@ static void test_keys(void) {
     ASSERT(str_is(text_at(&x, "t.2001-1-1"), "d"), "2001-1-1 by its text, in go-yaml v2");
     ASSERT(str_is(text_by_value(&x, "u", (oyl_value){ .kind = OYL_VALUE_STR, .as = { .s = S("2001-01-01") } }), "x"),
            "the string 2001-01-01 finds the timestamp, in go-yaml v2");
+    /* not a scalar !!timestamp rejects, which go-yaml v2 refuses (found by fuzzing) */
+    check_entries(&x, "v", 0, "n=a n=b");
     ASSERT(entries_agree(&x), "entries and lookups agree on go-yaml v2's timestamps");
     unload(&x);
     x = load_with(KEYS_TIMESTAMPS, oyl_dialect_yaml11());

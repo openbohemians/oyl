@@ -682,7 +682,7 @@ static oyl_key key_of(const oyl_tree *t, uint32_t n) {
     oyl_value v;
     oyl_status st = oyl_node_value(t, s, &v);
     oyl_key k;
-    oyl_key_make(&k, oyl_key_tag(t->schema, oyl_node_tag(t, s), text), text, st, &v);
+    oyl_key_of(&k, t->schema, oyl_node_tag(t, s), text, st, &v);
     return k;
 }
 

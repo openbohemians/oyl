@@ -577,7 +577,7 @@ static bool key_of(const oyl_tree *t, uint32_t k, oyl_key *key) {
     oyl_status st = oyl_node_value(t, k, &v);
     if (st == OYL_ERR_MEMORY) return false;
     oyl_str text = oyl_node_text(t, k);
-    oyl_key_make(key, oyl_key_tag(t->schema, oyl_node_tag(t, k), text), text, st, &v);
+    oyl_key_of(key, t->schema, oyl_node_tag(t, k), text, st, &v);
     return true;
 }
 
