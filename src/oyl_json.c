@@ -436,45 +436,17 @@ static bool put_json_string(buffer *b, const char *str, size_t n) {
 
 /* ── Scalars ─────────────────────────────────────────────── */
 
-/* A base64 digit's value, or -1 (computed, not a table filled on first
- * use, which threads converting at once would race on) */
-static int base64_digit(unsigned char c) {
-    if (c >= 'A' && c <= 'Z') return c - 'A';
-    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-    if (c >= '0' && c <= '9') return c - '0' + 52;
-    return c == '+' ? 62 : c == '/' ? 63 : -1;
-}
-
 /* Go's base64.StdEncoding.DecodeString, which skips \r and \n: 1 decoded,
  * 0 not base64, -1 out of memory */
 static int base64_decode(oyl_str in, buffer *out) {
     out->len = 0;
-    int quad[4], q = 0, pad = 0;
-    for (size_t i = 0; i < in.len; i++) {
-        unsigned char c = (unsigned char)in.data[i];
-        if (c == '\r' || c == '\n') continue;
-        if (pad) {   /* only padding may follow padding, and at most two */
-            if (c != '=' || q == 0 || ++pad > 2) return 0;
-            quad[q++] = 0;
-        } else if (c == '=') {
-            if (q < 2) return 0;
-            pad = 1;
-            quad[q++] = 0;
-        } else {
-            int v = base64_digit(c);
-            if (v < 0) return 0;
-            quad[q++] = v;
-        }
-        if (q == 4) {
-            unsigned char bytes[3] = { (unsigned char)(quad[0] << 2 | quad[1] >> 4),
-                                       (unsigned char)(quad[1] << 4 | quad[2] >> 2),
-                                       (unsigned char)(quad[2] << 6 | quad[3]) };
-            if (!buf_put(out, bytes, 3 - (size_t)pad)) return -1;
-            q = 0;
-            if (pad) pad = 3;   /* the end: nothing may follow */
-        }
-    }
-    return q == 0;   /* 1 or 0 */
+    if (!oyl_base64_check(in)) return 0;
+    unsigned char bytes[3];
+    size_t at = 0;
+    int n;
+    while ((n = oyl_base64_next(in, &at, bytes)) > 0)
+        if (!buf_put(out, bytes, (size_t)n)) return -1;
+    return 1;
 }
 
 /* A scalar node's value, with a !!binary decoded into d->bin */

@@ -189,11 +189,40 @@ static inline uint64_t oyl_hash_u64(const oyl_hash_key *key, uint64_t x) {
 
 /* A scalar as mapping keys are compared: two are equal when their tags
  * and values are (YAML 1.2.2 §3.2.1.3), so 0x1 and 1 are one key, 1 and
- * "1" two (but see oyl_key_of for go-yaml v2's timestamps). Inline: trees sort keys with these. */
+ * "1" two (but see oyl_key_of for go-yaml v2's). Inline: trees sort keys with these. */
 typedef struct {
     oyl_str   tag;
     oyl_value value;
 } oyl_key;
+
+/* A key's value go-yaml v2 makes of a !!binary scalar: the string of the
+ * bytes it decodes to. Its as.s is the base64, valid (oyl_base64_check),
+ * decoded as keys are compared and hashed, so that a lookup allocates
+ * nothing. Only keys have it (oyl_goyaml2_key), and it counts as text,
+ * OYL_VALUE_STR. Far past the kinds, which may be added at the end. */
+#define OYL_VALUE_BASE64 ((oyl_value_kind)0x7f)
+
+/* A key value's kind as keys are ordered */
+static inline oyl_value_kind oyl_key_kind(oyl_value_kind kind) {
+    return kind == OYL_VALUE_BASE64 ? OYL_VALUE_STR : kind;
+}
+
+/* Is `in` base64 as Go's base64.StdEncoding.DecodeString takes it, padded,
+ * \r and \n skipped (oyl_schema.c)? */
+bool oyl_base64_check(oyl_str in);
+/* The next bytes base64 `in`, checked, decodes to, from *at on: up to 3,
+ * into out; how many, 0 at its end */
+int oyl_base64_next(oyl_str in, size_t *at, unsigned char out[3]);
+/* Order two keys' text, one of them OYL_VALUE_BASE64: by its bytes */
+int oyl_key_text_cmp(const oyl_value *x, const oyl_value *y);
+/* Hash the bytes base64 `b64`, checked, decodes to */
+void oyl_hash_base64(oyl_hasher *h, oyl_str b64);
+/* go-yaml v2's key for a scalar tagged `tag` (from oyl_key_tag) and `text`
+ * that its tag accepts, where it isn't the tag and value: a timestamp, or
+ * a scalar of a tag go-yaml v2 doesn't resolve, is the string of its text,
+ * and a !!binary one of the bytes it decodes to. False otherwise: for a
+ * !!binary that isn't base64, which go-yaml v2 refuses, too. */
+bool oyl_goyaml2_key(oyl_key *k, const oyl_schema *schema, oyl_str tag, oyl_str text);
 
 /* The tag of a scalar tagged !, the non-specific tag: a string, as YAML
  * 1.2 has it, or with PyYAML's schema the tag `text` resolves to as if
@@ -220,16 +249,16 @@ static inline void oyl_key_make(oyl_key *k, oyl_str tag, oyl_str text, oyl_statu
 
 /* The key for a scalar with tag `tag` (written, else resolved) and `text`
  * in `schema`, given the status and value oyl_schema_value_of gave it: as
- * oyl_key_make makes it with oyl_key_tag's tag. go-yaml v2 hands a program
- * a timestamp as its text, so with its schema a timestamp key is the
- * string key of that text: 2001-01-01 and "2001-01-01" are one. A scalar
- * !!timestamp rejects, which go-yaml v2 refuses, keeps its tag. */
+ * oyl_key_make makes it with oyl_key_tag's tag. With go-yaml v2's schema,
+ * the key go-yaml v2 hands a program (oyl_goyaml2_key): a timestamp is
+ * the string of its text, so 2001-01-01 and "2001-01-01" are one key, and
+ * so are !foo x and x, and !!binary eA== and x. A scalar its tag rejects,
+ * which go-yaml v2 refuses, keeps its tag. */
 static inline void oyl_key_of(oyl_key *k, const oyl_schema *schema, oyl_str tag, oyl_str text,
                               oyl_status st, const oyl_value *v) {
     tag = oyl_key_tag(schema, tag, text);
-    if (st == OYL_OK && schema->tagged == OYL_TAGGED_GOYAML2 && tag.len == OYL_TAG_TIMESTAMP.len &&
-        memcmp(tag.data, OYL_TAG_TIMESTAMP.data, tag.len) == 0)
-        tag = schema->default_quoted_tag;
+    if (st == OYL_OK && schema->tagged == OYL_TAGGED_GOYAML2 && oyl_goyaml2_key(k, schema, tag, text))
+        return;
     oyl_key_make(k, tag, text, st, v);
 }
 
@@ -258,7 +287,7 @@ static inline void oyl_key_hash_tag(oyl_hasher *h, const oyl_hash_key *hk, oyl_s
 }
 
 static inline uint64_t oyl_key_hash_value(oyl_hasher *h, const oyl_value *v) {
-    unsigned char kind = (unsigned char)v->kind;
+    unsigned char kind = (unsigned char)oyl_key_kind(v->kind);
     oyl_hash_bytes(h, &kind, 1);
     uint64_t x;
     switch (v->kind) {
@@ -277,7 +306,8 @@ static inline uint64_t oyl_key_hash_value(oyl_hasher *h, const oyl_value *v) {
         break;
     }
     default:   /* text: last, so its length goes without saying */
-        oyl_hash_bytes(h, v->as.s.data, v->as.s.len);
+        if (v->kind == OYL_VALUE_BASE64) oyl_hash_base64(h, v->as.s);
+        else oyl_hash_bytes(h, v->as.s.data, v->as.s.len);
         return oyl_hash_end(h);
     }
     oyl_hash_bytes(h, &x, sizeof x);
@@ -294,8 +324,9 @@ static inline uint64_t oyl_key_hash(const oyl_hash_key *hk, const oyl_key *k) {
 static inline int oyl_key_cmp(const oyl_key *a, const oyl_key *b) {
     if (!oyl_key_tag_eq(a->tag, b->tag)) return oyl_bytes_cmp(a->tag, b->tag);
     const oyl_value *x = &a->value, *y = &b->value;
-    if (x->kind != y->kind) return x->kind < y->kind ? -1 : 1;
-    switch (x->kind) {
+    oyl_value_kind kx = oyl_key_kind(x->kind), ky = oyl_key_kind(y->kind);
+    if (kx != ky) return kx < ky ? -1 : 1;
+    switch (kx) {
     case OYL_VALUE_NULL:  return 0;
     case OYL_VALUE_BOOL:  return (x->as.b > y->as.b) - (x->as.b < y->as.b);
     case OYL_VALUE_INT:   return (x->as.i > y->as.i) - (x->as.i < y->as.i);
@@ -306,7 +337,9 @@ static inline int oyl_key_cmp(const oyl_key *a, const oyl_key *b) {
         if (nx || ny) return nx - ny;
         return (x->as.f > y->as.f) - (x->as.f < y->as.f);
     }
-    default:              return oyl_bytes_cmp(x->as.s, y->as.s);   /* text */
+    default:   /* text */
+        if (x->kind == OYL_VALUE_BASE64 || y->kind == OYL_VALUE_BASE64) return oyl_key_text_cmp(x, y);
+        return oyl_bytes_cmp(x->as.s, y->as.s);
     }
 }
 

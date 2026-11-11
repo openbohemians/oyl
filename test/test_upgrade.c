@@ -739,6 +739,11 @@ static void test_reads(void) {
         "\"2001-01-01\"", "! 2001-01-01", "2001-1-1",
         /* a scalar its tag rejects (found by fuzzing) */
         "!!timestamp n",
+        /* keys go-yaml v2 reads as their text, a tag it doesn't resolve
+         * aside, or as the bytes !!binary decodes to: on, 1, <<; and base64
+         * it refuses */
+        "!foo on", "!foo 1", "!foo <<", "!foo 2001-01-01", "!!merge on", "!!binary b24=",
+        "!!binary MQ==", "!!binary PDw=", "!!binary b24",
     };
     static const char *const forms[] = {
         "%s: a\n%s: b\n",

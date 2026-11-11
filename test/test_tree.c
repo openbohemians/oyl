@@ -445,6 +445,14 @@ static const char *KEYS_TIMESTAMPS =
     "u:\n  2001-01-01: x\n"
     "v:\n  !!timestamp n: a\n  \"n\": b\n";
 
+/* keys of tags go-yaml v2 doesn't resolve, and !!binary ones */
+static const char *KEYS_GOYAML2_TAGS =
+    "l:\n  !foo x: a\n  x: b\n  !<tag:example.com,2000:y> y: c\n  'y': d\n  !!set z: e\n  z: f\n"
+    "b:\n  !!binary aGk=: a\n  hi: b\n  !!binary aGl=: c\n  ? !!binary |\n    aGVs\n    bG8=\n  : d\n"
+    "  hello: e\n"
+    "n:\n  !!binary aGk: a\n  aGk: b\n  !!binary aG k=: c\n  !!binary aGk=aGk=: d\n  !!binary '': e\n  '': f\n"
+    "s:\n  !!str x: a\n  x: b\n  !foo 1: c\n  1: d\n  !!int 1: e\n";
+
 static oyl_status entries_status(const doc *x, const char *key, unsigned flags) {
     oyl_arena *a = oyl_arena_new(1024);
     const oyl_pair *pairs;
@@ -563,6 +571,29 @@ static void test_keys(void) {
     /* not a scalar !!timestamp rejects, which go-yaml v2 refuses (found by fuzzing) */
     check_entries(&x, "v", 0, "n=a n=b");
     ASSERT(entries_agree(&x), "entries and lookups agree on go-yaml v2's timestamps");
+    unload(&x);
+
+    /* go-yaml v2 hands a program a scalar of a tag it doesn't resolve as
+     * its text, and a !!binary one as the bytes it decodes to, so as keys
+     * they're strings; a !!binary that isn't base64, which go-yaml v2
+     * refuses, keeps its tag. YAML 1.1's keep the tags. */
+    x = load_with(KEYS_GOYAML2_TAGS, oyl_dialect_goyaml2());
+    check_entries(&x, "l", 0, "x=b y=d z=f");
+    check_entries(&x, "b", 0, "aGl==c hello=e");
+    check_entries(&x, "n", 0, "aGk=a aGk=b aG k==c aGk=aGk==d =f");
+    check_entries(&x, "s", 0, "x=b 1=c 1=e");
+    ASSERT(entries_status(&x, "l", OYL_ENTRIES_STRICT) == OYL_ERR_PARSE, "!foo x and x repeat");
+    ASSERT(str_is(text_at(&x, "b.hello"), "e"), "hello finds the bytes !!binary aGVsbG8= decodes to");
+    ASSERT(str_is(text_at(&x, "b.hi"), "c"), "hi finds !!binary aGl=, its trailing bits aside, as Go's");
+    ASSERT(str_is(text_by_value(&x, "b", (oyl_value){ .kind = OYL_VALUE_STR, .as = { .s = S("hi") } }), "c"),
+           "the string hi finds the !!binary key");
+    ASSERT(str_is(text_by_value(&x, "l", (oyl_value){ .kind = OYL_VALUE_STR, .as = { .s = S("x") } }), "b"),
+           "the string x finds !foo x");
+    ASSERT(entries_agree(&x), "entries and lookups agree on go-yaml v2's tags");
+    unload(&x);
+    x = load_with(KEYS_GOYAML2_TAGS, oyl_dialect_yaml11());
+    check_entries(&x, "l", 0, "x=a x=b y=c y=d z=e z=f");
+    check_entries(&x, "b", 0, "aGk==a hi=b aGl==c aGVs\nbG8=\n=d hello=e");
     unload(&x);
     x = load_with(KEYS_TIMESTAMPS, oyl_dialect_yaml11());
     check_entries(&x, "t", 0, "2001-01-01=a 2001-01-01=b 2001-1-1=d 2001-01-02=e 2001-01-02=f");

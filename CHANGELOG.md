@@ -81,6 +81,17 @@
   `oyl_upgrade`, reading a file as go-yaml v2's, refused one where a merge
   brought such a pair together ("a bug in oyl_upgrade"); no file came out
   wrong. Fuzzing found it, in CI. Since 1.2.0.
+- **With go-yaml v2's types, a key of a tag go-yaml v2 doesn't resolve is
+  the string of its text, and a `!!binary` key the string of its bytes,**
+  as go-yaml v2 hands them to a program. `!foo x: a` and `x: b` were two
+  keys to `oyl_node_entries`, `oyl_node_get`, `oyl_node_get_value` and
+  merges, as were `!!binary aGk=: a` and `hi: b`, where go-yaml v2 has one,
+  `b` (and `UnmarshalStrict` refuses the file). `oyl_upgrade`, reading a
+  file as go-yaml v2's, now reports such a pair, as no spelling keeps the
+  tag and makes the two one key in YAML 1.2, and keeps a rewrite from
+  making the key equal to another to go-yaml v2. The fuzzer can't find
+  this, as it reads with Oyl's own types; found by reading go-yaml v2's
+  decoder. Since 1.2.0.
 - **`oyl_upgrade` keeps the line break after a block scalar it rewrites.**
   `a: !!int >\n  -0\nb: 1\n`, read as PyYAML's, became `a: !!int 0b: 1`: the
   rewrite took in the line break that ends a block scalar. Its check refused

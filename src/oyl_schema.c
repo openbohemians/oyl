@@ -1004,6 +1004,116 @@ oyl_str oyl_schema_nonspecific(const oyl_schema *schema, oyl_str text) {
                                                : schema->default_quoted_tag;
 }
 
+/* ── go-yaml v2's keys ───────────────────────────────────── */
+
+/* A base64 digit's value, or -1 (computed, not a table filled on first
+ * use, which threads at once would race on) */
+static int base64_digit(unsigned char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    return c == '+' ? 62 : c == '/' ? 63 : -1;
+}
+
+static bool base64_break(char c) { return c == '\r' || c == '\n'; }
+
+/* As Go's decodeQuantum: four symbols at a time; = only after two or
+ * three, filling the four, and then nothing but line breaks */
+bool oyl_base64_check(oyl_str in) {
+    int q = 0;   /* the symbols of this four so far */
+    for (size_t i = 0; i < in.len; i++) {
+        char c = in.data[i];
+        if (base64_break(c)) continue;
+        if (c != '=') {
+            if (base64_digit((unsigned char)c) < 0) return false;
+            q = (q + 1) & 3;
+            continue;
+        }
+        if (q < 2) return false;
+        for (int more = 3 - q; more > 0; more--) {   /* the rest of the padding */
+            while (++i < in.len && base64_break(in.data[i])) {}
+            if (i >= in.len || in.data[i] != '=') return false;
+        }
+        while (++i < in.len)
+            if (!base64_break(in.data[i])) return false;
+        return true;
+    }
+    return q == 0;
+}
+
+int oyl_base64_next(oyl_str in, size_t *at, unsigned char out[3]) {
+    int quad[4], q = 0, pad = 0;
+    size_t i = *at;
+    while (q < 4 && i < in.len) {
+        unsigned char c = (unsigned char)in.data[i++];
+        if (base64_break((char)c)) continue;
+        if (c == '=') {
+            pad++;
+            quad[q++] = 0;
+        } else {
+            quad[q++] = base64_digit(c);
+        }
+    }
+    *at = i;
+    if (q < 4) return 0;   /* checked: only line breaks were left */
+    out[0] = (unsigned char)(quad[0] << 2 | quad[1] >> 4);
+    out[1] = (unsigned char)(quad[1] << 4 | quad[2] >> 2);
+    out[2] = (unsigned char)(quad[2] << 6 | quad[3]);
+    return 3 - pad;
+}
+
+/* A key's text a byte at a time, decoding base64 */
+typedef struct {
+    oyl_str       s;
+    bool          b64;
+    size_t        at;
+    unsigned char buf[3];
+    int           n, i;
+} text_bytes;
+
+static int next_byte(text_bytes *t) {
+    if (!t->b64) return t->at < t->s.len ? (unsigned char)t->s.data[t->at++] : -1;
+    if (t->i == t->n) {
+        t->n = oyl_base64_next(t->s, &t->at, t->buf);
+        t->i = 0;
+        if (t->n == 0) return -1;
+    }
+    return t->buf[t->i++];
+}
+
+/* As oyl_bytes_cmp orders bytes: the first that differ, else the shorter */
+int oyl_key_text_cmp(const oyl_value *x, const oyl_value *y) {
+    text_bytes a = { .s = x->as.s, .b64 = x->kind == OYL_VALUE_BASE64 };
+    text_bytes b = { .s = y->as.s, .b64 = y->kind == OYL_VALUE_BASE64 };
+    for (;;) {
+        int p = next_byte(&a), q = next_byte(&b);
+        if (p != q) return p < q ? -1 : 1;
+        if (p < 0) return 0;
+    }
+}
+
+void oyl_hash_base64(oyl_hasher *h, oyl_str b64) {
+    unsigned char buf[3];
+    size_t at = 0;
+    int n;
+    while ((n = oyl_base64_next(b64, &at, buf)) > 0) oyl_hash_bytes(h, buf, (size_t)n);
+}
+
+/* go-yaml v2 resolves these tags (resolvableTag); any other's scalar it
+ * hands a program as its text, but for !!binary's, which it decodes */
+bool oyl_goyaml2_key(oyl_key *k, const oyl_schema *schema, oyl_str tag, oyl_str text) {
+    if (!tag.len || str_eq(tag, OYL_TAG_STR) || str_eq(tag, OYL_TAG_BOOL) || str_eq(tag, OYL_TAG_INT) ||
+        str_eq(tag, OYL_TAG_FLOAT) || str_eq(tag, OYL_TAG_NULL))
+        return false;
+    oyl_value_kind kind = OYL_VALUE_STR;   /* a timestamp's text, too */
+    if (str_eq(tag, OYL_TAG_BINARY)) {
+        if (!oyl_base64_check(text)) return false;
+        kind = OYL_VALUE_BASE64;
+    }
+    *k = (oyl_key){ schema->default_quoted_tag, { .kind = kind, .as = { .s = text } } };
+    return true;
+}
+
 int oyl_schema_rule_value(const oyl_schema *schema, int rule, oyl_str text, oyl_value *out) {
     return rule_parse(&schema->rules[rule], text, out);
 }

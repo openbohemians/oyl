@@ -377,7 +377,7 @@ oyl_str tag = oyl_schema_resolve(oyl_schema_core(), OYL_STR_LIT("42"),
 | `oyl_schema_json()` | `null`, `true`/`false`, integers, floats. |
 | `oyl_schema_core()` | JSON + `Null`/`NULL`/`~`, `True`/`TRUE`, `0x`/`0o` ints. |
 | `oyl_schema_yaml11()` | YAML 1.1's types as PyYAML reads them: `yes`/`no`/`on`/`off` booleans (not `y`/`n`), `0b` binary, `0`-octal, base 60, underscores, floats with a dot, timestamps, `<<` as `!!merge` and `=` as `!!value`; an explicit tag reads its scalar as PyYAML's constructor does (`!!float 1` is 1.0), and a timestamp that doesn't exist (`2001-02-29`) has no value (`OYL_ERR_PARSE`), as PyYAML refuses it. |
-| `oyl_schema_goyaml2()` | go-yaml v2's types, as Kubernetes reads YAML: `yes`/`no`/`on`/`off`/`y`/`n` booleans, `0777` octal, `0b` binary (`0b-101` too), underscores in numbers, an int beyond 64 bits as a float, timestamps; an explicit `!!float` takes an int, as in go-yaml v2 (`!!float 017` is 15). A timestamp key is the string of its text, as go-yaml v2 hands it to a program: `2001-01-01` and `"2001-01-01"` are one key. |
+| `oyl_schema_goyaml2()` | go-yaml v2's types, as Kubernetes reads YAML: `yes`/`no`/`on`/`off`/`y`/`n` booleans, `0777` octal, `0b` binary (`0b-101` too), underscores in numbers, an int beyond 64 bits as a float, timestamps; an explicit `!!float` takes an int, as in go-yaml v2 (`!!float 017` is 15). Keys are what go-yaml v2 hands a program: a timestamp, or a scalar of a tag go-yaml v2 doesn't resolve, is the string of its text, and a `!!binary` one the string of the bytes it decodes to, so `2001-01-01` and `"2001-01-01"` are one key, as are `!foo x` and `x`, and `!!binary eA==` and `x`. |
 
 The JSON preset shares Core's number rules, so it accepts more than YAML
 1.2's JSON schema (`+1`, `01`, `0x1F`, `.inf`), and other plain scalars
@@ -656,9 +656,13 @@ input, except text in the pool (`oyl_tree_pool`): what the parser rewrote
 `oyl_node_get` and `oyl_node_at` follow an alias given as the collection.
 Keys are equal when their tags and values are, as YAML compares them
 (YAML 1.2.2 §3.2.1.3): `0x50` and `80` are one key, `80` and `"80"` two,
-and so are `true` and `True` one. With go-yaml v2's types a timestamp is
-the string of its text, as go-yaml v2 hands it to a program, so
-`2001-01-01` and `"2001-01-01"` are one key too. `oyl_node_get` looks `key` up as a
+and so are `true` and `True` one. With go-yaml v2's types a key is what
+go-yaml v2 hands a program: a timestamp, or a scalar of a tag go-yaml v2
+doesn't resolve (not `!!str`, `!!bool`, `!!int`, `!!float`, `!!null` or
+`!!timestamp`), is the string of its text, and a `!!binary` one the string
+of the bytes it decodes to. So `2001-01-01` and `"2001-01-01"` are one key
+too, as are `!foo x` and `x`, and `!!binary eA==` and `x`; a `!!binary`
+that isn't base64, which go-yaml v2 refuses, keeps its tag. `oyl_node_get` looks `key` up as a
 string, and when the mapping has no such string, as the key a scalar
 written `key` is, so `"80"` finds `80`. `oyl_node_get_value` takes the
 key as an `oyl_value`, a scalar of its kind's tag (`!!null`, `!!bool`,

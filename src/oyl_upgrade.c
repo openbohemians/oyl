@@ -900,8 +900,11 @@ static uint32_t push_merged(const oyl_tree *t, uint32_t m, uint32_t walk, uint32
 /* A key's readings, as numbers */
 typedef struct {
     uint32_t src[2], core;   /* NO_READING: its tag rejects it, or no such reader */
-    uint32_t after;          /* what it's rewritten to, if it is */
+    uint32_t after;          /* what it's rewritten to, if it is, */
+    uint32_t after_src[2];   /* and that as reader r reads a key */
     bool     known;
+    uint8_t  folded;         /* go-yaml v2 reads it as its text (1) or bytes (2), its tag aside */
+    bool     joined;         /* reported by joined_keys */
 } key_nums;
 
 /* A reading, and the last pass over a mapping that met it */
@@ -913,6 +916,9 @@ typedef struct {
     uint64_t from[2];   /* the last pass a key was read so by reader r */
     uint32_t to[2];     /* what that key will read as, to reader r */
     bool     split[2];  /* and another read so will read otherwise */
+    uint64_t jpass;     /* the last mapping joined_keys met it in, */
+    uint32_t jout;      /* what the first key read so there reads as in YAML 1.2, */
+    uint32_t jkey;      /* and that key */
 } read_num;
 
 typedef struct {
@@ -924,7 +930,8 @@ typedef struct {
     size_t              tcap;
     key_nums           *by_node;
     uint32_t           *seen, *stack, *list;
-    uint64_t            pass;
+    uint64_t            pass, jpass;
+    int                 goyaml2;   /* go-yaml v2's reader, for joined_keys; -1: none, or no tags */
 } clash_check;
 
 static uint32_t number_of(clash_check *c, const oyl_key *key) {
@@ -953,9 +960,23 @@ static uint32_t number_of(clash_check *c, const oyl_key *key) {
     return (uint32_t)c->len - 1;
 }
 
-static uint32_t number_read(clash_check *c, const reader *r, const oyl_tree *t, uint32_t k) {
+/* A scalar reader r reads as `k` (read_as), as a key: go-yaml v2 reads a
+ * key of a tag it doesn't resolve as its text, a !!binary one as its bytes
+ * (oyl_goyaml2_key). *folded, if given, says which. */
+static oyl_key as_key(const reader *r, oyl_key k, uint8_t *folded) {
+    if (r->schema->tagged == OYL_TAGGED_GOYAML2 && k.value.kind == OYL_VALUE_STR &&
+        oyl_goyaml2_key(&k, r->schema, k.tag, k.value.as.s) && folded)
+        *folded = k.value.kind == OYL_VALUE_BASE64 ? 2 : 1;
+    return k;
+}
+
+/* Key k as reader r reads it, numbered */
+static uint32_t number_read(clash_check *c, const reader *r, const oyl_tree *t, uint32_t k,
+                            uint8_t *folded) {
     reading x = read_as(r, oyl_node_text(t, k), (oyl_scalar_style)t->nodes[k].style, explicit_tag(t, k));
-    return x.ok ? number_of(c, &x.key) : NO_READING;
+    if (!x.ok) return NO_READING;
+    oyl_key key = as_key(r, x.key, folded);
+    return number_of(c, &key);
 }
 
 static const key_nums *nums_of(clash_check *c, const doc *d, uint32_t k) {
@@ -964,9 +985,15 @@ static const key_nums *nums_of(clash_check *c, const doc *d, uint32_t k) {
     upgrade *u = c->u;
     x->known = true;
     x->src[0] = x->src[1] = NO_READING;
-    for (int r = 0; r < u->nsrc; r++) x->src[r] = number_read(c, &u->src[r], d->tree, k);
-    x->core = number_read(c, &u->core, d->tree, k);
-    x->after = d->plan[k].what == N_CHANGED ? number_of(c, &d->plan[k].expect) : NO_READING;
+    for (int r = 0; r < u->nsrc; r++) x->src[r] = number_read(c, &u->src[r], d->tree, k, &x->folded);
+    x->core = number_read(c, &u->core, d->tree, k, NULL);
+    /* rewritten, every reader reads it as expected (spell), as a key as each reads one */
+    bool changed = d->plan[k].what == N_CHANGED;
+    x->after = changed ? number_of(c, &d->plan[k].expect) : NO_READING;
+    for (int r = 0; r < u->nsrc; r++) {
+        oyl_key a = changed ? as_key(&u->src[r], d->plan[k].expect, NULL) : (oyl_key){ 0 };
+        x->after_src[r] = changed ? number_of(c, &a) : NO_READING;
+    }
     return x;
 }
 
@@ -1017,6 +1044,56 @@ static uint32_t add_keys(clash_check *c, const doc *d, uint32_t s, uint32_t n) {
     return n;
 }
 
+/* Report key k, if go-yaml v2 reads it as one with another key only for
+ * ignoring its tag: true if it does */
+static bool report_joined(clash_check *c, doc *d, uint32_t k) {
+    upgrade *u = c->u;
+    key_nums *x = &c->by_node[k];
+    node_plan *pl = &d->plan[k];
+    if (!x->folded) return false;
+    if (x->joined || pl->what == N_REMOVED) return true;
+    x->joined = true;
+    const char *as = x->folded == 2 ? "the bytes it decodes to" : "its text";
+    if (pl->what == N_CHANGED) {
+        undo_rewrite(u, d, k, keepf(u, "%s reads it as %s, its tag aside, so as another key of its "
+                                       "mapping", u->src[c->goyaml2].name, as));
+        return true;
+    }
+    const oyl_tree *t = d->tree;
+    const oyl_node *n = &t->nodes[k];
+    size_t tok = token_start(u, t->base + n->start, t->base + n->end);
+    add_fix(u, OYL_FIX_SCALAR, tok, token_end(u, tok, t->base + n->end), (oyl_str){ NULL, 0 }, false,
+            keepf(u, "%s reads this key as %s, its tag aside, so as another key of its mapping; "
+                     "YAML 1.2 as two keys: left", u->src[c->goyaml2].name, as));
+    pl->what = N_SKIP;
+    return true;
+}
+
+/* Report the keys of mapping m (the n in the list, written or merged) that
+ * go-yaml v2 reads as one, as it reads a key of a tag it doesn't resolve as
+ * its text and a !!binary one as its bytes, and YAML 1.2 apart in the
+ * output: !foo x and x. No spelling keeps the tag and joins them in YAML
+ * 1.2. One pass, by the keys' numbers. */
+static void joined_keys(clash_check *c, doc *d, uint32_t n) {
+    upgrade *u = c->u;
+    int g = c->goyaml2;
+    c->jpass++;
+    for (uint32_t i = 0; i < n && !u->oom; i++) {
+        uint32_t k = c->list[i];
+        const key_nums *x = nums_of(c, d, k);
+        uint32_t src = x->src[g], out = d->plan[k].what == N_CHANGED ? x->after : x->core;
+        if (src == NO_READING || out == NO_READING) continue;
+        read_num *e = &c->nums[src];
+        if (e->jpass != c->jpass) {
+            e->jpass = c->jpass;
+            e->jout = out;
+            e->jkey = k;
+        } else if (e->jout != out && !report_joined(c, d, k)) {
+            report_joined(c, d, e->jkey);
+        }
+    }
+}
+
 /* Undo the rewrites that would change how many keys mapping m has, written
  * in it or merged. Those joining keys the source has apart: `yes` and
  * `"yes"`, `on: 1` and `<<: {"on": 2}`, `<<: [{on: 1}, {"on": 2}]`, as one
@@ -1047,18 +1124,21 @@ static void mapping_clashes(clash_check *c, doc *d, uint32_t m) {
             bool changed = d->plan[k].what == N_CHANGED;
             if (changed) {
                 meet(c, x->after, k);
+                for (int r = 0; r < u->nsrc; r++) meet(c, x->after_src[r], k);
             } else {
                 for (int r = 0; r < u->nsrc; r++) meet(c, x->src[r], k);
                 meet(c, x->core, k);
             }
-            for (int r = 0; r < u->nsrc; r++) follow(c, r, x->src[r], changed ? x->after : x->src[r]);
+            for (int r = 0; r < u->nsrc; r++) follow(c, r, x->src[r], changed ? x->after_src[r] : x->src[r]);
         }
         if (u->oom) return;
         for (uint32_t i = 0; i < n; i++) {
             uint32_t k = c->list[i];
             if (d->plan[k].what != N_CHANGED) continue;
             const key_nums *x = &c->by_node[k];
-            const char *why = c->nums[x->after].parted ? "the rewrite would make two keys equal" : NULL;
+            bool parted = c->nums[x->after].parted;
+            for (int r = 0; r < u->nsrc; r++) parted |= c->nums[x->after_src[r]].parted;
+            const char *why = parted ? "the rewrite would make two keys equal" : NULL;
             for (int r = 0; r < u->nsrc && !why; r++)
                 if (c->nums[x->src[r]].split[r])
                     why = keepf(u, "%s reads it and another key as one", u->src[r].name);
@@ -1068,13 +1148,23 @@ static void mapping_clashes(clash_check *c, doc *d, uint32_t m) {
             }
         }
     }
+    if (c->goyaml2 >= 0 && !u->oom) joined_keys(c, d, n);
 }
 
 /* mapping_clashes for each mapping of a document */
 static void key_clashes(upgrade *u, doc *d) {
     const oyl_tree *t = d->tree;
     size_t len = t->len ? t->len : 1;
-    clash_check c = { .u = u, .hk = oyl_parser_hash_key(u->p) };
+    clash_check c = { .u = u, .hk = oyl_parser_hash_key(u->p), .goyaml2 = -1 };
+    /* joined_keys: for go-yaml v2's reader, where a scalar is tagged */
+    for (int r = 0; r < u->nsrc; r++)
+        if (u->src[r].schema->tagged == OYL_TAGGED_GOYAML2) c.goyaml2 = r;
+    bool tagged = false;
+    for (uint32_t i = 0; i < t->len && c.goyaml2 >= 0 && !tagged; i++) {
+        oyl_str tag = t->nodes[i].kind == OYL_NODE_SCALAR ? explicit_tag(t, i) : (oyl_str){ NULL, 0 };
+        tagged = tag.len > 1 || (tag.len == 1 && tag.data[0] != '!');
+    }
+    if (!tagged) c.goyaml2 = -1;
     c.by_node = calloc(len, sizeof *c.by_node);
     c.seen = calloc(len, sizeof *c.seen);
     c.stack = malloc(len * sizeof *c.stack);
