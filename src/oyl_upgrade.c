@@ -728,11 +728,17 @@ static bool merged_in(upgrade *u, const oyl_tree *t, uint32_t v, uint32_t k) {
 }
 
 /* Was key k of mapping m's `?` on an earlier line? From the last node with
- * text to the key are only indicators and comments. */
+ * text, and the end of each collection holding it, to the key are only
+ * indicators and comments. A mapping before the key may end in a `?` of
+ * its own, after its last node with text (`n:\n a:\n ?\nn:`): that one
+ * isn't the key's. */
 static bool question_above(const upgrade *u, const oyl_tree *t, uint32_t m, uint32_t k, size_t from) {
     uint32_t p = k - 1;
     while (p > m && t->nodes[p].start == t->nodes[p].end) p--;
-    for (size_t i = t->base + (p == m ? t->nodes[m].start : t->nodes[p].end); i < from; i++) {
+    size_t at = p == m ? t->nodes[m].start : t->nodes[p].end;
+    for (uint32_t q = p; q > m && t->nodes[q].parent; q -= t->nodes[q].parent)
+        if (t->nodes[q].end > at) at = t->nodes[q].end;
+    for (size_t i = t->base + at; i < from; i++) {
         if (u->in[i] == '?') return true;
         if (u->in[i] == '#') i = line_end(u, i);
     }

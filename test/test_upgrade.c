@@ -253,6 +253,7 @@ static void test_merges(void) {
     static const char *const held[] = {
         "?\n  x\n: 1\n<<: {x: 2}\n", "a: 1\n?\n  # c\n  x\n: 1\n<<: {x: 2}\n", "?\n: 1\nb: 2\n<<: {~: 3}\n",
         "?\nx:\n: 1\n<<: {x: 2}\n", "? a\nx:\n: 1\n<<: {x: 2}\n", "?\nx:\n!!null : 1\n<<: {x: 2}\n",
+        "m:\n a:\n?\n  x\n: 1\n<<: {x: 2}\n",
     };
     for (size_t i = 0; i < sizeof held / sizeof *held; i++) {
         r = upgrade(held[i], GOYAML2, 0);
@@ -267,6 +268,19 @@ static void test_merges(void) {
     r = upgrade("a: b?\nc: 1 # ?\nx: 1\n<<: {x: 2}\n", GOYAML2, 0);
     ASSERT(r.status == OYL_OK && strcmp(r.out, "a: b?\nc: 1 # ?\n# x: 1\n<<: {x: 2}\n") == 0,
            "... or in a scalar");
+    /* a ? that ends a mapping before the key isn't the key's: the pair is
+     * commented out, as upgrading the output would (it left the pair, and
+     * upgrading again commented it out) */
+    static const char *const before[][2] = {
+        { "m:\n a:\n ?\nx: 1\n<<: {x: 2}\n", "m:\n a:\n ?\n# x: 1\n<<: {x: 2}\n" },
+        { "m:\n - a:\n   ?\nx: 1\n<<: {x: 2}\n", "m:\n - a:\n   ?\n# x: 1\n<<: {x: 2}\n" },
+        { "x:\n a:\n ?\nx: 1\n<<: {x: 2}\n", "# x:\n # a:\n # ?\n# x: 1\n<<: {x: 2}\n" },
+    };
+    for (size_t i = 0; i < sizeof before / sizeof *before; i++) {
+        r = upgrade(before[i][0], GOYAML2, 0);
+        ASSERT(r.status == OYL_OK && strcmp(r.out, before[i][1]) == 0,
+               "... or one of a mapping before the key (found by fuzzing)");
+    }
 
     r = upgrade("s: &s [{x: 1}]\nm:\n  x: 2\n  <<: *s\n", GOYAML2, 0);
     ASSERT(r.status == OYL_OK && r.nfixes == 1 && !r.fixes[0].fixed && strstr(r.texts[0][2], "rejects"),

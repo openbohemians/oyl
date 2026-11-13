@@ -164,6 +164,8 @@
 - **`oyl_upgrade` leaves a key a `?` holds.** Commenting out a key that
   go-yaml v2's merge overrides left a `?` above it behind, or let a `?`
   without a `:` take the next pair's `:`. Such a key is reported and left.
+  A `?` that ends a mapping before the key, as in `m:\n a:\n ?\nx: 1\n`,
+  isn't the key's, and the key is commented out.
 - **`oyl_upgrade` reads merges as trees do.** It kept its own idea of a
   merge, and that had drifted. With `&m\na: 1\n<<: *m\n` it commented out
   `a`, the only `a` there is: a mapping can't merge itself, so that `<<`
