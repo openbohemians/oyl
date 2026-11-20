@@ -554,7 +554,7 @@ static const oyl_dialect *reader_dialect(int reader) {
 }
 
 static bool upgrade_once(const char *yaml, size_t len, int reader, unsigned flags, oyl_arena *a,
-                         oyl_str *out, size_t *fixed, bool *escapes, const oyl_fix **fx, size_t *nf) {
+                         oyl_str *out, size_t *fixed, const oyl_fix **fx, size_t *nf) {
     oyl_parser *p = oyl_parser_new(yaml, len, a);
     if (!p) return false;
     oyl_parser_set_max_events(p, MAX_EVENTS);
@@ -564,15 +564,62 @@ static bool upgrade_once(const char *yaml, size_t len, int reader, unsigned flag
     if (st == OYL_ERR_PARSE && oyl_parser_error(p) && strstr(oyl_parser_error(p), "(a bug in oyl_upgrade)"))
         __builtin_trap();   /* its check of its output failed */
     *fixed = 0;
-    *escapes = false;
     for (size_t i = 0; st == OYL_OK && i < *nf; i++) {
         const oyl_fix *f = &(*fx)[i];
         if (!f->message || f->kind < OYL_FIX_SCALAR || f->kind > OYL_FIX_INDENT) __builtin_trap();
         if (f->fixed) (*fixed)++;
-        if (f->fixed && f->kind == OYL_FIX_ESCAPE) *escapes = true;
     }
     oyl_parser_free(p);
     return st == OYL_OK;
+}
+
+static bool space(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
+
+/* The reader unknown, does oyl_upgrade take the file as go-yaml v2's? It
+ * does when a double-quoted scalar of a YAML 1.1 document holds \' (an
+ * error to PyYAML): read as it reads the file, with both 1.1 readers'
+ * leniencies, and looked for past the scalar's props, as it looks */
+static bool goyaml2_only(const char *yaml, size_t len) {
+    oyl_arena *a = oyl_arena_new(4096);
+    if (!a) return false;
+    const oyl_dialect *both = oyl_dialect_new(a, "1.1", oyl_schema_yaml11(),
+                                              OYL_SYNTAX_SQUOTE_ESCAPE | OYL_SYNTAX_EOF_NO_BREAK |
+                                              OYL_SYNTAX_FLOW_INDENT, OYL_MERGE_YAML);
+    oyl_parser *p = both ? oyl_parser_new(yaml, len, a) : NULL;
+    bool found = false;
+    if (p) {
+        oyl_parser_set_max_events(p, MAX_EVENTS);
+        oyl_parser_set_dialect(p, both);
+        oyl_tree *t;
+        while (!found && oyl_parse_tree(p, &t) == OYL_OK && t) {
+            int major, minor;
+            oyl_dialect_version(oyl_tree_dialect(t), &major, &minor);
+            uint32_t n;
+            const oyl_node *nd = oyl_tree_nodes(t, &n);
+            size_t base = oyl_tree_base(t);
+            for (uint32_t i = 0; minor == 1 && i < n && !found; i++) {
+                if (nd[i].kind != OYL_NODE_SCALAR || nd[i].style != OYL_SCALAR_DOUBLE_QUOTED) continue;
+                size_t at = base + nd[i].start, end = base + nd[i].end;
+                while (at < end && (yaml[at] == '&' || yaml[at] == '!')) {   /* past props */
+                    while (at < end && !space(yaml[at])) at++;
+                    for (;;) {
+                        while (at < end && space(yaml[at])) at++;
+                        if (at < end && yaml[at] == '#') {
+                            while (at < end && yaml[at] != '\n' && yaml[at] != '\r') at++;
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                for (at++; at + 1 < end && !found; at++)
+                    if (yaml[at] == '\\') found = yaml[++at] == '\'';
+            }
+            oyl_tree_free(t);
+        }
+        oyl_parser_free(p);
+    }
+    oyl_arena_free(a);
+    return found;
 }
 
 static void check_upgrade(const char *yaml, size_t len, uint8_t opts) {
@@ -584,16 +631,16 @@ static void check_upgrade(const char *yaml, size_t len, uint8_t opts) {
     if (!a) return;
     oyl_str out, again;
     size_t fixed, more, nf, nf2;
-    bool escapes, more_escapes;
     const oyl_fix *fx, *fx2;
-    bool ok = upgrade_once(yaml, len, reader, flags, a, &out, &fixed, &escapes, &fx, &nf);
+    bool ok = upgrade_once(yaml, len, reader, flags, a, &out, &fixed, &fx, &nf);
     if (ok && ur_check(yaml, len, out, reader_dialect(reader), flags, fx, nf, MAX_EVENTS))
         __builtin_trap();   /* to a reader, the output has other values, or reads otherwise */
     /* the reader unknown, a \' made it go-yaml v2, which the output no
-     * longer shows: upgrade the output as go-yaml v2's */
+     * longer shows (the \' fixed, or in a pair commented out): upgrade the
+     * output as go-yaml v2's */
     if (ok && fixed &&
-        upgrade_once(out.data, out.len, reader == 0 && escapes ? 2 : reader, flags, a, &again, &more,
-                     &more_escapes, &fx2, &nf2) &&
+        upgrade_once(out.data, out.len, reader == 0 && goyaml2_only(yaml, len) ? 2 : reader, flags, a,
+                     &again, &more, &fx2, &nf2) &&
         (more || again.len != out.len || memcmp(again.data, out.data, out.len) != 0))
         __builtin_trap();   /* upgrading the output changed it */
     oyl_arena_free(a);

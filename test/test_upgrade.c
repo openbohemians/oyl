@@ -652,6 +652,16 @@ static void test_evidence(void) {
             ASSERT(r.status == want_status && (r.status != OYL_OK || strcmp(r.out, want) == 0),
                    "\\': reads as naming go-yaml v2");
         }
+    /* a \' in a pair the merge overrides goes with it: the output, go-yaml
+     * v2's, no longer shows whose it is, and upgraded with the reader unknown
+     * would be PyYAML's too (-.1 is text to PyYAML); as go-yaml v2's it's
+     * done (the fuzzer's check upgrades it so, found by fuzzing) */
+    r = upgrade("-.1: 1\nx: \"\\'\"\n<<: {x: 2}\n", UNKNOWN, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "-.1: 1\n# x: \"\\'\"\n<<: {x: 2}\n") == 0,
+           "\\' commented out: go-yaml v2's");
+    r = upgrade("-.1: 1\n# x: \"\\'\"\n<<: {x: 2}\n", GOYAML2, 0);
+    ASSERT(r.status == OYL_OK && strcmp(r.out, "-.1: 1\n# x: \"\\'\"\n<<: {x: 2}\n") == 0 && !r.nfixes,
+           "... and upgraded again as go-yaml v2's, unchanged");
 }
 
 /* ── Arguments ───────────────────────────────────────────── */
