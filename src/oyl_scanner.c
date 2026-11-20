@@ -349,14 +349,37 @@ static bool tab_after_indicator(const oyl_scanner *s, size_t at) {
     return tab;
 }
 
+/* Only blanks, line breaks and comments between offsets `from` and `to`,
+ * `to` starting its token? Read back from `to`, a line at a time: a line
+ * before `to`'s may hold blanks and a comment, nothing else. The walk
+ * stops at the first other character, so the text it reads holds no
+ * token, and the next ':' can't read it again. */
+static bool only_space_between(const oyl_scanner *s, size_t from, size_t to) {
+    const char *b = s->buf;
+    size_t j = to;
+    for (;;) {
+        while (j > from && (b[j - 1] == ' ' || b[j - 1] == '\t')) j--;
+        if (j == from) return true;
+        if (b[j - 1] != '\n' && b[j - 1] != '\r') return false;
+        j -= b[j - 1] == '\n' && j - 1 > from && b[j - 2] == '\r' ? 2 : 1;
+        /* the line before: blanks, then a comment or its end */
+        size_t ls = j;
+        while (ls > from && b[ls - 1] != '\n' && b[ls - 1] != '\r') ls--;
+        size_t k = ls;
+        while (k < j && (b[k] == ' ' || b[k] == '\t')) k++;
+        if (k < j && b[k] != '#') return false;
+        j = ls;
+    }
+}
+
 /* Classify a ':' value indicator at the current position. */
 enum { COLON_IMPLICIT, COLON_EXPLICIT, COLON_BAD_KEY };
 
 /* An implicit key (one not introduced by '?') must lie on a single line:
  * if a node directly precedes the ':' on its line, it must also start on
  * that line. In a flow sequence the ':' must also be on the key's line
- * ("[ key\n : value ]" is invalid). Flow mappings are exempt (their keys
- * may span lines). */
+ * ("[ key\n : value ]" is invalid, and so is "[ key # c\n : value ]").
+ * Flow mappings are exempt (their keys may span lines). */
 ALWAYS_INLINE int classify_colon(oyl_scanner *s) {
     if (s->flows_len == 0) {
         /* block context: an explicit value (or empty key) ':' starts its
@@ -372,17 +395,12 @@ ALWAYS_INLINE int classify_colon(oyl_scanner *s) {
         return COLON_EXPLICIT;
     }
     if (s->node_end > s->pos || s->node_line >= s->line) return COLON_IMPLICIT;
-    bool in_seq = false;
     if (s->flows_len > 0) {
         if (s->flows[s->flows_len - 1].is_map) return COLON_IMPLICIT;
-        in_seq = true;
+        return only_space_between(s, s->node_end, s->pos) ? COLON_BAD_KEY : COLON_IMPLICIT;
     }
     size_t j = s->pos;
-    while (j > s->node_end) {
-        char c = s->buf[j - 1];
-        if (c == ' ' || c == '\t' || (in_seq && (c == '\n' || c == '\r'))) j--;
-        else break;
-    }
+    while (j > s->node_end && (s->buf[j - 1] == ' ' || s->buf[j - 1] == '\t')) j--;
     return j == s->node_end ? COLON_BAD_KEY : COLON_IMPLICIT;
 }
 

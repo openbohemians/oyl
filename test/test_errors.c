@@ -902,6 +902,43 @@ static void test_key_colon_on_its_line(void) {
         }
 }
 
+/* In a flow sequence a pair's ':' is on its key's line, a comment between
+ * them or not: Oyl took "[ a # c\n : b]" as [{a: b}] until 2026-11-20, as
+ * PyYAML and libyaml don't; the parse paths told apart a longer one (found
+ * by fuzzing) */
+static void test_flow_key_comment(void) {
+    printf("test_flow_key_comment:\n");
+    const char *bad[] = { "[ a # c\n : b]\n", "[ a\n#\n : b]\n", "[ a # c\r : b]\n", "[ a # c\r\n#\r\n : b]\n",
+                          "[ \"a\"\n#\n : b]\n", "[ [ : a]\n#\n : b]\n", "[ {x: 1} # c\n  # d\n : b]\n" };
+    const char *good[] = { "[ a, # c\n : b]\n", "[ a # c\n , : b]\n", "{ a # c\n : b}\n", "[ ? a # c\n : b]\n",
+                           "[ a: b # c\n , d]\n" };
+    for (int eager = 0; eager < 2; eager++) {
+        for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+            oyl_arena *a = oyl_arena_new(4096);
+            oyl_parser *p = oyl_parser_new(bad[i], strlen(bad[i]), a);
+            if (eager) oyl_parser_set_merge(p, true);
+            const oyl_event *evt;
+            oyl_status st;
+            while ((st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_STREAM_END) {}
+            const char *msg = oyl_parser_error(p);
+            ASSERT(st != OYL_OK && msg && strstr(msg, "implicit key must be on a single line"), bad[i]);
+            oyl_parser_free(p);
+            oyl_arena_free(a);
+        }
+        for (size_t i = 0; i < sizeof good / sizeof good[0]; i++) {
+            oyl_arena *a = oyl_arena_new(4096);
+            oyl_parser *p = oyl_parser_new(good[i], strlen(good[i]), a);
+            if (eager) oyl_parser_set_merge(p, true);
+            const oyl_event *evt;
+            oyl_status st;
+            while ((st = oyl_parse_next(p, &evt)) == OYL_OK && evt->type != OYL_EVT_STREAM_END) {}
+            ASSERT(st == OYL_OK, good[i]);
+            oyl_parser_free(p);
+            oyl_arena_free(a);
+        }
+    }
+}
+
 /* Two tags or two anchors on one line are one node's, an error, even
  * before a block collection on the next line (Oyl gave the second to its
  * first entry until 2026-10-30; found by fuzzing oyl_upgrade) */
@@ -1360,6 +1397,7 @@ int main(void) {
     test_tab_after_indent();
     test_block_header_repeats();
     test_key_colon_on_its_line();
+    test_flow_key_comment();
     test_two_props_one_line();
     test_indicators_starting_plain();
 
