@@ -208,6 +208,12 @@ static void test_flow_keys(void) {
     check("[? a, [b]: c]", "[ { a ~ } { [ b ] c } ]");
     check("{? a, [b\n]: c}", "{ a ~ [ b ] c }");   /* a flow mapping's keys may span lines */
     check("[? [b\n] : c]", "[ { [ b ] c } ]");
+    /* a ':' before a flow indicator ends a plain key on an earlier line, an
+     * empty line between them or not: "{a\n\n:}" was {"a\n": null} until
+     * 2026-11-20 (found by fuzzing oyl_upgrade); a ':' before text doesn't */
+    check("{a\n\n:}", "{ a ~ }");
+    check("{a b\n \n :, c}", "{ a b ~ c ~ }");
+    check("{a\n\n:b}", "{ a\n:b ~ }");
 }
 
 /* Plain scalars containing quote or comment characters must not confuse

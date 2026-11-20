@@ -689,10 +689,13 @@ ALWAYS_INLINE oyl_status scan_plain_scalar(oyl_scanner *s, oyl_token *tok) {
                 END_AT_BREAK();
                 break;
             }
-            /* : followed by whitespace always ends (it introduces a mapping value) */
+            /* : followed by whitespace always ends (it introduces a mapping
+             * value), and in flow by a flow indicator: "{a\n\n:}" is
+             * {"a": null}, not {"a\n": null} */
             if (nc == ':') {
                 uint8_t after = PEEK_AT(s, 1);
-                if (oyl_is_blank_or_break(after) || after == 0) {
+                if (oyl_is_blank_or_break(after) || after == 0 ||
+                    (s->flow_level > 0 && oyl_is_flow(after))) {
                     END_AT_BREAK();
                     break;
                 }

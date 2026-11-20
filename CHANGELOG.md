@@ -72,6 +72,13 @@
   blanks and line breaks only; it now looks past comments too. On a longer
   file the two parse paths, with merge keys and without, read it apart,
   which is how fuzzing found it. In every release.
+- **A plain key ends before an empty line and its `:`.** `{a\n\n:}` read as
+  `{"a\n": null}`, not `{a: null}`: the scalar ended at a `:` starting a
+  later line when a blank followed it, not when a flow indicator did, so
+  the empty line's line break, folded in to join a next line, stayed. With
+  one line break the folded space was trimmed, so `{a\n:}` was right.
+  Fuzzing found it through `oyl_upgrade`, whose check took `!!null .`
+  there for an error. In every release.
 - **`oyl_upgrade` starts a file's first line past its byte order mark,**
   as the parser does. It looked for `%YAML 1.1` at the start of a line, so
   after a byte order mark it kept the directive, and a YAML 1.2 reader
