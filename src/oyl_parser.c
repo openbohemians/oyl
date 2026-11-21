@@ -3320,17 +3320,28 @@ static bool fk_scan(oyl_parser *p, size_t offset) {
             break;
         case '<':
             /* A verbatim tag ("!<tag:a,b>") may contain [ ] { } , # and
-             * quotes, so it is skipped whole, to its '>'. It starts a token
-             * only after a blank or an entry start; elsewhere "!<" is text. */
-            if (i >= 1 && input[i - 1] == '!' &&
-                (i == 1 || input[i - 2] == ' ' || input[i - 2] == '\t' ||
-                 input[i - 2] == '[' || input[i - 2] == '{' || input[i - 2] == ',')) {
-                size_t k = i + 1;
-                while (k < len && input[k] != '>' && input[k] != ' ' &&
-                       input[k] != '\t' && input[k] != '\n' && input[k] != '\r')
-                    k++;
-                if (k == len || input[k] != '>') goto ambiguous;
-                fk_seek(&cur, k + 1);
+             * quotes, so it is skipped whole, to its '>'. Its '!' starts a
+             * token where a quote would open a quoted scalar (fk_quote_kind,
+             * so "[a]:!<x>" too); inside a word "!<" is text, and after a
+             * blank that follows text it may be text as well: in "[a !<]"
+             * it is the end of the plain scalar "a !<". The '!' is past the
+             * scan's opening bracket, so i >= 2. */
+            if (input[i - 1] == '!') {
+                switch (fk_quote_kind(input, i - 1, qend)) {
+                case 1: {
+                    size_t k = i + 1;
+                    while (k < len && input[k] != '>' && input[k] != ' ' &&
+                           input[k] != '\t' && input[k] != '\n' && input[k] != '\r')
+                        k++;
+                    if (k == len || input[k] != '>') goto ambiguous;
+                    fk_seek(&cur, k + 1);
+                    break;
+                }
+                case -1:
+                    goto ambiguous;
+                default:
+                    break;
+                }
             }
             break;
         case '#':

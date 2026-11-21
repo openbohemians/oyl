@@ -766,6 +766,19 @@ static void test_flow_key_quotes_in_plain(void) {
     check("[!<![![[> x]: y", "{ [ <![![[> x ] y }");
     check("[!<a]b> x, [c]]: y", "{ [ <a]b> x [ c ] ] y }");
     check("[a!<b], [c]]: x", "[ a!<b ] ERR");      /* "!<" inside text is text */
+    /* after a blank that follows text, "!<" may be text as well: here it
+     * ends the plain scalar "x !<", and the '>' after is no tag's end
+     * (ClusterFuzzLite) */
+    check("[[x !<]:!>]", "[ { [ x !< ] <!>> ~ } ]");
+    check("[[a !<]:b>]", "[ { [ a !< ] b> } ]");
+    check("[{x !<}:!>]", "[ { { x !< ~ } <!>> ~ } ]");
+    check("[[a !<b> c]: d]", "[ { [ a !<b> c ] d } ]");
+    check("[[&a !<]>]: b]", "[ { [ &a <]> ~ ] b } ]");  /* or a tag, after props */
+    /* after a key's ':' a verbatim tag starts a token, as a quoted
+     * scalar does */
+    check("[[[a]:!<]]>]: c]", "[ { [ { [ a ] <]]> ~ } ] c } ]");
+    check("[[a]:!<b]> c]: d", "{ [ { [ a ] <b]> c } ] d }");
+    check("[[\"a\":!<]]>]: c]", "[ { [ { a <]]> ~ } ] c } ]");
 }
 
 #if defined(MEMORY_TESTS)

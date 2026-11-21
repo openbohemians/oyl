@@ -79,6 +79,18 @@
   one line break the folded space was trimmed, so `{a\n:}` was right.
   Fuzzing found it through `oyl_upgrade`, whose check took `!!null .`
   there for an error. In every release.
+- **A flow collection key with `!<` in it, or a verbatim tag after it,
+  parses without merge keys too.** `[[a !<]:b>]` is `[{[a !<]: b>}]`, but
+  without merge keys Oyl refused it ("expected ',' or ']' in flow
+  sequence"). Before parsing a flow collection, the parser looks ahead for
+  a `:` after its closing bracket, and skips a verbatim tag whole on the
+  way, since one may hold brackets. It took a `!<` after any blank for one,
+  though in `[a !<]` it ends the plain scalar `a !<`, so it skipped the
+  `]:` too. And it didn't see a tag right after a key's `:`, as in
+  `[[a]:!<b]> c]: d`, so it counted the bracket in it. Now a `!<` is a tag
+  where a quote would open a quoted scalar; where telling needs the
+  scanner, as after an anchor, the parser takes its other path, as it does
+  with merge keys. Fuzzing found it. From 1.0.0.
 - **`oyl_upgrade` starts a file's first line past its byte order mark,**
   as the parser does. It looked for `%YAML 1.1` at the start of a line, so
   after a byte order mark it kept the directive, and a YAML 1.2 reader
