@@ -91,6 +91,14 @@
   where a quote would open a quoted scalar; where telling needs the
   scanner, as after an anchor, the parser takes its other path, as it does
   with merge keys. Fuzzing found it. From 1.0.0.
+- **`oyl_upgrade` keeps a flow key in quotes when its `:` follows them
+  directly.** In `[!!bool "Off":x]`, read as PyYAML's, the `:` straight
+  after the quotes makes `x` the key's value, but the upgrade wrote
+  `[!!bool false:x]`, where the `:` is part of the plain scalar
+  `false:x`. Its check refused that as "a bug in oyl_upgrade", so no file
+  came out wrong. It gives `[!!bool "false":x]` now. Where a space, a line
+  break or the collection's end follows the `:`, as in `[!!bool "Off": x]`,
+  the rewrite is plain as before. Fuzzing found it. In 1.4.0.
 - **`oyl_upgrade` starts a file's first line past its byte order mark,**
   as the parser does. It looked for `%YAML 1.1` at the start of a line, so
   after a byte order mark it kept the directive, and a YAML 1.2 reader

@@ -420,12 +420,14 @@ static bool reads_as(upgrade *u, const spelling *sp, oyl_str own, const reading 
 
 /* Find a spelling every reader reads as `target`, for scalar i of doc d
  * (written `text`, tagged `own`); the whole new text in the arena, or
- * false. `octal`: the target is the source's reading of an octal int. */
+ * false. `octal`: the target is the source's reading of an octal int.
+ * `quoted`: the spelling stays in quotes, as a ':' follows the source's
+ * quotes directly. */
 static bool spell(upgrade *u, const oyl_tree *t, oyl_str text, oyl_str own, const reading *target,
-                  bool octal, oyl_str *out) {
+                  bool octal, bool quoted, oyl_str *out) {
     const oyl_value *v = &target->key.value;
     oyl_str tag = target->key.tag;
-    char num[64];
+    char num[64], plain[96];
     /* candidates: text, its style, the tag it adds */
     for (int c = 0; c < 4; c++) {
         u->slen = 0;
@@ -477,12 +479,24 @@ static bool spell(upgrade *u, const oyl_tree *t, oyl_str text, oyl_str own, cons
         }
         if (!any) continue;
         if (u->oom) return false;
+        /* in quotes, when a ':' follows: after plain text it is text too,
+         * "false:x" one scalar, where '"Off":x' is a key and its value */
+        oyl_str content = v->as.s;
+        if (quoted && sp.style == OYL_SCALAR_PLAIN) {
+            if (u->slen > sizeof plain) continue;
+            memcpy(plain, u->scratch, u->slen);
+            content = (oyl_str){ plain, u->slen };
+            u->slen = 0;
+            put_quoted(u, content);
+            sp.style = OYL_SCALAR_DOUBLE_QUOTED;
+            if (u->oom) return false;
+        }
         /* what it reads as: a quoted one's content */
         size_t written = u->slen;
         if (sp.style == OYL_SCALAR_DOUBLE_QUOTED) {
-            sput(u, v->as.s.data, v->as.s.len);
+            sput(u, content.data, content.len);
             sp.value_at = written;
-            sp.value_len = v->as.s.len;
+            sp.value_len = content.len;
         } else {
             sp.value_at = 0;
             sp.value_len = written;
@@ -628,8 +642,15 @@ static void decide(upgrade *u, doc *d, uint32_t i) {
     }
     if (u->oom) return;
     bool octal = target == &s[0] && (target->key.value.kind == OYL_VALUE_INT) && looks_octal(text);
+    /* a flow key's ':' may follow its quotes directly ("[!!bool "Off":x]");
+     * unless a blank, a break or the collection's end follows it, plain
+     * text there would take it in */
+    size_t after = end + 1;
+    bool quoted = style != OYL_SCALAR_PLAIN && end < u->len && u->in[end] == ':' && after < u->len &&
+                  !oyl_is_blank_or_break((uint8_t)u->in[after]) && u->in[after] != ',' &&
+                  u->in[after] != ']' && u->in[after] != '}';
     oyl_str spelled;
-    if (!spell(u, t, text, own, target, octal, &spelled)) {
+    if (!spell(u, t, text, own, target, octal, quoted, &spelled)) {
         if (!u->oom)
             add_fix(u, OYL_FIX_SCALAR, tok, end, (oyl_str){ NULL, 0 }, false,
                     keepf(u, "%s; no spelling every reader reads so: left", why));

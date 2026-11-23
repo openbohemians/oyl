@@ -147,6 +147,15 @@ static void test_scalars(void) {
         { PYYAML,  0, "- !!int |\n  010\n- x\n",        "- !!int 0o10\n- x\n" },
         { PYYAML,  0, "a: !!int |+\n  010\n\n\nb: 1\n", "a: !!int 0o10\n\n\nb: 1\n" },
         { PYYAML,  0, "!!int\n>\n-0\n--- +.0!\n",       "!!int\n0\n--- +.0!\n" },
+        /* a flow key's ':' right after its quotes: it stays the key's while
+         * the key stays in quotes, as plain text would take it in
+         * (ClusterFuzzLite) */
+        { PYYAML,  0, "[!!bool \"Off\":x]\n",           "[!!bool \"false\":x]\n" },
+        { UNKNOWN, 0, "[!!bool 'Off':x]: y\n",          "[!!bool \"false\":x]: y\n" },
+        { GOYAML2, 0, "{!!int '017':y, !!bool \"no\":[z]}\n", "{!!int \"17\":true, !!bool \"false\":[z]}\n" },
+        { PYYAML,  OYL_UPGRADE_KEYS_KEEP_VALUE, "[!!int \"017\":\"x\"]\n", "[!!int \"0o17\":\"x\"]\n" },
+        /* ... and plain where a blank or the collection's end follows */
+        { PYYAML,  0, "[!!bool \"Off\":, !!bool \"On\": x]\n", "[!!bool false:, !!bool true: x]\n" },
     };
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
         result r = upgrade(cases[i].in, cases[i].reader, cases[i].flags);
