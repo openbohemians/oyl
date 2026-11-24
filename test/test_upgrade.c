@@ -154,8 +154,15 @@ static void test_scalars(void) {
         { UNKNOWN, 0, "[!!bool 'Off':x]: y\n",          "[!!bool \"false\":x]: y\n" },
         { GOYAML2, 0, "{!!int '017':y, !!bool \"no\":[z]}\n", "{!!int \"17\":true, !!bool \"false\":[z]}\n" },
         { PYYAML,  OYL_UPGRADE_KEYS_KEEP_VALUE, "[!!int \"017\":\"x\"]\n", "[!!int \"0o17\":\"x\"]\n" },
+        /* ... or after blanks, breaks and comments */
+        { GOYAML2, 0, "{!!bool 'y' :x}\n",             "{!!bool \"true\" :x}\n" },
+        { PYYAML,  0, "[!!bool \"Off\"\t:x]: y\n",     "[!!bool \"false\"\t:x]: y\n" },
+        { GOYAML2, 0, "{!!bool 'y'\n :x}\n",           "{!!bool \"true\"\n :x}\n" },
+        { GOYAML2, 0, "{!!bool 'y' # c\n :x}\n",       "{!!bool \"true\" # c\n :x}\n" },
         /* ... and plain where a blank or the collection's end follows */
         { PYYAML,  0, "[!!bool \"Off\":, !!bool \"On\": x]\n", "[!!bool false:, !!bool true: x]\n" },
+        { GOYAML2, 0, "{!!bool 'y' : x, !!bool 'n' :}\n", "{!!bool true : x, !!bool false :}\n" },
+        { GOYAML2, 0, "{!!bool 'y' #c\n}\n",           "{!!bool true #c\n}\n" },
     };
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
         result r = upgrade(cases[i].in, cases[i].reader, cases[i].flags);

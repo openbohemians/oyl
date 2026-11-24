@@ -250,6 +250,17 @@ static size_t line_end(const upgrade *u, size_t at) {
     return at;
 }
 
+/* Where the next token starts at or after `at`: past blanks, line breaks
+ * and comments */
+static size_t next_token(const upgrade *u, size_t at) {
+    for (;;) {
+        size_t from = at;
+        while (at < u->len && oyl_is_blank_or_break((uint8_t)u->in[at])) at++;
+        if (at == from || at == u->len || u->in[at] != '#') return at;
+        at = line_end(u, at);
+    }
+}
+
 /* Past the line break at `at` */
 static size_t past_break(const upgrade *u, size_t at) {
     if (at < u->len && u->in[at] == '\r') at++;
@@ -642,11 +653,12 @@ static void decide(upgrade *u, doc *d, uint32_t i) {
     }
     if (u->oom) return;
     bool octal = target == &s[0] && (target->key.value.kind == OYL_VALUE_INT) && looks_octal(text);
-    /* a flow key's ':' may follow its quotes directly ("[!!bool "Off":x]");
-     * unless a blank, a break or the collection's end follows it, plain
-     * text there would take it in */
-    size_t after = end + 1;
-    bool quoted = style != OYL_SCALAR_PLAIN && end < u->len && u->in[end] == ':' && after < u->len &&
+    /* a flow key's ':' may follow its quotes directly ("[!!bool "Off":x]"),
+     * or after blanks, breaks and comments ("{!!bool 'y' :x}"); unless a
+     * blank, a break or the collection's end follows it, plain text there
+     * would take it in */
+    size_t colon = style != OYL_SCALAR_PLAIN ? next_token(u, end) : u->len, after = colon + 1;
+    bool quoted = colon < u->len && u->in[colon] == ':' && after < u->len &&
                   !oyl_is_blank_or_break((uint8_t)u->in[after]) && u->in[after] != ',' &&
                   u->in[after] != ']' && u->in[after] != '}';
     oyl_str spelled;
