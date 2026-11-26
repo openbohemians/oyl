@@ -1,14 +1,14 @@
 {
-  "total_executions": 17237719778,
-  "runs_counted": 1080,
+  "total_executions": 17244866870,
+  "runs_counted": 1082,
   "first_run": "2026-09-24T14:28:34Z",
   "release": {
     "tag": "v1.4.0",
     "published": "2026-10-31T02:45:45Z"
   },
-  "release_executions": 4207221302,
-  "release_runs": 810,
-  "updated": "2026-11-26T09:25:57Z",
+  "release_executions": 4214368394,
+  "release_runs": 812,
+  "updated": "2026-11-26T09:35:44Z",
   "runs": {
     "37105328217": {
       "executions": 75464518,
@@ -4329,6 +4329,14 @@
     "45709357158": {
       "executions": 7069447,
       "created": "2026-11-25T21:59:55Z"
+    },
+    "45787397049": {
+      "executions": 0,
+      "created": "2026-11-26T08:56:13Z"
+    },
+    "45784163997": {
+      "executions": 7147092,
+      "created": "2026-11-26T08:33:26Z"
     }
   }
 }
