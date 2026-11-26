@@ -228,6 +228,14 @@ static void test_reported(void) {
            "one reader's tag rejects it, the other reads it otherwise: left, reported");
     r = upgrade("a: !!timestamp 2001-1-1 1:1:1\n", PYYAML, 0);
     ASSERT(r.status == OYL_OK && r.nfixes == 0, "... PyYAML's alone: nothing");
+    /* ... or reads it as the block scalar ending the input, which YAML 1.2
+     * gives a final line feed (ClusterFuzzLite) */
+    r = upgrade("? !!merge |\n  x\n? !!merge |\n  x", UNKNOWN, 0);
+    ASSERT(r.status == OYL_OK && r.nfixes == 1 && !r.fixes[0].fixed && r.fixes[0].mark.line == 3 &&
+           strstr(r.texts[0][2], "PyYAML: an error; go-yaml v2: \"x\""),
+           "one reader's tag rejects the block scalar ending the input: left, reported");
+    r = upgrade("? !!merge |\n  x\n? !!merge |\n  x", PYYAML, 0);
+    ASSERT(r.status == OYL_OK && r.nfixes == 0, "... PyYAML's alone: nothing");
 }
 
 /* ── Merges ──────────────────────────────────────────────── */
@@ -535,12 +543,16 @@ static void test_chomps(void) {
     printf("test_chomps:\n");
     static const char *const tags[] = {
         "", "!!str ", "!!int ", "!!float ", "!!bool ", "!!null ", "!!binary ", "!!timestamp ", "!x ",
+        "!!merge ", "!!value ",
     };
     static const char *const texts[] = { "3", "true", "2001-01-01", "AAAA", "a", "yes", "~", "1:00" };
     static const char *const heads[] = { "|", "|+", ">", ">+", "|2", "|+1" };
     static const char *const forms[] = {
         "%s\n  %s", "k: %s\n  %s", "? %s\n  %s", "- %s\n  %s", "a: 1\n? %s\n  %s",
         "%s\r  %s", "\"3\\n\": 1\n? %s\n  %s",
+        /* a key equal to the last in YAML 1.2, which gives it a line feed;
+         * to PyYAML and go-yaml v2, which don't, another (ClusterFuzzLite) */
+        "? !!merge |\n  a\n? %s\n  %s", "? |\n  a\n? %s\n  %s",
     };
     enum { NT = sizeof tags / sizeof *tags, NX = sizeof texts / sizeof *texts,
            NH = sizeof heads / sizeof *heads, NF = sizeof forms / sizeof *forms };

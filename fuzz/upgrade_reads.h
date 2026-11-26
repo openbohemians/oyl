@@ -204,9 +204,16 @@ static const char *ur_document(const oyl_tree *s, const oyl_tree *o, const oyl_t
         left = !fx[f].fixed && fx[f].mark.offset >= from && fx[f].mark.offset <= to;
     bool errs = false;
     for (uint32_t j = 0; j < no && !why && !left; j++) {
-        if (on[j].kind != OYL_NODE_SCALAR || ur_is_merge_key(o, j)) continue;
+        if (on[j].kind != OYL_NODE_SCALAR) continue;
         ur_taken ro, rc;
-        bool ok_o = ur_take(o, j, r->ts_text, &ro), ok_c = ur_take(c, j, false, &rc);
+        bool ok_o = ur_take(o, j, r->ts_text, &ro);
+        /* a merge key YAML 1.2 reads otherwise, as the key "<<"; but one
+         * its tag rejects (!!merge x, to PyYAML) errs, as any scalar does */
+        if (ur_is_merge_key(o, j)) {
+            errs |= !ok_o;
+            continue;
+        }
+        bool ok_c = ur_take(c, j, false, &rc);
         if (!ok_o || !ok_c) { errs = true; continue; }
         if (!ur_same(&ro, &rc)) why = ur_fail("the output reads otherwise in YAML 1.2", r, o, j);
     }

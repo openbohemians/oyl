@@ -101,6 +101,16 @@
   `[!!bool "false":x]` and `{!!bool "true" :x}` now. Where a space, a line
   break or the collection's end follows the `:`, as in `[!!bool "Off": x]`,
   the rewrite is plain as before. Fuzzing found it. In 1.4.0.
+- **`oyl_upgrade` reports a block scalar ending the input that one
+  reader's tag rejects, the reader unknown.** With neither reader named, in
+  `a: !!value |` and a line ` x` with no line break after it, PyYAML's
+  `!!value` rejects `x`, go-yaml v2 reads `"x"`, and YAML 1.2 gives the
+  scalar a final line feed, `"x\n"`. The upgrade reported such a scalar only
+  when the readers' readings differed, so as a key, or as a value under
+  `OYL_UPGRADE_VALUES_KEEP_TEXT`, it came out unchanged, unreported, and
+  read otherwise in YAML 1.2. It's reported now ("PyYAML: an error; go-yaml
+  v2: "x": name the dialect to fix this"); with go-yaml v2 named, the line
+  break is added as for any other. Fuzzing found it. In 1.4.0.
 - **`oyl_upgrade` starts a file's first line past its byte order mark,**
   as the parser does. It looked for `%YAML 1.1` at the start of a line, so
   after a byte order mark it kept the directive, and a YAML 1.2 reader

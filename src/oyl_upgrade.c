@@ -112,6 +112,7 @@ typedef struct {
     size_t      nfixes, fixes_cap;
     heard      *heard;
     size_t      nheard, heard_cap;
+    size_t      eof_at;     /* the block scalar ending the input without a line break, or SIZE_MAX */
     oyl_warn_fn user_fn;
     void       *user_data;
     size_t     *lines;      /* each line's start */
@@ -562,6 +563,7 @@ static const char *src_name(const upgrade *u) {
 }
 
 static bool mergeable(const oyl_tree *t, uint32_t m, uint32_t v);
+static bool chomp_keeps_text(const upgrade *u, const oyl_node *n);
 
 /* Decide scalar i of doc d: rewrite it, or report it, or nothing */
 static void decide(upgrade *u, doc *d, uint32_t i) {
@@ -581,9 +583,15 @@ static void decide(upgrade *u, doc *d, uint32_t i) {
     for (int r = 0; r < u->nsrc; r++)
         if (!s[r].ok) {
             pl->what = N_SKIP;
-            if (u->nsrc == 2 && s[1 - r].ok && !same(&s[1 - r], &c)) {
+            /* ... or as the block scalar ending the input, which YAML 1.2
+             * gives a final line feed: chomp() strips it when it keeps the
+             * value, but gives it the line feed only if every reader reads
+             * that alike */
+            size_t tok = token_start(u, t->base + n->start, t->base + n->end);
+            bool eof = (style == OYL_SCALAR_LITERAL || style == OYL_SCALAR_FOLDED) && tok == u->eof_at &&
+                       chomp_keeps_text(u, n);
+            if (u->nsrc == 2 && s[1 - r].ok && (!same(&s[1 - r], &c) || eof)) {
                 char b1[64], b2[64];
-                size_t tok = token_start(u, t->base + n->start, t->base + n->end);
                 add_fix(u, OYL_FIX_SCALAR, tok, token_end(u, tok, t->base + n->end), (oyl_str){ NULL, 0 },
                         false, keepf(u, "PyYAML: %s; go-yaml v2: %s: name the dialect to fix this",
                                      describe(u, &s[0], b1, sizeof b1), describe(u, &s[1], b2, sizeof b2)));
@@ -1841,6 +1849,9 @@ static oyl_status run(upgrade *u, oyl_str *out) {
 
     /* decide: merges first, as what they comment out needs nothing else;
      * then scalars, and keys made equal */
+    u->eof_at = SIZE_MAX;
+    for (size_t h = 0; h < u->nheard; h++)
+        if (u->heard[h].msg == oyl_msg_eof_no_break) u->eof_at = u->heard[h].offset;
     for (size_t k = 0; k < u->ndocs && !u->oom; k++) {
         doc *d = &u->docs[k];
         if (d->left) continue;
